@@ -10,7 +10,7 @@ from parse import Leg, is_passenger
 
 
 def _row(leg):
-    return {"flight": leg.flight, "dep": leg.dep, "arr": leg.arr,
+    return {"flight": leg.key, "dep": leg.dep, "arr": leg.arr,
             "dep_local": leg.dep_local.isoformat() if leg.dep_local else None,
             "arr_local": leg.arr_local.isoformat() if leg.arr_local else None}
 
@@ -25,7 +25,7 @@ def enrich(parsed, lookup, cache, now, limit):
     legs = []
     for leg in parsed.legs:
         day = leg.when
-        if not leg.flight or not day or day < now.date():
+        if leg.mode != "flight" or not leg.flight or not day or day < now.date():
             legs.append(leg)
             continue
         key = f"{leg.flight} {day.isoformat()}"
@@ -49,7 +49,7 @@ def apply(parsed, sender, subject, received, state, cal, con, names, now, airpor
         return []
     alerts = []
     where = f"{sender} | {subject} | {received.isoformat()}"
-    in_email = {(l.flight, l.when.isoformat()) for l in parsed.legs if l.when}
+    in_email = {(l.key, l.when.isoformat()) for l in parsed.legs if l.when}
     about_future = bool(parsed.latest_date and parsed.latest_date >= now.date())  # alerts only for trips still ahead
 
     def owned(leg):
@@ -58,7 +58,7 @@ def apply(parsed, sender, subject, received, state, cal, con, names, now, airpor
         day = leg.when.isoformat() if leg.when else None
         fallback = None
         for e in legs:
-            if e["flight"] != leg.flight:
+            if e["flight"] != leg.key:
                 continue
             same_day = day is not None and e["dep_local"][:10] == day
             if leg.codes and e["codes"]:
@@ -80,6 +80,10 @@ def apply(parsed, sender, subject, received, state, cal, con, names, now, airpor
         legs.remove(e)
 
     if parsed.kind == "cancel":
+        if not parsed.legs and parsed.codes:  # e.g. "your booking #123 has been cancelled"
+            for e in [e for e in legs if set(e["codes"]) & set(parsed.codes)]:
+                remove(e)
+            return alerts
         for leg in parsed.legs:
             e = owned(leg)
             if e:
@@ -103,7 +107,7 @@ def apply(parsed, sender, subject, received, state, cal, con, names, now, airpor
 
     local_now = now.astimezone()
     for leg in complete:
-        if leg.dep not in airports or leg.arr not in airports or leg.instants(airports)[0] <= local_now:
+        if not all(leg.tz(airports)) or leg.instants(airports)[0] <= local_now:
             continue
         e = owned(leg)
         if e:
@@ -123,9 +127,12 @@ def apply(parsed, sender, subject, received, state, cal, con, names, now, airpor
             notes.append(f"Rebooked from {prev['flight']} on {prev['dep_local'][:10]}")
             remove(prev)
         day = leg.dep_local.date()
-        in_cal, in_con = cal.has_flight(leg.flight, day), con.has_flight(leg.flight, leg.dep, leg.arr, day)
+        if leg.mode == "flight":
+            in_cal, in_con = cal.has_flight(leg.flight, day), con.has_flight(leg.flight, leg.dep, leg.arr, day)
+        else:  # trains, buses, ferries: calendar only; any event starting at the same moment is this one
+            in_cal, in_con = cal.has_event_at(leg.instants(airports)[0]), True
         if parsed.kind == "change" and not notes and (in_cal or in_con):
-            alerts.append(f"Change for {leg.flight} on {day} not applied, its event was not made by flightmail: {where}")
+            alerts.append(f"Change for {leg.key} on {day} not applied, its event was not made by flightmail: {where}")
             continue
         event_id = None if in_cal else cal.create(leg, notes)
         contrail_id = None if in_con else con.add(leg)
