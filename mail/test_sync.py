@@ -16,8 +16,11 @@ D = datetime
 
 
 class FakeCalendar:
-    def __init__(self, foreign=()):
-        self.events, self.foreign, self.n = {}, set(foreign), 0  # id -> [leg, notes]
+    def __init__(self, foreign=(), foreign_at=()):
+        self.events, self.foreign, self.foreign_at, self.n = {}, set(foreign), set(foreign_at), 0  # id -> [leg, notes]
+
+    def has_event_at(self, start):
+        return start in self.foreign_at or any(l.instants(AIRPORTS)[0] == start for l, _ in self.events.values())
 
     def has_flight(self, flight, day):
         return (flight, day) in self.foreign or any(l.flight == flight and l.dep_local.date() == day for l, _ in self.events.values())
@@ -220,6 +223,38 @@ def test_same_flight_two_dates_in_one_email():
     run(booking(leg(), second), state, cal, con)
     assert sorted(l.dep_local.day for l, _ in cal.events.values()) == [16, 23]
     assert len(con.flights) == 2 and len(state["legs"]) == 2
+
+
+def bus(dep_local=D(2026, 11, 21, 9, 30), codes=("3000000001",)):
+    return Leg("", "Lisboa (Oriente)", "Porto (Campanhã)", dep_local, dep_local.replace(hour=13), codes, "", None,
+               "bus", "Europe/Lisbon", "Europe/Lisbon")
+
+
+def test_ground_leg_goes_to_calendar_only():
+    cal, con, state = FakeCalendar(), FakeContrail(), {}
+    assert run(booking(bus()), state, cal, con) == []
+    assert len(cal.events) == 1 and con.flights == {}
+    assert state["legs"][0]["flight"] == "bus:Lisboa (Oriente)>Porto (Campanhã)" and state["legs"][0]["contrail_id"] is None
+
+
+def test_ground_duplicate_is_an_event_at_the_same_moment():
+    start = bus().instants(AIRPORTS)[0]
+    cal, con, state = FakeCalendar(foreign_at={start}), FakeContrail(), {}
+    run(booking(bus()), state, cal, con)
+    assert cal.events == {} and state.get("legs") == []
+
+
+def test_ground_cancel_by_booking_code_only():
+    cal, con, state = FakeCalendar(), FakeContrail(), {}
+    run(booking(bus()), state, cal, con)
+    assert run(Parsed("cancel", [], [], False, [], date(2026, 11, 1), ("3000000001",)), state, cal, con) == []
+    assert cal.events == {} and state["legs"] == []
+
+
+def test_enrich_skips_ground_legs():
+    look = Lookup(None)
+    sync.enrich(booking(bus()), look, {}, NOW, 100)
+    assert look.calls == []
 
 
 def test_other_kind_does_nothing():
