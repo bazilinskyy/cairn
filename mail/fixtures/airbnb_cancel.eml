@@ -1,0 +1,14 @@
+From: Airbnb <automated@airbnb.com>
+Subject: Airbnb Reservation Canceled
+Date: Fri, 05 Jun 2026 10:00:00 +0000
+To: jan.testers@example.com
+Content-Type: text/html; charset="utf-8"
+MIME-Version: 1.0
+
+<html lang="en"><body>
+<div style="display:none">Your reservation has been canceled</div>
+<table><tr><td><h1>Reservation canceled</h1></td></tr>
+<tr><td><p>Test room in a house with a pool</p><p>Jun 15 – 18</p><p>2 adults</p></td></tr>
+<tr><td><p>We've sent your refund to PayPal t••••s@example.com. It should arrive within 10 business days.</p></td></tr>
+<tr><td><a href="https://www.airbnb.com/trips/v1/reservation-details/ro/RESERVATION2_CHECKIN/HMTEST0001?c=x"><span>Show original receipt</span></a></td></tr>
+</table></body></html>

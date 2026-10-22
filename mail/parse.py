@@ -487,8 +487,8 @@ def _agency_name(sender):
     return parts[-2].capitalize() if len(parts) > 1 else domain
 
 
-def parse_email(msg, airports, airlines, places=None, home_tz="Europe/Amsterdam"):
-    """places: GeoNames towns (ground.load_cities) for the time zones of train, bus and ferry stations."""
+def message_parts(msg):
+    """(subject, sender address, received datetime, html, plain text) of an email."""
     from email.header import decode_header, make_header
     from email.utils import parseaddr, parsedate_to_datetime
 
@@ -507,6 +507,12 @@ def parse_email(msg, airports, airlines, places=None, home_tz="Europe/Amsterdam"
                 html = body
             elif part.get_content_subtype() == "plain" and not plain:
                 plain = body
+    return subject, sender, received, html, plain
+
+
+def parse_email(msg, airports, airlines, places=None, home_tz="Europe/Amsterdam"):
+    """places: GeoNames towns (ground.load_cities) for the time zones of train, bus and ferry stations."""
+    subject, sender, received, html, plain = message_parts(msg)
     text = html_to_text(html) if html else plain
     lines = text.split("\n")
     cities = {}

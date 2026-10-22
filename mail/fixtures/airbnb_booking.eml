@@ -1,0 +1,20 @@
+From: Airbnb <automated@airbnb.com>
+Subject: Confirmed: Your reservation for Jun 15 – 18
+Date: Fri, 01 May 2026 10:00:00 +0000
+To: jan.testers@example.com
+Content-Type: text/html; charset="utf-8"
+MIME-Version: 1.0
+
+<html lang="en"><body>
+<div style="display:none">You’re all set for Annecy</div>
+<table><tr><td><h1>You’re all set for Annecy</h1></td></tr>
+<tr><td><a href="https://www.airbnb.com/rooms/1"><p>Test room in a house with a pool</p></a><p>Room hosted by Testa</p></td></tr>
+<tr><td><p>Check-in</p><p>Mon, Jun 15</p><p>After 3:00 PM</p></td>
+<td><p>Checkout</p><p>Thu, Jun 18</p><p>By 11:00 AM</p></td></tr>
+<tr><td><p>Address</p><p>1 Rue du Test, 74000 Annecy, France</p></td></tr>
+<tr><td><p>Guests</p><p>2 adults</p></td></tr>
+<tr><td><p>Scheduled payment</p><p>PayPal t••••s@example.com € 64.50</p></td></tr>
+<tr><td><p>Balance due (EUR)</p></td><td><p>€ 64.50</p></td></tr>
+<tr><td><p>Confirmation code: HMTEST0001</p></td></tr>
+<tr><td><a href="https://www.airbnb.com/trips/v1/reservation-details/ro/RESERVATION2_CHECKIN/HMTEST0001?c=x">View reservation</a></td></tr>
+</table></body></html>

@@ -1,0 +1,20 @@
+From: Discover Cars <booking@discovercars.com>
+Subject: Uw boeking van uw huurauto D000000001 is bevestigd (afhalen op 12 nov 2026)
+Date: Mon, 10 Aug 2026 10:00:00 +0000
+To: jan.testers@example.com
+Content-Type: text/html; charset="utf-8"
+MIME-Version: 1.0
+
+<html><body><table>
+<tr><td><p>Jan, uw autoverhuur boeking in Porto, Portugal is bevestigd!</p></td></tr>
+<tr><td>Reserveringsnummer: <b>D000000001</b></td></tr>
+<tr><td>Bevestigingsnummer: <b>00000/00000/2026</b></td></tr>
+<tr><td>Leverancier:</td></tr><tr><td>Test Rent</td></tr>
+<tr><td><a href="https://www.discovercars.com/nl/reservation/show/D000000001/dGVzdA==">Boeking bekijken</a></td></tr>
+<tr><td><b>Ophalen</b></td></tr><tr><td>12 nov 2026, 10:00</td></tr><tr><td>Centrum, Porto, Portugal</td></tr>
+<tr><td><b>Inleveren</b></td></tr><tr><td>15 nov 2026, 10:00</td></tr><tr><td>Centrum, Porto, Portugal</td></tr>
+<tr><td><b>Betaling</b></td></tr>
+<tr><td>Betaald</td><td>64.20 EUR</td></tr>
+<tr><td>Betalen bij ophalen</td><td>0.00 EUR</td></tr>
+<tr><td>Totaalbedrag</td></tr><tr><td>64.20 EUR</td></tr>
+</table></body></html>
