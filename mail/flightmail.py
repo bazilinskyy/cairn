@@ -157,6 +157,8 @@ def title_has_flight(title, flight):
 
 def event_notes(leg, notes):
     pnr = next((c for c in leg.codes if not re.fullmatch(r"[\d-]+", c)), None)
+    if not pnr and leg.mode != "flight" and leg.codes:  # bus and train bookings are often just numbers
+        pnr = leg.codes[0]
     lines = ([f"Confirmation Code: {pnr}"] if pnr else []) + ([f"Booking: {leg.agency}"] if leg.agency else [])
     lines.append(f"flightmail {leg.codes[0] if leg.codes else '-'} {leg.key}")
     if leg.arr_guess:
