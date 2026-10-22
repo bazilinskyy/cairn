@@ -70,6 +70,27 @@ def test_reconcile():
     assert plan.reconcile(desired, owned) == {"create": ["a"], "update": ["b"], "remove": ["c"]}
 
 
+
+def test_work_hours():
+    from zoneinfo import ZoneInfo
+    ams = ZoneInfo("Europe/Amsterdam")
+    t = lambda *a, tz=ams: D(*a, tzinfo=tz)
+    assert not plan.in_work_hours(t(2026, 10, 22, 17, 40), t(2026, 10, 22, 22, 40))  # Thursday evening
+    assert plan.in_work_hours(t(2026, 11, 16, 14, 10), t(2026, 11, 16, 18, 55))      # Monday afternoon
+    assert not plan.in_work_hours(t(2026, 11, 14, 10, 0), t(2026, 11, 14, 14, 0))    # Saturday
+    assert not plan.in_work_hours(t(2026, 11, 20, 17, 0), t(2026, 11, 20, 19, 0))    # Friday from 17:00
+    assert not plan.in_work_hours(t(2026, 11, 20, 6, 0), t(2026, 11, 20, 9, 0))      # ends at 09:00
+    assert plan.in_work_hours(t(2026, 11, 15, 22, 0), t(2026, 11, 16, 10, 0))        # overnight into Monday
+    lis = ZoneInfo("Europe/Lisbon")  # 08:30 in Lisbon is 09:30 at home
+    assert plan.in_work_hours(t(2026, 11, 17, 7, 0, tz=lis), t(2026, 11, 17, 8, 30, tz=lis))
+
+
+def test_block_of_a_ground_leg_uses_its_station_zones():
+    row = {"dep": "Lisboa (Oriente)", "arr": "Madrid", "dep_local": "2026-11-17T09:00:00", "arr_local": "2026-11-17T18:00:00",
+           "tz": ["Europe/Lisbon", "Europe/Madrid"]}
+    s, e = plan.block(row, {})
+    assert (s.isoformat(), e.isoformat()) == ("2026-11-17T07:00:00+00:00", "2026-11-17T19:00:00+01:00")
+
 if __name__ == "__main__":
     tests = [f for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f) and hasattr(f, "__code__")]
     for t in tests:

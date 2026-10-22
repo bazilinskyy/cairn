@@ -274,6 +274,18 @@ def test_note_stay():
     assert "HM3" not in state["stays"]  # over for more than a month
 
 
+
+def test_blocks_only_in_work_hours_and_for_ground_legs():
+    ap = test_parse.airports()
+    state = {"seen": {"KL1234@2026-11-14": seen_row("KL1234", "AMS", "LIS", "2026-11-14T16:10:00", "2026-11-14T17:55:00")},  # Saturday
+             "ground": {"bus@2026-11-17T10:00:00": {"flight": "bus:A>B", "dep": "A", "arr": "B", "dep_local": "2026-11-17T10:00:00",
+                                                    "arr_local": "2026-11-17T13:00:00", "codes": [], "mode": "bus",
+                                                    "tz": ["Europe/Lisbon", "Europe/Lisbon"]}}}
+    todos, blocks, banners = Store(), Store(), Store()
+    flightmail.run_extras(state, todos, blocks, banners, ap, flightmail.datetime(2026, 10, 22, 8, 0), ["AMS"])
+    assert list(blocks.items.values()) == [["2026-11-17T08:00:00+00:00", "2026-11-17T14:00:00+00:00"]]
+    assert len(todos.items) == 1  # the Saturday flight still gets its check-in to-do
+
 if __name__ == "__main__":
     tests = [f for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f) and hasattr(f, "__code__")]
     for t in tests:

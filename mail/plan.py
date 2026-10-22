@@ -1,7 +1,7 @@
 """What to keep in step with the flights the owner is on: a check-in to-do per flight, a busy block in the work
-calendar per flight, and an all-day banner per trip. Pure functions over rows of state["seen"]; flightmail.py
+calendar per flight, train, bus or ferry that falls in working hours, and an all-day banner per trip. Pure functions over rows of state["seen"]; flightmail.py
 applies the result to Things and the calendars."""
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 from urllib.parse import quote_plus
 from zoneinfo import ZoneInfo
 
@@ -16,6 +16,7 @@ CHECKIN = {  # airline IATA code -> online check-in page; others get a web searc
     "AI": "https://www.airindia.com/in/en/manage/web-checkin.html", "BA": "https://www.britishairways.com/travel/olcilandingpageauthreq/public/en_nl",
 }
 STAY = timedelta(hours=12)  # a gap this long between two flights means a stay, not a connection
+WORK_HOURS = (9, 17)  # weekdays, in the home time zone
 
 
 def _t(s):
@@ -37,10 +38,24 @@ def todo(row, airports, now):
 
 
 def block(row, airports):
-    """Busy block: from 2 hours before departure to 1 hour after landing, as aware datetimes."""
-    start = _t(row["dep_local"]).replace(tzinfo=ZoneInfo(airports[row["dep"]].tz)) - timedelta(hours=2)
-    end = _t(row["arr_local"]).replace(tzinfo=ZoneInfo(airports[row["arr"]].tz)) + timedelta(hours=1)
+    """Busy block: from 2 hours before departure to 1 hour after arrival, as aware datetimes. Ground legs carry
+    their stations' zones in row["tz"]."""
+    dep_tz, arr_tz = row.get("tz") or (airports[row["dep"]].tz, airports[row["arr"]].tz)
+    start = _t(row["dep_local"]).replace(tzinfo=ZoneInfo(dep_tz)) - timedelta(hours=2)
+    end = _t(row["arr_local"]).replace(tzinfo=ZoneInfo(arr_tz)) + timedelta(hours=1)
     return start, end
+
+
+def in_work_hours(start, end, tz="Europe/Amsterdam", hours=WORK_HOURS):
+    """Whether start..end overlaps working hours on a weekday (Monday to Friday), in tz."""
+    z = ZoneInfo(tz)
+    start, end = start.astimezone(z), end.astimezone(z)
+    day = start.date()
+    while day <= end.date():
+        if day.weekday() < 5 and start < datetime.combine(day, time(hours[1]), z) and datetime.combine(day, time(hours[0]), z) < end:
+            return True
+        day += timedelta(days=1)
+    return False
 
 
 def trips(rows, home, airports):

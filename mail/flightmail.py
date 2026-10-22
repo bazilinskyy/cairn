@@ -446,17 +446,20 @@ def _ahead(kind, spec, now):
     return spec["end"] >= now.date().isoformat()
 
 
-def run_extras(state, todos, blocks, banners, airports, now, home):
-    """Keep a check-in to-do and a busy block per future flight in state["seen"], and a banner per trip, in step.
-    Items that are past are forgotten, never changed."""
-    seen = state.setdefault("seen", {})
+def run_extras(state, todos, blocks, banners, airports, now, home, work_tz="Europe/Amsterdam"):
+    """Keep a check-in to-do per future flight in state["seen"], a busy block per future flight or ground leg
+    (state["ground"]) in working hours, and a banner per trip, in step. Items that are past are forgotten, never changed."""
+    seen, ground = state.setdefault("seen", {}), state.setdefault("ground", {})
     oldest = (now.date() - timedelta(days=30)).isoformat()
-    for k in [k for k, r in seen.items() if r["arr_local"][:10] < oldest]:
-        del seen[k]
+    for reg in (seen, ground):
+        for k in [k for k, r in reg.items() if r["arr_local"][:10] < oldest]:
+            del reg[k]
     known = {k: r for k, r in seen.items() if r["dep"] in airports and r["arr"] in airports}
     future = {k: r for k, r in known.items() if datetime.fromisoformat(r["dep_local"]) > now}
+    rides = {**future, **{"ground:" + k: r for k, r in ground.items() if datetime.fromisoformat(r["dep_local"]) > now}}
     want = {"todos": {k: plan.todo(r, airports, now) for k, r in future.items()},
-            "blocks": {k: [t.isoformat() for t in plan.block(r, airports)] for k, r in future.items()},
+            "blocks": {k: [t.isoformat() for t in b] for k, r in rides.items()
+                       for b in [plan.block(r, airports)] if plan.in_work_hours(*b, work_tz)},
             "banners": {t["id"]: t for t in plan.trips(list(known.values()), home, airports)
                         if t["end"] >= now.date().isoformat()}}
     for kind, store in (("todos", todos), ("blocks", blocks), ("banners", banners)):
@@ -617,7 +620,8 @@ def run(args, cfg, sec):
             save_state(work)
     if extras:
         todos, blocks, banners = (Logged(x, name, args.dry_run) for x, name in zip(extras, ("things", "work calendar", "banner")))
-        run_extras(work, todos, blocks, banners, airports, now(), cfg.get("home_airports", ["AMS", "EIN", "RTM"]))
+        run_extras(work, todos, blocks, banners, airports, now(), cfg.get("home_airports", ["AMS", "EIN", "RTM"]),
+                   cfg.get("home_timezone", "Europe/Amsterdam"))
         if not args.dry_run:
             save_state(work)
     docs = open_docs(cfg, args.dry_run)

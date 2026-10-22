@@ -298,6 +298,19 @@ def test_other_kind_does_nothing():
     assert cal.events == {} and con.flights == {}
 
 
+
+def test_ground_legs_are_tracked_for_busy_blocks():
+    cal, con, state = FakeCalendar(), FakeContrail(), {}
+    run(booking(bus()), state, cal, con)
+    (sid, row), = state["ground"].items()
+    assert row["mode"] == "bus" and row["tz"] == ["Europe/Lisbon", "Europe/Lisbon"] and row["dep_local"] == bus().dep_local.isoformat()
+    run(Parsed("cancel", [], [], False, [], date(2026, 11, 1), ("3000000001",)), state, cal, con)
+    assert state["ground"] == {}
+    start = bus().instants(AIRPORTS)[0]  # also when the event was not made by flightmail
+    state = {}
+    run(booking(bus()), state, FakeCalendar(foreign_at={start}), con)
+    assert len(state["ground"]) == 1
+
 if __name__ == "__main__":
     tests = [f for n, f in sorted(globals().items()) if n.startswith("test_")]
     for t in tests:
