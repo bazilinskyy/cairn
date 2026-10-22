@@ -37,14 +37,15 @@ def enrich(parsed, lookup, cache, now, limit):
             found = lookup(leg.flight, day)
             known[key] = _row(found) if found and found.complete else None
         hit = known[key]
-        legs.append(Leg(leg.flight, hit["dep"], hit["arr"], datetime.fromisoformat(hit["dep_local"]),
-                        datetime.fromisoformat(hit["arr_local"]), leg.codes, leg.agency, leg.day) if hit else leg)
+        legs.append(replace(leg, dep=hit["dep"], arr=hit["arr"], dep_local=datetime.fromisoformat(hit["dep_local"]),
+                            arr_local=datetime.fromisoformat(hit["arr_local"])) if hit else leg)
     return replace(parsed, legs=legs)
 
 
 def apply(parsed, sender, subject, received, state, cal, con, names, now, airports):
     """Apply one email; returns alert lines (empty when there is nothing to report)."""
     legs = state.setdefault("legs", [])
+    seen = state.setdefault("seen", {})  # every future flight the owner is on, also ones flightmail did not create
     if parsed.kind == "other" or not is_passenger(parsed.passengers, names):
         return []
     alerts = []
@@ -72,6 +73,18 @@ def apply(parsed, sender, subject, received, state, cal, con, names, now, airpor
                 return e
         return fallback
 
+    def unsee(leg, keep=None):
+        """Forget registry entries for this flight number and booking (another day than `keep`)."""
+        for sid in [k for k, r in seen.items() if r["flight"] == leg.key and (not leg.codes or not r["codes"]
+                    or set(leg.codes) & set(r["codes"])) and k != keep and (r["flight"], r["dep_local"][:10]) not in in_email]:
+            del seen[sid]
+
+    def see(leg):
+        if leg.mode == "flight":
+            sid = f"{leg.key}@{leg.when.isoformat()}"
+            unsee(leg, keep=sid)
+            seen[sid] = {**_row(leg), "codes": list(leg.codes), "checkin_url": leg.checkin_url}
+
     def remove(e):
         if e["event_id"]:
             cal.delete(e["event_id"])
@@ -83,8 +96,12 @@ def apply(parsed, sender, subject, received, state, cal, con, names, now, airpor
         if not parsed.legs and parsed.codes:  # e.g. "your booking #123 has been cancelled"
             for e in [e for e in legs if set(e["codes"]) & set(parsed.codes)]:
                 remove(e)
+            for sid in [k for k, r in seen.items() if set(r["codes"]) & set(parsed.codes)]:
+                del seen[sid]
             return alerts
         for leg in parsed.legs:
+            in_email.clear()
+            unsee(leg)
             e = owned(leg)
             if e:
                 remove(e)
@@ -100,6 +117,7 @@ def apply(parsed, sender, subject, received, state, cal, con, names, now, airpor
 
     rebooked = []
     for old in parsed.old_legs:
+        unsee(old)
         e = owned(old)
         if e:
             rebooked.append(f"Rebooked from {e['flight']} on {e['dep_local'][:10]}")
@@ -109,6 +127,7 @@ def apply(parsed, sender, subject, received, state, cal, con, names, now, airpor
     for leg in complete:
         if not all(leg.tz(airports)) or leg.instants(airports)[0] <= local_now:
             continue
+        see(leg)
         e = owned(leg)
         if e:
             if all(e[k] == v for k, v in _row(leg).items()):
