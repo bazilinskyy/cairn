@@ -13,6 +13,7 @@ class Airport:
     name: str
     city: str
     tz: str
+    country: str = ""
 
 
 @dataclass(frozen=True)
@@ -71,7 +72,7 @@ def load_airports(path):
     with open(path, encoding="utf-8", newline="") as f:
         for row in csv.reader(f):
             if len(row) > 11 and re.fullmatch(r"[A-Z]{3}", row[4]) and "/" in row[11]:
-                out[row[4]] = Airport(row[1], row[2], row[11])
+                out[row[4]] = Airport(row[1], row[2], row[11], row[3])
     return out
 
 
