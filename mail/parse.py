@@ -413,7 +413,7 @@ def _codes(lines, airlines):
     pnrs, numbers = [], []
     for i, line in enumerate(lines):
         for m in CODE_RX.finditer(line):
-            rest = line[m.end():].strip(" :|#-–")
+            rest = re.sub(r"(?i)^\s*(?:no|nr|number|nummer|id)\b\.?", "", line[m.end():]).strip(" :|#-–")
             value = (rest or (lines[i + 1] if i + 1 < len(lines) else "")).strip(" :|#").split(" ")[0].strip("()[],.;")
             if re.fullmatch(r"[A-Z0-9]{5,12}", value) and re.search(r"[A-Z]", value) and not _flights(value, airlines):
                 if value not in pnrs:
