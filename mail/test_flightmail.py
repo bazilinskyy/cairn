@@ -248,7 +248,7 @@ def test_extras_skipped_banner_and_past_items():
 
 
 def test_things_script_arguments():
-    spec = {"title": "Check in ✈️ KL1234: Amsterdam - Lisbon", "when": "2026-11-15", "notes": "https://x\nBooking code: ABC123"}
+    spec = {"title": "check in KL1234", "when": "2026-11-15", "notes": "https://x\nBooking code: ABC123"}
     assert flightmail.ThingsTodos("✈️ Travel").args(spec) == [spec["title"], spec["notes"], "2026", "11", "15", "✈️ Travel"]
 
 

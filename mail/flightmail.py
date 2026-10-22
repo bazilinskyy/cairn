@@ -273,6 +273,7 @@ THINGS_CREATE = """on run argv
     set td to make new to do with properties {name:theTitle, notes:theNotes}
     set project of td to project proj
     schedule td for dt
+    set due date of td to dt
     return id of td
   end tell
 end run"""
@@ -291,6 +292,7 @@ THINGS_UPDATE = """on run argv
         set notes of td to theNotes
         set project of td to project proj
         schedule td for dt
+        set due date of td to dt
       end if
     end try
   end tell

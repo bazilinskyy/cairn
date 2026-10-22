@@ -28,13 +28,14 @@ def _city(code, airports):
 
 
 def todo(row, airports, now):
-    """Check-in to-do: scheduled the day before departure (today when that has passed), with the check-in link."""
+    """Check-in to-do "check in KL1234": scheduled, and due (Things' deadline), the day before departure (today
+    when that has passed), with the check-in link."""
     when = max((_t(row["dep_local"]) - timedelta(days=1)).date(), now.date())
     url = row.get("checkin_url") or CHECKIN.get(row["flight"][:2]) or \
         f"https://www.google.com/search?q={quote_plus(row['flight'] + ' online check-in')}"
     code = next((c for c in row["codes"] if not c.replace("-", "").isdigit()), row["codes"][0] if row["codes"] else "")
-    return {"title": f"Check in ✈️ {row['flight']}: {_city(row['dep'], airports)} - {_city(row['arr'], airports)}",
-            "when": when.isoformat(), "notes": url + (f"\nBooking code: {code}" if code else "")}
+    return {"title": f"check in {row['flight']}", "when": when.isoformat(),
+            "notes": url + (f"\nBooking code: {code}" if code else "")}
 
 
 def block(row, airports):

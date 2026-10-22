@@ -26,7 +26,7 @@ def row(flight, dep, arr, t0, t1, codes=("ABC123",), url=""):
 def test_todo_day_before_with_link():
     r = row("KL1234", "AMS", "LIS", D(2026, 11, 16, 16, 10), D(2026, 11, 16, 17, 55), url="https://example.com/ci")
     t = plan.todo(r, AP, NOW)
-    assert t == {"title": "Check in ✈️ KL1234: Amsterdam - Lisbon", "when": "2026-11-15",
+    assert t == {"title": "check in KL1234", "when": "2026-11-15",
                  "notes": "https://example.com/ci\nBooking code: ABC123"}
 
 
