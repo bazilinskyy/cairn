@@ -9,6 +9,8 @@ Never exits non-zero: failures are logged and posted to Discord (an applet that 
 """
 import argparse
 import email
+import io
+import zipfile
 import imaplib
 import json
 import os
@@ -26,12 +28,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from parse import Leg, load_airlines, load_airports, parse_email  # noqa: E402
 import sync  # noqa: E402
+import ground  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 AIRLINES_URL = "https://raw.githubusercontent.com/jpatokal/openflights/master/data/airlines.dat"
 GMAIL_QUERY = ("flight OR flights OR vlucht OR vluchten OR flug OR vol OR vuelo OR voo OR boarding OR itinerary OR "
                "reisoverzicht OR reisplan OR PNR OR boekingscode OR \"booking reference\" OR reserveringsnummer OR "
-               "e-ticket OR geannuleerd OR cancelled OR rebooked OR omgeboekt OR category:reservations")
+               "e-ticket OR geannuleerd OR cancelled OR rebooked OR omgeboekt OR category:reservations OR "
+               "train OR trein OR treinreis OR bus OR busreis OR coach OR ferry OR veerboot OR bilhete OR billet OR "
+               "flixbus OR sncf OR nsinternational OR redbus OR 12go OR rnetickets")
 
 
 def home():
@@ -57,10 +62,15 @@ def load_config():
 
 
 def load_reference(cfg):
-    airlines = REPO / "data" / "airlines.dat"
+    """Airports, airlines and GeoNames towns (for station time zones), downloaded into data/ when missing."""
+    data = REPO / "data"
+    airlines, towns = data / "airlines.dat", data / "cities1000.txt"
     if not airlines.exists():
         urllib.request.urlretrieve(AIRLINES_URL, airlines)
-    return load_airports(REPO / cfg["airports_file"]), load_airlines(airlines)
+    if not towns.exists():
+        with urllib.request.urlopen(ground.CITIES_URL, timeout=120) as r:
+            zipfile.ZipFile(io.BytesIO(r.read())).extract("cities1000.txt", data)
+    return load_airports(REPO / cfg["airports_file"]), load_airlines(airlines), ground.load_cities(towns)
 
 
 def load_state():
@@ -88,8 +98,9 @@ def send_discord(text, sec):
 
 # --- Gmail (read only) ---
 
-def fetch_new(cfg, sec, state):
-    """(uid, message) for new messages in All Mail that match the flight query, oldest first. Never changes the mailbox."""
+def fetch_new(cfg, sec, state, since_days=None):
+    """(uid, message) for new messages in All Mail that match the travel query, oldest first; with since_days, all
+    matching messages of that many days instead (a rescan). Never changes the mailbox."""
     imap = imaplib.IMAP4_SSL("imap.gmail.com", 993)
     try:
         imap.login(cfg["gmail_user"], sec["gmail_app_password"])
@@ -100,14 +111,14 @@ def fetch_new(cfg, sec, state):
         if state.get("uidvalidity") not in (None, validity):
             state.pop("last_uid", None)
         state["uidvalidity"] = validity
-        if state.get("last_uid"):
+        if state.get("last_uid") and not since_days:
             criteria = ["UID", f"{state['last_uid'] + 1}:*"]
         else:
-            since = (now() - timedelta(days=int(cfg.get("lookback_days", 365)))).strftime("%d-%b-%Y")
+            since = (now() - timedelta(days=int(since_days or cfg.get("lookback_days", 365)))).strftime("%d-%b-%Y")
             criteria = ["SINCE", since]
         query = cfg.get("gmail_query") or GMAIL_QUERY
         _, data = imap.uid("SEARCH", "X-GM-RAW", '"' + query.replace('"', '\\"') + '"', *criteria)
-        uids = sorted(int(u) for u in data[0].split() if int(u) > state.get("last_uid", 0))
+        uids = sorted(int(u) for u in data[0].split() if since_days or int(u) > state.get("last_uid", 0))
         out = []
         for uid in uids:
             _, parts = imap.uid("FETCH", str(uid), "(BODY.PEEK[])")
@@ -115,7 +126,7 @@ def fetch_new(cfg, sec, state):
             msg = email.message_from_bytes(raw, policy=policy.compat32)
             if parseaddr(msg.get("From", ""))[1].lower() != cfg["gmail_user"].lower():  # skip sent mail
                 out.append((uid, msg))
-            elif uid > state.get("last_uid", 0):
+            else:
                 out.append((uid, None))  # keeps last_uid moving past sent mail
         return out
     finally:
@@ -127,8 +138,14 @@ def fetch_new(cfg, sec, state):
 
 # --- Travel calendar (EventKit) ---
 
+EMOJI = {"flight": "✈️", "train": "🚆", "bus": "🚌", "ferry": "⛴️"}
+
+
 def event_title(leg, airports):
-    """The owner's style with a plane: "✈️ KL1234: Amsterdam - Lisbon" (airport cities from airports.dat)."""
+    """The owner's style: "✈️ KL1234: Amsterdam - Lisbon" (airport cities from airports.dat); trains, buses and
+    ferries use station names, and the service number when there is one: "🚆 EC9236: Breda - Bruxelles Midi"."""
+    if leg.mode != "flight":
+        return f"{EMOJI.get(leg.mode, '🚌')} {leg.flight + ': ' if leg.flight else ''}{leg.dep} - {leg.arr}"
     city = lambda code: airports[code].city if code in airports else code
     return f"✈️ {leg.flight}: {city(leg.dep)} - {city(leg.arr)}"
 
@@ -141,7 +158,9 @@ def title_has_flight(title, flight):
 def event_notes(leg, notes):
     pnr = next((c for c in leg.codes if not re.fullmatch(r"[\d-]+", c)), None)
     lines = ([f"Confirmation Code: {pnr}"] if pnr else []) + ([f"Booking: {leg.agency}"] if leg.agency else [])
-    lines.append(f"flightmail {leg.codes[0] if leg.codes else '-'} {leg.flight}")
+    lines.append(f"flightmail {leg.codes[0] if leg.codes else '-'} {leg.key}")
+    if leg.arr_guess:
+        lines.append("Arrival time not in the email: the end time is a guess.")
     return "\n".join(lines + list(notes))
 
 
@@ -181,15 +200,23 @@ class EventKitCalendar:
             self._ns(start), self._ns(start + timedelta(days=1)), [self.cal])
         return any(title_has_flight(ev.title(), flight) for ev in self.store.eventsMatchingPredicate_(pred) or [])
 
+    def has_event_at(self, start):
+        """Any event in the calendar starting within five minutes of this moment."""
+        pred = self.store.predicateForEventsWithStartDate_endDate_calendars_(
+            self._ns(start - timedelta(minutes=5)), self._ns(start + timedelta(minutes=5)), [self.cal])
+        t = start.timestamp()
+        return any(not ev.isAllDay() and abs(ev.startDate().timeIntervalSince1970() - t) <= 300
+                   for ev in self.store.eventsMatchingPredicate_(pred) or [])
+
     def _fill(self, ev, leg):
         from Foundation import NSTimeZone
         dep, arr = leg.instants(self.airports)
-        a = self.airports[leg.dep]
         ev.setTitle_(event_title(leg, self.airports))
         ev.setStartDate_(self._ns(dep))
         ev.setEndDate_(self._ns(arr))
-        ev.setTimeZone_(NSTimeZone.timeZoneWithName_(a.tz))
-        ev.setLocation_(f"{a.name}, {a.city}")
+        ev.setTimeZone_(NSTimeZone.timeZoneWithName_(leg.tz(self.airports)[0]))
+        a = self.airports.get(leg.dep) if leg.mode == "flight" else None
+        ev.setLocation_(f"{a.name}, {a.city}" if a else leg.dep)
 
     def _save(self, ev):
         ok, err = self.store.saveEvent_span_commit_error_(ev, self.EK.EKSpanThisEvent, True, None)
@@ -294,6 +321,9 @@ class Logged:
     def lookup(self, *a):
         return self.store.lookup(*a)
 
+    def has_event_at(self, *a):
+        return self.store.has_event_at(*a)
+
     def __getattr__(self, action):
         def call(*a):
             leg = next((x for x in a if isinstance(x, Leg)), None)
@@ -318,13 +348,14 @@ def merge_alerts(alerts):
 def run(args, cfg, sec):
     state = load_state()
     first_run = not state.get("last_uid")
-    messages = fetch_new(cfg, sec, dict(state) if args.dry_run else state)
+    probe = dict(state) if args.dry_run or args.rescan_days else state
+    messages = fetch_new(cfg, sec, probe, since_days=args.rescan_days)
     log(f"{len(messages)} new message(s)")
     if not messages:
         if not args.dry_run:
             save_state(state)
         return []
-    airports, airlines = load_reference(cfg)
+    airports, airlines, places = load_reference(cfg)
     cal, con = open_stores(cfg, airports, airlines)
     cal, con = Logged(cal, "calendar", args.dry_run), Logged(con, "contrail", args.dry_run)
     work = json.loads(json.dumps(state)) if args.dry_run else state
@@ -334,7 +365,7 @@ def run(args, cfg, sec):
     alerts = []
     for uid, msg in messages:
         if msg is not None:
-            parsed = parse_email(msg, airports, airlines)
+            parsed = parse_email(msg, airports, airlines, places, cfg.get("home_timezone", "Europe/Amsterdam"))
             if parsed.kind != "other" or parsed.legs:
                 name, addr = parseaddr(msg.get("From", ""))
                 sender = str(make_header(decode_header(name))) if name else addr.rsplit("@", 1)[-1]
@@ -351,7 +382,7 @@ def run(args, cfg, sec):
                     cache_file.write_text(json.dumps(cache, indent=1))
                 alerts += sync.apply(parsed, sender, subject, received, work, cal, con,
                                      cfg.get("passenger_names", []), now(), airports)
-        work["last_uid"] = max(uid, work.get("last_uid", 0))
+        work["last_uid"] = max(uid, work.get("last_uid", 0))  # a rescan never moves it back
         if not args.dry_run:
             save_state(work)
     alerts = merge_alerts(alerts)
@@ -367,6 +398,7 @@ def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("command", nargs="?", choices=["run", "calendars"], default="run")
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--rescan-days", type=int, metavar="N", help="read all matching mail of the last N days again")
     args = p.parse_args(argv)
     sec = {}
     try:
