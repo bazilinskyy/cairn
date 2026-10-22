@@ -16,8 +16,8 @@ def _row(leg):
 
 
 def enrich(parsed, lookup, cache, now, limit):
-    """Airports and times of each future leg from lookup(flight, day) -> Leg | None (AeroDataBox), which win over
-    the email's. One lookup per flight and day, kept in cache; at most `limit` lookups per calendar month."""
+    """Airports and times of each future leg from lookup(flight, day) -> Leg | None (AeroDataBox): times win over
+    the email's for the same route; airports only when the email gives none. One lookup per flight and day, kept in cache; at most `limit` lookups per calendar month."""
     month = now.strftime("%Y-%m")
     if cache.get("month") != month:
         cache["month"], cache["count"] = month, 0
@@ -37,6 +37,10 @@ def enrich(parsed, lookup, cache, now, limit):
             found = lookup(leg.flight, day)
             known[key] = _row(found) if found and found.complete else None
         hit = known[key]
+        # one flight number can fly several hops: a full route in the email is the passenger's, so the lookup only
+        # gives times for that same route, or the route when the email has none
+        if hit and leg.dep and leg.arr and (hit["dep"], hit["arr"]) != (leg.dep, leg.arr):
+            hit = None
         legs.append(replace(leg, dep=hit["dep"], arr=hit["arr"], dep_local=datetime.fromisoformat(hit["dep_local"]),
                             arr_local=datetime.fromisoformat(hit["arr_local"])) if hit else leg)
     return replace(parsed, legs=legs)
