@@ -83,6 +83,16 @@ def test_twelvego_markup_keeps_clock_time():
     assert p.legs[0].dep_tz == "Asia/Kuala_Lumpur"
 
 
+def test_repeated_markup_counts_once():
+    msg = test_parse.fixture("twelvego_bus")
+    html = msg.get_payload(decode=True).decode()
+    block = html[html.index("<script"):html.index("</script>") + 9]
+    twice = html.replace(block, block + block)
+    found = ground.legs("x@b.12go.asia", "", twice, parse.html_to_text(twice).split("\n"), D(2026, 10, 20), cities(),
+                        "Europe/Amsterdam", "bus")
+    assert len(found) == 1
+
+
 def test_rede_expressos():
     p = parsed("rne_bus")
     assert legs(p) == [("bus", "", "Lisboa (Sete Rios)", "Beja", D(2026, 11, 28, 8, 0), D(2026, 11, 28, 12, 45))]
