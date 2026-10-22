@@ -197,11 +197,18 @@ def test_enrich_fills_from_lookup():
     assert look.calls == [("U27891", date(2027, 3, 5))]  # second time from the cache
 
 
-def test_enrich_lookup_wins_over_email():
-    found = Leg("SP412", "PDL", "SMA", D(2026, 10, 29, 13, 30), D(2026, 10, 29, 14, 5))
-    p = booking(Leg("SP412", "LIS", "PDL", D(2026, 10, 29, 10, 0), D(2026, 10, 29, 11, 45), ("ABC123",)))
-    leg = sync.enrich(p, Lookup(found), {}, NOW, 100).legs[0]
-    assert (leg.dep, leg.arr, leg.dep_local) == ("PDL", "SMA", D(2026, 10, 29, 13, 30))
+def test_enrich_keeps_email_route_when_lookup_disagrees():
+    # one flight number can fly several hops; the email's route is the passenger's
+    found = Leg("SP564", "PDL", "SMA", D(2026, 10, 29, 13, 30), D(2026, 10, 29, 14, 5))
+    mine = Leg("SP564", "LIS", "PDL", D(2026, 10, 29, 10, 0), D(2026, 10, 29, 11, 45), ("ABC123",))
+    assert sync.enrich(booking(mine), Lookup(found), {}, NOW, 100).legs[0] == mine
+
+
+def test_enrich_takes_lookup_times_for_the_same_route():
+    found = Leg("KL1234", "AMS", "LIS", D(2026, 11, 16, 16, 30), D(2026, 11, 16, 18, 15))
+    mine = Leg("KL1234", "AMS", "LIS", D(2026, 11, 16, 16, 10), D(2026, 11, 16, 17, 55), ("ABC123",))
+    leg = sync.enrich(booking(mine), Lookup(found), {}, NOW, 100).legs[0]
+    assert (leg.dep_local, leg.arr_local, leg.codes) == (D(2026, 11, 16, 16, 30), D(2026, 11, 16, 18, 15), ("ABC123",))
 
 
 def test_enrich_keeps_email_when_unknown_and_skips_past_and_cap():
