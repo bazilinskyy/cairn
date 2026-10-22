@@ -286,6 +286,28 @@ app.post('/api/flights', (req, res) => {
   res.json(f);
 });
 
+app.put('/api/flights/:id', (req, res) => {
+  const f = flights.find(x => x.id === Number(req.params.id));
+  if (!f) return res.status(404).json({ error: 'no such flight' });
+  const { id, ...changes } = req.body;
+  const moved = ('from' in changes && changes.from !== f.from) || ('to' in changes && changes.to !== f.to);
+  Object.assign(f, changes);
+  if (moved && !('distance' in changes) && airports[f.from] && airports[f.to]) {
+    const a = airports[f.from], b = airports[f.to];
+    f.distance = haversine(a.lat, a.lon, b.lat, b.lon);
+  }
+  saveFlights();
+  res.json(f);
+});
+
+app.delete('/api/flights/:id', (req, res) => {
+  const i = flights.findIndex(x => x.id === Number(req.params.id));
+  if (i < 0) return res.status(404).json({ error: 'no such flight' });
+  const [f] = flights.splice(i, 1);
+  saveFlights();
+  res.json({ deleted: f.id });
+});
+
 // --- TripIt iCal import ---
 
 function parseTripItIcal(text) {
@@ -457,8 +479,8 @@ app.get('/auth/tripit/callback', async (req, res) => {
 // --- Start ---
 
 init().then(() => {
-  const server = app.listen(config.port, () => {
-    console.log(`Contrail running at http://localhost:${config.port}`);
+  const server = app.listen(config.port, config.host, () => {
+    console.log(`Contrail running at http://${config.host}:${config.port}`);
   });
   server.on('error', e => {
     if (e.code === 'EADDRINUSE') {

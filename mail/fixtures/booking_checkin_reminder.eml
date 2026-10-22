@@ -1,0 +1,27 @@
+From: Booking.com <noreply@booking.com>
+To: jan.testers@example.com
+Subject: Check in to your Budapest flight
+Date: Wed, 21 Oct 2026 10:00:00 +0000
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+MIME-Version: 1.0
+
+<html><body>
+<h1>Have you checked in for your flight to Budapest?</h1><div>Hi Jan Testers,=
+</div>
+<div>It=E2=80=99s almost time to fly! Make sure to check in through the <stro=
+ng>airline=E2=80=99s website</strong> to avoid extra charges at the airport.<=
+/div>
+<div><strong>View your check-in information</strong> to find your <strong>boo=
+king reference</strong> and other information you=E2=80=99ll need.</div>
+<span>Your flight summary</span>
+<table><tr><td><div>Customer reference</div><div><span>40-0000000001</span></=
+div></td><td><div>PIN code</div><div><span>0000</span></div></td></tr></table>
+<div><span>Eindhoven</span> <span>(EIN)</span> to <span>Budapest</span> <span=
+>(BUD)</span></div>
+<div><span>Thu 26 Nov</span><span> =C2=B7 </span><span>21:15</span><span> - <=
+/span><span>Thu 26 Nov</span><span> =C2=B7 </span><span>23:20</span></div>
+<div><span>Wizz Air</span><span> =C2=B7 </span><span>W62202</span></div>
+<div><span>Booking reference: QWE321 </span></div>
+<a href=3D"https://example.com/">View check-in information</a>
+</body></html>

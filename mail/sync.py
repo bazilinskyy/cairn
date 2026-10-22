@@ -1,0 +1,134 @@
+"""Decide what one parsed email changes in the Travel calendar and in Contrail.
+
+The calendar and Contrail are passed in as objects with has_flight / create|add / update / delete, so the rules
+can be tested without EventKit or a server. state["legs"] remembers the legs flightmail created.
+"""
+from dataclasses import replace
+from datetime import datetime
+
+from parse import Leg, is_passenger
+
+
+def _row(leg):
+    return {"flight": leg.flight, "dep": leg.dep, "arr": leg.arr,
+            "dep_local": leg.dep_local.isoformat() if leg.dep_local else None,
+            "arr_local": leg.arr_local.isoformat() if leg.arr_local else None}
+
+
+def enrich(parsed, lookup, cache, now, limit):
+    """Airports and times of each future leg from lookup(flight, day) -> Leg | None (AeroDataBox), which win over
+    the email's. One lookup per flight and day, kept in cache; at most `limit` lookups per calendar month."""
+    month = now.strftime("%Y-%m")
+    if cache.get("month") != month:
+        cache["month"], cache["count"] = month, 0
+    known = cache.setdefault("flights", {})
+    legs = []
+    for leg in parsed.legs:
+        day = leg.when
+        if not leg.flight or not day or day < now.date():
+            legs.append(leg)
+            continue
+        key = f"{leg.flight} {day.isoformat()}"
+        if key not in known:
+            if cache["count"] >= limit:
+                legs.append(leg)
+                continue
+            cache["count"] += 1
+            found = lookup(leg.flight, day)
+            known[key] = _row(found) if found and found.complete else None
+        hit = known[key]
+        legs.append(Leg(leg.flight, hit["dep"], hit["arr"], datetime.fromisoformat(hit["dep_local"]),
+                        datetime.fromisoformat(hit["arr_local"]), leg.codes, leg.agency, leg.day) if hit else leg)
+    return replace(parsed, legs=legs)
+
+
+def apply(parsed, sender, subject, received, state, cal, con, names, now, airports):
+    """Apply one email; returns alert lines (empty when there is nothing to report)."""
+    legs = state.setdefault("legs", [])
+    if parsed.kind == "other" or not is_passenger(parsed.passengers, names):
+        return []
+    alerts = []
+    where = f"{sender} | {subject} | {received.isoformat()}"
+    in_email = {(l.flight, l.when.isoformat()) for l in parsed.legs if l.when}
+    about_future = bool(parsed.latest_date and parsed.latest_date >= now.date())  # alerts only for trips still ahead
+
+    def owned(leg):
+        """The stored leg for this flight: same booking code (or, without codes, same day); a stored leg for
+        another day only when that day is not itself in this email (a schedule change moved it)."""
+        day = leg.when.isoformat() if leg.when else None
+        fallback = None
+        for e in legs:
+            if e["flight"] != leg.flight:
+                continue
+            same_day = day is not None and e["dep_local"][:10] == day
+            if leg.codes and e["codes"]:
+                if not set(leg.codes) & set(e["codes"]):
+                    continue
+                if same_day or day is None:
+                    return e
+                if (e["flight"], e["dep_local"][:10]) not in in_email:
+                    fallback = fallback or e
+            elif same_day:
+                return e
+        return fallback
+
+    def remove(e):
+        if e["event_id"]:
+            cal.delete(e["event_id"])
+        if e["contrail_id"]:
+            con.delete(e["contrail_id"])
+        legs.remove(e)
+
+    if parsed.kind == "cancel":
+        for leg in parsed.legs:
+            e = owned(leg)
+            if e:
+                remove(e)
+            elif about_future:
+                alerts.append(f"Cancellation for {leg.flight} not applied, its event was not made by flightmail: {where}")
+        return alerts
+
+    complete = [l for l in parsed.legs if l.complete]
+    if not complete:
+        if about_future and parsed.looks_like_flight and not any(owned(l) for l in parsed.legs):
+            alerts.append(f"Could not read flight: {where}")
+        return alerts
+
+    rebooked = []
+    for old in parsed.old_legs:
+        e = owned(old)
+        if e:
+            rebooked.append(f"Rebooked from {e['flight']} on {e['dep_local'][:10]}")
+            remove(e)
+
+    local_now = now.astimezone()
+    for leg in complete:
+        if leg.dep not in airports or leg.arr not in airports or leg.instants(airports)[0] <= local_now:
+            continue
+        e = owned(leg)
+        if e:
+            if all(e[k] == v for k, v in _row(leg).items()):
+                continue
+            if e["event_id"]:
+                cal.update(e["event_id"], leg, f"Updated {now.date().isoformat()}: schedule change ({sender})")
+            if e["contrail_id"]:
+                con.update(e["contrail_id"], leg)
+            e.update(_row(leg))
+            e["codes"] = list(dict.fromkeys(e["codes"] + list(leg.codes)))
+            continue
+        notes = list(rebooked)
+        prev = next((e for e in legs if set(e["codes"]) & set(leg.codes) and (e["dep"], e["arr"]) == (leg.dep, leg.arr)
+                     and (e["flight"], e["dep_local"][:10]) not in in_email), None)
+        if prev:
+            notes.append(f"Rebooked from {prev['flight']} on {prev['dep_local'][:10]}")
+            remove(prev)
+        day = leg.dep_local.date()
+        in_cal, in_con = cal.has_flight(leg.flight, day), con.has_flight(leg.flight, leg.dep, leg.arr, day)
+        if parsed.kind == "change" and not notes and (in_cal or in_con):
+            alerts.append(f"Change for {leg.flight} on {day} not applied, its event was not made by flightmail: {where}")
+            continue
+        event_id = None if in_cal else cal.create(leg, notes)
+        contrail_id = None if in_con else con.add(leg)
+        if event_id or contrail_id:
+            legs.append({**_row(leg), "codes": list(leg.codes), "event_id": event_id, "contrail_id": contrail_id})
+    return alerts
