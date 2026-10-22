@@ -267,13 +267,14 @@ THINGS_CREATE = """on run argv
   set month of dt to (m as integer)
   set day of dt to (d as integer)
   tell application "Things3"
-    set td to make new to do with properties {name:theTitle, notes:theNotes} at beginning of project proj
+    set td to make new to do with properties {name:theTitle, notes:theNotes}
+    set project of td to project proj
     schedule td for dt
     return id of td
   end tell
 end run"""
 THINGS_UPDATE = """on run argv
-  set {theId, theTitle, theNotes, y, m, d} to argv
+  set {theId, theTitle, theNotes, y, m, d, proj} to argv
   set dt to current date
   set day of dt to 1
   set year of dt to (y as integer)
@@ -285,6 +286,7 @@ THINGS_UPDATE = """on run argv
       if status of td is open then
         set name of td to theTitle
         set notes of td to theNotes
+        set project of td to project proj
         schedule td for dt
       end if
     end try
@@ -320,7 +322,7 @@ class ThingsTodos:
         return self._osa(THINGS_CREATE, self.args(spec))
 
     def update(self, ref, spec):
-        self._osa(THINGS_UPDATE, [ref] + self.args(spec)[:5])
+        self._osa(THINGS_UPDATE, [ref] + self.args(spec))
 
     def remove(self, ref):  # cancel, so it stays visible in the logbook
         self._osa(THINGS_CANCEL, [ref])
