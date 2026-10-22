@@ -257,6 +257,34 @@ def test_enrich_skips_ground_legs():
     assert look.calls == []
 
 
+def test_seen_records_every_future_flight_i_am_on():
+    cal, con, state = FakeCalendar(foreign={("KL1234", date(2026, 11, 16))}), FakeContrail(), {}
+    run(booking(leg()), state, cal, con)
+    assert list(state["seen"]) == ["KL1234@2026-11-16"]
+    assert state["seen"]["KL1234@2026-11-16"]["codes"] == ["ABC123"]
+    run(booking(bus()), state, cal, con)
+    assert list(state["seen"]) == ["KL1234@2026-11-16"]  # flights only
+
+
+def test_seen_follows_schedule_change_and_cancel():
+    cal, con, state = FakeCalendar(), FakeContrail(), {}
+    run(booking(leg()), state, cal, con)
+    moved = leg(dep_local=D(2026, 11, 17, 9, 0), arr_local=D(2026, 11, 17, 10, 45))
+    run(booking(moved, kind="change"), state, cal, con)
+    assert list(state["seen"]) == ["KL1234@2026-11-17"]
+    run(booking(Leg("KL1234", "AMS", "LIS", None, None, ("ABC123",)), kind="cancel"), state, cal, con)
+    assert state["seen"] == {}
+
+
+def test_seen_drops_rebooked_old_legs():
+    cal, con, state = FakeCalendar(), FakeContrail(), {}
+    run(booking(leg()), state, cal, con)
+    new = leg(flight="AF1229", dep="AMS", arr="MAD", dep_local=D(2026, 11, 17, 6, 50), arr_local=D(2026, 11, 17, 9, 15))
+    old = Leg("KL1234", "AMS", "LIS", D(2026, 11, 16, 16, 10), None, ("ABC123",))
+    run(booking(new, kind="change", old=[old]), state, cal, con)
+    assert list(state["seen"]) == ["AF1229@2026-11-17"]
+
+
 def test_other_kind_does_nothing():
     cal, con, state = FakeCalendar(), FakeContrail(), {}
     assert run(booking(leg(), kind="other"), state, cal, con) == []
