@@ -189,6 +189,67 @@ def test_rescan_reads_again_without_moving_back(home):
     assert json.loads((home / "state.json").read_text())["last_uid"] == 500
 
 
+class Store:
+    """Stand-in for Things, the work calendar or the banners: records calls, hands out refs."""
+    def __init__(self, skip=False):
+        self.items, self.calls, self.n, self.skip = {}, [], 0, skip
+
+    def create(self, spec):
+        self.calls.append("create")
+        if self.skip:
+            return None
+        self.n += 1
+        self.items[f"r{self.n}"] = spec
+        return f"r{self.n}"
+
+    def update(self, ref, spec):
+        self.calls.append("update")
+        self.items[ref] = spec
+
+    def remove(self, ref):
+        self.calls.append("remove")
+        del self.items[ref]
+
+
+def seen_row(flight, dep, arr, t0, t1):
+    return {"flight": flight, "dep": dep, "arr": arr, "dep_local": t0, "arr_local": t1, "codes": ["ABC123"], "checkin_url": ""}
+
+
+def test_extras_keep_todos_blocks_and_banners_in_step():
+    ap = test_parse.airports()
+    state = {"seen": {"KL1234@2026-11-16": seen_row("KL1234", "AMS", "LIS", "2026-11-16T16:10:00", "2026-11-16T17:55:00"),
+                      "KL1235@2026-11-20": seen_row("KL1235", "LIS", "AMS", "2026-11-20T10:00:00", "2026-11-20T13:45:00")}}
+    todos, blocks, banners = Store(), Store(), Store()
+    now = flightmail.datetime(2026, 10, 22, 8, 0)
+    flightmail.run_extras(state, todos, blocks, banners, ap, now, ["AMS"])
+    assert sorted(t["when"] for t in todos.items.values()) == ["2026-11-15", "2026-11-19"]
+    assert [b for b in blocks.items.values()][0] == ["2026-11-16T14:10:00+01:00", "2026-11-16T18:55:00+00:00"]
+    assert list(banners.items.values()) == [{"id": "KL1234@2026-11-16", "name": "Lisbon", "start": "2026-11-16", "end": "2026-11-20"}]
+    flightmail.run_extras(state, todos, blocks, banners, ap, now, ["AMS"])  # nothing changed: no calls
+    assert todos.calls == ["create", "create"] and blocks.calls == ["create", "create"] and banners.calls == ["create"]
+    del state["seen"]["KL1235@2026-11-20"]  # return flight cancelled
+    flightmail.run_extras(state, todos, blocks, banners, ap, now, ["AMS"])
+    assert len(todos.items) == 1 and len(blocks.items) == 1 and banners.items == {}
+
+
+def test_extras_skipped_banner_and_past_items():
+    ap = test_parse.airports()
+    state = {"seen": {"KL1234@2026-11-16": seen_row("KL1234", "AMS", "LIS", "2026-11-16T16:10:00", "2026-11-16T17:55:00"),
+                      "KL1235@2026-11-20": seen_row("KL1235", "LIS", "AMS", "2026-11-20T10:00:00", "2026-11-20T13:45:00")}}
+    todos, blocks, banners = Store(), Store(), Store(skip=True)  # an all-day event of the owner already covers the trip
+    flightmail.run_extras(state, todos, blocks, banners, ap, flightmail.datetime(2026, 10, 22), ["AMS"])
+    flightmail.run_extras(state, todos, blocks, banners, ap, flightmail.datetime(2026, 10, 22), ["AMS"])
+    assert banners.calls == ["create"]  # asked once, not every run
+    flightmail.run_extras(state, todos, blocks, banners, ap, flightmail.datetime(2026, 11, 17, 12, 0), ["AMS"])
+    assert todos.calls.count("remove") == 0 and blocks.calls.count("remove") == 0  # past ones are left alone
+    assert list(state["todos"]) == ["KL1235@2026-11-20"]
+
+
+def test_things_script_arguments():
+    spec = {"title": "Check in ✈️ KL1234: Amsterdam - Lisbon", "when": "2026-11-15", "notes": "https://x\nBooking code: ABC123"}
+    assert flightmail.ThingsTodos("✈️ Travel").args(spec) == [spec["title"], spec["notes"], "2026", "11", "15", "✈️ Travel"]
+
+
 def test_title_matches_any_airline_prefix():
     for title in ("EJU7883: Amsterdam - Tenerife South", "✈️ U27883: Amsterdam - Tenerife", "Flight: U2 7883 from AMS to TFS", "U27883: Amsterdam - Tenerife"):
         assert flightmail.title_has_flight(title, "U27883"), title
