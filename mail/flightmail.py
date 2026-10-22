@@ -31,6 +31,8 @@ from parse import Leg, load_airlines, load_airports, parse_email  # noqa: E402
 import sync  # noqa: E402
 import ground  # noqa: E402
 import plan  # noqa: E402
+import stays  # noqa: E402
+import tripdocs  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 AIRLINES_URL = "https://raw.githubusercontent.com/jpatokal/openflights/master/data/airlines.dat"
@@ -38,7 +40,8 @@ GMAIL_QUERY = ("flight OR flights OR vlucht OR vluchten OR flug OR vol OR vuelo 
                "reisoverzicht OR reisplan OR PNR OR boekingscode OR \"booking reference\" OR reserveringsnummer OR "
                "e-ticket OR geannuleerd OR cancelled OR rebooked OR omgeboekt OR category:reservations OR "
                "train OR trein OR treinreis OR bus OR busreis OR coach OR ferry OR veerboot OR bilhete OR billet OR "
-               "flixbus OR sncf OR nsinternational OR redbus OR 12go OR rnetickets")
+               "flixbus OR sncf OR nsinternational OR redbus OR 12go OR rnetickets OR "
+               "from:booking.com OR from:airbnb.com OR from:discovercars.com OR from:vipcars.com")
 
 
 def home():
@@ -415,6 +418,26 @@ def open_extras(cfg, cal):
             Banners(cal))
 
 
+def open_docs(cfg, dry):
+    """The trip docs in Google Drive, when a folder is configured and flightmail is signed in to Google."""
+    token, client = home() / "google_token.json", home() / "google_client.json"
+    if not cfg.get("trip_docs_folder") or not token.exists():
+        return None
+    return tripdocs.TripDocs(tripdocs.Google(client, token), cfg["trip_docs_folder"], log, dry)
+
+
+def note_stay(state, s, now):
+    """Keep a booking (or mark it cancelled) in state["stays"]; bookings over for a month are forgotten."""
+    reg = state.setdefault("stays", {})
+    if s.kind == "booking":
+        reg[s.code] = {k: v.isoformat() if hasattr(v, "isoformat") else v for k, v in s.__dict__.items() if k != "kind"}
+    elif s.code in reg:
+        reg[s.code]["cancelled"] = True
+    oldest = (now.date() - timedelta(days=30)).isoformat()
+    for code in [c for c, r in reg.items() if (r.get("end") or "9999") < oldest]:
+        del reg[code]
+
+
 def _ahead(kind, spec, now):
     if kind == "todos":
         return spec["when"] >= now.date().isoformat()
@@ -553,7 +576,7 @@ def run(args, cfg, sec):
     probe = dict(state) if args.dry_run or args.rescan_days else state
     messages = fetch_new(cfg, sec, probe, since_days=args.rescan_days)
     log(f"{len(messages)} new message(s)")
-    if not messages and not state.get("seen"):
+    if not messages and not state.get("seen") and not state.get("stays"):
         if not args.dry_run:
             save_state(state)
         return []
@@ -567,7 +590,11 @@ def run(args, cfg, sec):
     limit = int(cfg.get("lookup_monthly_limit", 100))
     alerts = []
     for uid, msg in messages:
-        if msg is not None:
+        s = msg is not None and stays.parse_email(msg)
+        if s:
+            log(f"uid {uid} {s.what} {s.kind}: {s.provider} {s.place} {s.start}..{s.end} {s.type} {s.price}")
+            note_stay(work, s, now())
+        if msg is not None and not s:
             parsed = parse_email(msg, airports, airlines, places, cfg.get("home_timezone", "Europe/Amsterdam"))
             if parsed.kind != "other" or parsed.legs:
                 name, addr = parseaddr(msg.get("From", ""))
@@ -593,6 +620,13 @@ def run(args, cfg, sec):
         run_extras(work, todos, blocks, banners, airports, now(), cfg.get("home_airports", ["AMS", "EIN", "RTM"]))
         if not args.dry_run:
             save_state(work)
+    docs = open_docs(cfg, args.dry_run)
+    if docs:
+        try:
+            docs.run(work, airports, now(), cfg.get("home_airports", ["AMS", "EIN", "RTM"]))
+        finally:
+            if not args.dry_run:
+                save_state(work)
     alerts = merge_alerts(alerts)
     for a in alerts:
         log("ALERT " + a)

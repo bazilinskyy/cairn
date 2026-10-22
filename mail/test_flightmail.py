@@ -43,7 +43,8 @@ CFG = ({"passenger_names": ["Jan Testers"], "gmail_user": "jan.testers@example.c
 
 def patch(**values):
     values = {"load_config": lambda: CFG, "now": lambda: flightmail.datetime(2026, 10, 21, 12, 0),
-              "open_extras": lambda cfg, cal: None, **values}  # never drive the real Things or calendars
+              "open_extras": lambda cfg, cal: None, "open_docs": lambda cfg, dry: None,
+              **values}  # never drive the real Things, calendars or Google Docs
     saved = {k: getattr(flightmail, k) for k in values}
     for k, v in values.items():
         setattr(flightmail, k, v)
@@ -256,6 +257,21 @@ def test_title_matches_any_airline_prefix():
         assert flightmail.title_has_flight(title, "U27883"), title
     assert not flightmail.title_has_flight("EJU78830: somewhere", "U27883")
     assert not flightmail.title_has_flight("Tenerife", "U27883")
+
+
+
+def test_note_stay():
+    from stays import Stay
+    from datetime import date
+    state, now = {}, flightmail.datetime(2026, 10, 21, 12, 0)
+    flightmail.note_stay(state, Stay("booking", "stay", "Airbnb", "HM1", "Faro", "Portugal", date(2026, 11, 1), date(2026, 11, 3)), now)
+    assert state["stays"]["HM1"]["start"] == "2026-11-01" and "cancelled" not in state["stays"]["HM1"]
+    flightmail.note_stay(state, Stay("cancel", "stay", "Airbnb", "HM1"), now)
+    assert state["stays"]["HM1"]["cancelled"] is True
+    flightmail.note_stay(state, Stay("cancel", "stay", "Airbnb", "HM2"), now)  # never booked here: nothing to cancel
+    assert "HM2" not in state["stays"]
+    flightmail.note_stay(state, Stay("booking", "stay", "Airbnb", "HM3", "Faro", "", date(2026, 9, 1), date(2026, 9, 2)), now)
+    assert "HM3" not in state["stays"]  # over for more than a month
 
 
 if __name__ == "__main__":
