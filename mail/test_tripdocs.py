@@ -88,7 +88,7 @@ class FakeGoogle:
 
 
 def rows(*texts):
-    return [[{"text": t} for t in row] for row in texts]
+    return [[t if isinstance(t, dict) else {"text": t} for t in row] for row in texts]
 
 
 def texts(table):
@@ -118,15 +118,18 @@ def test_dates():
 
 def test_fills_the_row_of_that_place_and_keeps_user_text():
     g = FakeGoogle({"d1": {"name": "Portugal 2026", "tables": [
-        rows(PLAN, ["Faro", "12–13.11.26", "", "", "my note"], ["Lisbon", "13–15.11.26", "Friend's flat", "", ""]),
+        rows(PLAN, ["Faro", "12–13.11.26", "", "", "my note"], ["Lisbon", "13–15.11.26", "Friend's flat", "", ""],
+             ["Lagos", "15–16.11.26", {"text": "Hostel", "link": "https://example.com/x?bn=5"}, "", ""]),
         rows(TRANSPORT, ["", "", "", ""])]}})
     state = {"stays": {"1": stay("1", "Faro", "2026-11-12", "2026-11-13"),
-                       "2": stay("2", "Lisbon", "2026-11-13", "2026-11-15", type="Flat", price="99€")}}
+                       "2": stay("2", "Lisbon", "2026-11-13", "2026-11-15", type="Flat", price="99€"),
+                       "5": stay("5", "Lagos", "2026-11-15", "2026-11-16", price="12€")}}
     tripdocs.TripDocs(g, "folder", lambda m: None).run(state, AIRPORTS, NOW, ["AMS"])
     plan = g.docs["d1"]["tables"][0]
     assert texts(plan)[1] == ["Faro", "12–13.11.26", "Hostel", "20€", "my note"], texts(plan)
     assert plan[1][2]["link"] == "https://example.com/b/1"
     assert texts(plan)[2] == ["Lisbon", "13–15.11.26", "Friend's flat", "99€", ""], texts(plan)  # own text kept
+    assert texts(plan)[3] == ["Lagos", "15–16.11.26", "Hostel", "12€", ""], texts(plan)  # linked by you: price still filled
     assert not g.created
 
 
@@ -146,21 +149,21 @@ def test_new_rows_in_date_order_then_cancel_empties_cells():
 
 def test_flights_go_to_transport_and_a_new_doc():
     g = FakeGoogle({"d1": {"name": "Portugal 2026", "tables": [rows(PLAN, ["Faro", "10–12.11.26", "", "", ""]), rows(TRANSPORT)]}})
-    seen = {"FR1@2027-03-01": {"flight": "FR1", "dep": "AMS", "arr": "FAO", "dep_local": "2027-03-01T10:00:00",
-                               "arr_local": "2027-03-01T12:00:00", "codes": ["ABC123"]},
+    seen = {"FR1@2027-02-28": {"flight": "FR1", "dep": "AMS", "arr": "FAO", "dep_local": "2027-02-28T10:00:00",
+                               "arr_local": "2027-02-28T12:00:00", "codes": ["ABC123"]},
             "FR2@2027-03-05": {"flight": "FR2", "dep": "FAO", "arr": "AMS", "dep_local": "2027-03-05T13:00:00",
                                "arr_local": "2027-03-05T17:00:00", "codes": ["ABC123"]}}
     state = {"seen": seen}
     docs = tripdocs.TripDocs(g, "folder", lambda m: None)
     docs.run(state, AIRPORTS, NOW, ["AMS"])
     assert g.created == ["Faro 2027"], g.created
-    assert texts(g.docs["new1"]["tables"][1])[1:] == [["✈️ FR1: Amsterdam - Faro", "01.03.27 10:00", "", "Booking code: ABC123"],
+    assert texts(g.docs["new1"]["tables"][1])[1:] == [["✈️ FR1: Amsterdam - Faro", "28.02.27 10:00", "", "Booking code: ABC123"],
                                                      ["✈️ FR2: Faro - Amsterdam", "05.03.27 13:00", "", "Booking code: ABC123"]]
     docs.run(state, AIRPORTS, NOW, ["AMS"])  # nothing new: nothing written twice
     assert len(g.docs["new1"]["tables"][1]) == 3
-    state["stays"] = {"4": stay("4", "Faro", "2027-03-01", "2027-03-05")}
+    state["stays"] = {"4": stay("4", "Faro", "2027-02-28", "2027-03-05")}
     docs.run(state, AIRPORTS, NOW, ["AMS"])  # a stay in the same days joins that doc
-    assert texts(g.docs["new1"]["tables"][0])[1][:3] == ["Faro", "01–05.03.27", "Hostel"]
+    assert texts(g.docs["new1"]["tables"][0])[1][:3] == ["Faro", "28.02–05.03.27", "Hostel"]
     del seen["FR2@2027-03-05"]
     docs.run(state, AIRPORTS, NOW, ["AMS"])
     assert texts(g.docs["new1"]["tables"][1])[2] == ["", "", "", ""]
@@ -174,6 +177,14 @@ def test_rental_car_in_comments():
     tripdocs.TripDocs(g, "folder", lambda m: None).run({"stays": {"D1": car}}, AIRPORTS, NOW, ["AMS"])
     cell = g.docs["d1"]["tables"][0][2][4]
     assert (cell["text"], cell["linked"], cell["link"]) == ("beach Rental car 12–16.11", "Rental car", "https://example.com/car"), cell
+
+
+def test_lone_flight_home_names_the_doc_after_where_it_left():
+    g = FakeGoogle({})
+    seen = {"FR9@2026-12-07": {"flight": "FR9", "dep": "FAO", "arr": "AMS", "dep_local": "2026-12-07T16:00:00",
+                               "arr_local": "2026-12-07T20:00:00", "codes": []}}
+    tripdocs.TripDocs(g, "folder", lambda m: None).run({"seen": seen}, AIRPORTS, NOW, ["AMS"])
+    assert g.created == ["Faro 2026"], g.created
 
 
 def test_dry_run_writes_nothing():

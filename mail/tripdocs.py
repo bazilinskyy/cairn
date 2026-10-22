@@ -239,13 +239,13 @@ def add_row(table, after):
 # --- where a booking goes ---
 
 def stay_row(plan, stay):
-    """("fill", row) for the Plan row of this place and dates, ("done", row) when one already links to the booking,
-    else ("insert", row to insert below) in date order."""
+    """("fill", row) for the Plan row that already links to the booking, else for the row of this place and dates;
+    else ("insert", row to insert below) in date order. Filling writes only empty cells."""
     after = 0
     for r, row in enumerate(plan["rows"][1:], 1):
         cell = lambda name: row[plan["cols"][name]] if name in plan["cols"] else {"text": "", "links": []}
         if any(stay["code"] in l or l == stay["link"] for l in cell("accommodation")["links"]):
-            return "done", r
+            return "fill", r
         days = parse_dates(cell("dates")["text"])
         if days and days[0] <= date.fromisoformat(stay["start"]):
             after = r
@@ -318,10 +318,12 @@ def wanted(state, airports, now, home):
             continue
         day = r["dep_local"][:10]
         trip = next((t for t in trips if t["start"] <= day <= t["end"]), None)
-        out["leg:" + sid] = {"what": "leg", "flight": r["flight"], "date": f"{datetime.fromisoformat(r['dep_local']):%d.%m.%y %H:%M}",
+        away = r["dep"] if r["arr"] in home else r["arr"]  # a lone flight home is named after where it left
+        out["leg:" + sid] = {"what": "leg", "flight": r["flight"], "dep_local": r["dep_local"],
+                             "date": f"{datetime.fromisoformat(r['dep_local']):%d.%m.%y %H:%M}",
                              "title": f"✈️ {r['flight']}: {plan._city(r['dep'], airports)} - {plan._city(r['arr'], airports)}",
                              "codes": r.get("codes", []), "start": trip["start"] if trip else day, "end": trip["end"] if trip else r["arr_local"][:10],
-                             "name": trip["name"] if trip else plan._city(r["arr"], airports)}
+                             "name": trip["name"] if trip else plan._city(away, airports)}
     return out
 
 
@@ -351,11 +353,13 @@ class TripDocs:
         return _stub(self.names[doc_id]) if doc_id.startswith("dry:") else self.g.get(doc_id)
 
     def batch(self, doc_id, requests):
+        if not requests:
+            return
         texts = [r["insertText"]["text"] for r in requests if "insertText" in r]
         what = f"write {texts}" if texts else f"empty {sum('deleteContentRange' in r for r in requests)} cell(s)" \
             if any("deleteContentRange" in r for r in requests) else "add a row"
         self.log(f"{'would ' if self.dry else ''}{what} in doc {self.names.get(doc_id, doc_id)!r}")
-        if not self.dry and requests:
+        if not self.dry:
             self.g.batch(doc_id, requests)
 
     def create(self, name):
@@ -456,7 +460,7 @@ class TripDocs:
             if done[i]["spec"]["end"] >= today and done[i]["doc"] in files:
                 self.remove(done[i]["doc"], done[i]["spec"])
             del done[i]
-        for i in sorted(steps["create"] + steps["update"], key=lambda i: (desired[i]["start"], desired[i].get("date", ""))):
+        for i in sorted(steps["create"] + steps["update"], key=lambda i: (desired[i]["start"], desired[i].get("dep_local", ""))):
             spec = desired[i]
             s, e = date.fromisoformat(spec["start"]), date.fromisoformat(spec["end"])
             doc_id = pick_doc(files, s, e)
