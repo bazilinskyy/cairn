@@ -57,7 +57,7 @@ def test_failure_alerts_and_keeps_state(home):
     def fail(*a):
         raise imaplib.IMAP4.error("AUTHENTICATIONFAILED")
 
-    undo = patch(fetch_new=fail, send_discord=lambda text, sec: sent.append(text))
+    undo = patch(fetch_new=lambda *a, **k: fail(), send_discord=lambda text, sec: sent.append(text))
     try:
         assert flightmail.main([]) == 0
     finally:
@@ -71,8 +71,8 @@ def test_dry_run_writes_nothing(home):
     (home / "state.json").write_text(json.dumps({"last_uid": 5, "legs": []}))
     cal, con, sent = Recorder(), Recorder(), []
     msg = test_parse.fixture("edreams_nl_overnight")
-    undo = patch(fetch_new=lambda cfg, sec, state: [(6, msg)],
-                 load_reference=lambda cfg: (test_parse.airports(), test_parse.airlines()),
+    undo = patch(fetch_new=lambda cfg, sec, state, since_days=None: [(6, msg)],
+                 load_reference=lambda cfg: (test_parse.airports(), test_parse.airlines(), {}),
                  open_stores=lambda cfg, airports, airlines: (cal, con),
                  send_discord=lambda text, sec: sent.append(text))
     try:
@@ -89,8 +89,8 @@ def test_dry_run_writes_nothing(home):
 def test_run_applies_and_saves_state(home):
     cal, con, sent = Recorder(), Recorder(), []
     msg = test_parse.fixture("edreams_nl_overnight")
-    undo = patch(fetch_new=lambda cfg, sec, state: [(7, msg)],
-                 load_reference=lambda cfg: (test_parse.airports(), test_parse.airlines()),
+    undo = patch(fetch_new=lambda cfg, sec, state, since_days=None: [(7, msg)],
+                 load_reference=lambda cfg: (test_parse.airports(), test_parse.airlines(), {}),
                  open_stores=lambda cfg, airports, airlines: (cal, con),
                  send_discord=lambda text, sec: sent.append(text))
     try:
@@ -136,8 +136,8 @@ def test_contrail_lookup():
 def test_lookups_cached_even_in_dry_run(home):
     cal, con = Recorder(), Recorder()
     msg = test_parse.fixture("edreams_nl_overnight")
-    undo = patch(fetch_new=lambda cfg, sec, state: [(6, msg)],
-                 load_reference=lambda cfg: (test_parse.airports(), test_parse.airlines()),
+    undo = patch(fetch_new=lambda cfg, sec, state, since_days=None: [(6, msg)],
+                 load_reference=lambda cfg: (test_parse.airports(), test_parse.airlines(), {}),
                  open_stores=lambda cfg, airports, airlines: (cal, con), send_discord=lambda text, sec: None)
     try:
         flightmail.main(["--dry-run"])
@@ -160,6 +160,33 @@ def test_event_title_and_notes():
     assert flightmail.event_title(leg, test_parse.airports()) == "✈️ KL1702: Madrid - Amsterdam"
     assert flightmail.event_notes(leg, ["Rebooked from KL1700 on 2026-11-15"]) == (
         "Confirmation Code: ABC123\nBooking: eDreams 11112222333\nflightmail ABC123 KL1702\nRebooked from KL1700 on 2026-11-15")
+
+
+def test_ground_titles_and_notes():
+    train = flightmail.Leg("EC9236", "Breda", "Bruxelles Midi", None, None, ("TRAIN12",), "", None, "train",
+                           "Europe/Amsterdam", "Europe/Brussels")
+    bus = flightmail.Leg("", "Lisboa (Oriente)", "Porto (Campanhã)", None, None, ("3000000001",), "", None, "bus",
+                         "Europe/Lisbon", "Europe/Lisbon", True)
+    ferry = flightmail.Leg("", "Horta", "Madalena", None, None, (), "", None, "ferry", "Atlantic/Azores", "Atlantic/Azores")
+    assert flightmail.event_title(train, {}) == "🚆 EC9236: Breda - Bruxelles Midi"
+    assert flightmail.event_title(bus, {}) == "🚌 Lisboa (Oriente) - Porto (Campanhã)"
+    assert flightmail.event_title(ferry, {}) == "⛴️ Horta - Madalena"
+    assert flightmail.event_notes(bus, []) == ("Confirmation Code: 3000000001\nflightmail 3000000001 bus:Lisboa (Oriente)>Porto (Campanhã)\n"
+                                               "Arrival time not in the email: the end time is a guess.")
+
+
+@with_home
+def test_rescan_reads_again_without_moving_back(home):
+    (home / "state.json").write_text(json.dumps({"last_uid": 500, "legs": []}))
+    seen = []
+    undo = patch(fetch_new=lambda cfg, sec, state, since_days=None: seen.append((state.get("last_uid"), since_days)) or [],
+                 send_discord=lambda text, sec: None)
+    try:
+        flightmail.main(["--rescan-days", "60"])
+    finally:
+        undo()
+    assert seen == [(500, 60)]
+    assert json.loads((home / "state.json").read_text())["last_uid"] == 500
 
 
 def test_title_matches_any_airline_prefix():
