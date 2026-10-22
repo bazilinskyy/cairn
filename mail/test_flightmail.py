@@ -224,11 +224,11 @@ def test_extras_keep_todos_blocks_and_banners_in_step():
     todos, blocks, banners = Store(), Store(), Store()
     now = flightmail.datetime(2026, 10, 22, 8, 0)
     flightmail.run_extras(state, todos, blocks, banners, ap, now, ["AMS"])
-    assert sorted(t["when"] for t in todos.items.values()) == ["2026-11-15", "2026-11-19"]
+    assert sorted(t["when"] for t in todos.items.values()) == ["2026-11-15"]  # one booking: one to-do, before the first flight
     assert [b for b in blocks.items.values()][0] == ["2026-11-16T14:10:00+01:00", "2026-11-16T18:55:00+00:00"]
     assert list(banners.items.values()) == [{"id": "KL1234@2026-11-16", "name": "Lisbon", "start": "2026-11-16", "end": "2026-11-20"}]
     flightmail.run_extras(state, todos, blocks, banners, ap, now, ["AMS"])  # nothing changed: no calls
-    assert todos.calls == ["create", "create"] and blocks.calls == ["create", "create"] and banners.calls == ["create"]
+    assert todos.calls == ["create"] and blocks.calls == ["create", "create"] and banners.calls == ["create"]
     del state["seen"]["KL1235@2026-11-20"]  # return flight cancelled
     flightmail.run_extras(state, todos, blocks, banners, ap, now, ["AMS"])
     assert len(todos.items) == 1 and len(blocks.items) == 1 and banners.items == {}
@@ -244,7 +244,22 @@ def test_extras_skipped_banner_and_past_items():
     assert banners.calls == ["create"]  # asked once, not every run
     flightmail.run_extras(state, todos, blocks, banners, ap, flightmail.datetime(2026, 11, 17, 12, 0), ["AMS"])
     assert todos.calls.count("remove") == 0 and blocks.calls.count("remove") == 0  # past ones are left alone
-    assert list(state["todos"]) == ["KL1235@2026-11-20"]
+    assert list(state["todos"]) == []  # the booking's first flight is past: no new to-do for its return flight
+
+
+def test_one_todo_per_booking():
+    ap = test_parse.airports()
+    out, back, other = (seen_row("KL1234", "AMS", "LIS", "2026-11-16T16:10:00", "2026-11-16T17:55:00"),
+                        seen_row("KL1235", "LIS", "AMS", "2026-11-20T10:00:00", "2026-11-20T13:45:00"),
+                        seen_row("KL1236", "AMS", "LIS", "2026-12-01T10:00:00", "2026-12-01T12:45:00"))
+    other["codes"] = ["XYZ789"]
+    state = {"todos": {"KL1235@2026-11-20": {"ref": "old", "spec": {"when": "2026-11-19"}}},  # made before this rule
+             "seen": {"KL1234@2026-11-16": out, "KL1235@2026-11-20": back, "KL1236@2026-12-01": other}}
+    todos = Store()
+    todos.items["old"] = {}
+    flightmail.run_extras(state, todos, Store(), Store(), ap, flightmail.datetime(2026, 10, 22, 8, 0), ["AMS"])
+    assert sorted(state["todos"]) == ["KL1234@2026-11-16", "KL1236@2026-12-01"]
+    assert "old" not in todos.items  # the return flight's own to-do is cancelled
 
 
 def test_things_script_arguments():

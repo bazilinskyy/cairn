@@ -449,7 +449,7 @@ def _ahead(kind, spec, now):
 
 
 def run_extras(state, todos, blocks, banners, airports, now, home, work_tz="Europe/Amsterdam"):
-    """Keep a check-in to-do per future flight in state["seen"], a busy block per future flight or ground leg
+    """Keep a check-in to-do per booking (before its first flight) in state["seen"], a busy block per future flight or ground leg
     (state["ground"]) in working hours, and a banner per trip, in step. Items that are past are forgotten, never changed."""
     seen, ground = state.setdefault("seen", {}), state.setdefault("ground", {})
     oldest = (now.date() - timedelta(days=30)).isoformat()
@@ -459,7 +459,7 @@ def run_extras(state, todos, blocks, banners, airports, now, home, work_tz="Euro
     known = {k: r for k, r in seen.items() if r["dep"] in airports and r["arr"] in airports}
     future = {k: r for k, r in known.items() if datetime.fromisoformat(r["dep_local"]) > now}
     rides = {**future, **{"ground:" + k: r for k, r in ground.items() if datetime.fromisoformat(r["dep_local"]) > now}}
-    want = {"todos": {k: plan.todo(r, airports, now) for k, r in future.items()},
+    want = {"todos": {k: plan.todo(r, airports, now) for k, r in plan.first_of_bookings(known).items() if k in future},
             "blocks": {k: [t.isoformat() for t in b] for k, r in rides.items()
                        for b in [plan.block(r, airports)] if plan.in_work_hours(*b, work_tz)},
             "banners": {t["id"]: t for t in plan.trips(list(known.values()), home, airports)
