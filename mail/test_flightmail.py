@@ -42,7 +42,8 @@ CFG = ({"passenger_names": ["Jan Testers"], "gmail_user": "jan.testers@example.c
 
 
 def patch(**values):
-    values = {"load_config": lambda: CFG, "now": lambda: flightmail.datetime(2026, 10, 21, 12, 0), **values}
+    values = {"load_config": lambda: CFG, "now": lambda: flightmail.datetime(2026, 10, 21, 12, 0),
+              "open_extras": lambda cfg, cal: None, **values}  # never drive the real Things or calendars
     saved = {k: getattr(flightmail, k) for k in values}
     for k, v in values.items():
         setattr(flightmail, k, v)
