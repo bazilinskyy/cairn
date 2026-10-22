@@ -41,6 +41,7 @@ flightmail:
 - Adds the same flight to **Contrail**
 - Also adds **trains, buses and ferries** to the calendar, for example `🚆 EC9236: Breda - Bruxelles Midi` or `🚌 Lisboa (Oriente) - Porto (Campanhã)` (not to Contrail, which is a flight log)
 - Follows **schedule changes, rebookings and cancellations**
+- For every flight: a **check-in to-do in Things**, scheduled the day before, with the airline's check-in link; a **busy block in your work calendar** from 2 hours before departure to 1 hour after landing; and an all-day **trip banner** ("Tenerife", "Portugal") over each trip
 - **Never duplicates** a flight that is already in the calendar or in Contrail, and never touches events it did not create
 - Posts what it **could not read** to Discord, so a missed booking is not silent
 
@@ -56,6 +57,9 @@ flightmail:
 | `mail/parse.py` | reads flight legs out of an email (no network) |
 | `mail/ground.py` | trains, buses and ferries: operator rules and station time zones (no network) |
 | `mail/sync.py` | decides what an email changes; AeroDataBox enrichment (no network) |
+| `mail/plan.py` | check-in to-dos, busy blocks and trip banners from the flights you are on (no network) |
+| `mail/stays.py` | hotel, Airbnb and rental car bookings out of an email (no network) |
+| `mail/tripdocs.py` | trip docs in Google Drive: Google client, the docs' tables, what goes where; `auth` signs in once |
 | `mail/test_*.py`, `mail/fixtures/` | flightmail tests and anonymised test emails |
 | `mail/install.sh`, `mail/contrail.plist.template` | install flightmail and the Contrail service on a Mac (launchd) |
 | `docs/superpowers/` | design and implementation plan of flightmail |
@@ -156,7 +160,8 @@ Every hour flightmail reads the Gmail messages that arrived since its last run. 
 | **Rebooking** | The old flight is deleted from both places and the new one created with a `Rebooked from KL1234 on 2026-11-16` note. |
 | **Cancellation** | The event and the Contrail flight are deleted. |
 | **Train, bus or ferry ticket** | One calendar event per journey (calendar only). Cancellations delete it, also when the email gives only the booking number. |
-| **Anything else** | Ignored: check-in reminders, boarding passes, price alerts, surveys, newsletters, "choose an option" emails, replies and forwards, hotels and cars. |
+| **Hotel, Airbnb or rental car** | Booking.com, Airbnb, DiscoverCars and VIPCars confirmations go into the trip docs (below), not the calendar. Their cancellations undo that. |
+| **Anything else** | Ignored: check-in reminders, boarding passes, price alerts, surveys, newsletters, "choose an option" emails, replies and forwards. |
 
 Each event:
 - **Title:** `✈️ <flight>: <departure city> - <arrival city>` for flights; `🚆` trains, `🚌` buses and `⛴️` ferries use the station names and, for trains, the train number: `🚆 EC9236: Breda - Bruxelles Midi`
@@ -167,6 +172,19 @@ Each event:
 - When an email gives no arrival time (SNCF Connect), the event lasts one hour and its notes say the end time is a guess.
 
 A Contrail flight gets the date, route, flight number, airline and duration; the server computes the distance.
+
+**Around each flight.** flightmail keeps a list of every future flight you are on (and of trains, buses and ferries, for busy blocks), also the ones whose events you made yourself, and on every run keeps three things in step with it. When a flight moves or is cancelled, they follow; things in the past are left alone.
+- **Check-in to-do** in a Things project (`things_project`, default "✈️ Travel"), one per booking, for its first flight: `check in KL1234`, scheduled the day before departure (today if that has passed) with its deadline on that same day, with the check-in link (from the booking markup, else the airline's check-in page, else a web search) and the booking code in its notes. A cancelled flight cancels its to-do.
+- **Busy block** in your work calendar (`work_calendar_account` / `work_calendar_title`) for each flight, train, bus or ferry that falls in working hours: `🛑 Vibe-busy`, from 2 hours before departure to 1 hour after arrival, made only when that time overlaps Monday to Friday 09:00–17:00 in `home_timezone`. Shown as busy, no alerts, with `[auto-split]` in its notes so [calsplit](https://github.com/bazilinskyy/vibe-work)'s nightly cleanup deletes it once past.
+- **Trip banner**: an all-day event in the travel calendar from the day you leave a home airport (`home_airports`) to the day you are back, named after the place you stay ("Tenerife"), the country when you stay in several places ("Portugal"), or the countries ("Spain · France"). It is shown as free, with alerts at 15:00 the day before and 09:00 on the day. When an all-day event of yours already covers the trip, no banner is made. A trip without a known return gets no banner yet.
+
+**Trip docs.** When `trip_docs_folder` is set and flightmail is signed in to Google (see Install), it keeps one Google Doc per trip in that Drive folder. Each doc has an Information heading, a Plan table (Place | Dates | Accommodation | Price | Comments) and a Transport table (Transport | Date | Price | Comments).
+- **Which doc:** the doc whose Plan or Transport dates overlap the booking or trip (a day of slack). With none, flightmail creates one with that layout, named after the trip and year: "Faro 2027", the country when it has several places ("Portugal 2026"), with " 2" added if the name is taken.
+- **Hotel or Airbnb:** the Plan row with that place and overlapping dates gets the Accommodation (the type, "Hotel", "Hostel", "Flat", "Room" or "House", linked to the booking) and the Price, but only cells that are empty. With no such row, a new row goes in date order with the place, the dates written `22–23.10.26`, the accommodation and the price.
+- **Cancelled hotel or Airbnb:** its Accommodation and Price cells are emptied; place and dates stay.
+- **Rental car:** `Rental car 26–30.09`, linked to the booking, is added to the Comments (or a Car column) of the row whose stay holds the pick-up day, else to a Transport row.
+- **Flights:** one Transport row each: `✈️ KL1234: Amsterdam - Lisbon`, `07.12.26 16:10`, and the booking code in Comments. Empty rows are filled first. A cancelled or rebooked flight empties its row.
+- **Your text is never changed**: flightmail only writes into empty cells, adds rows, and empties the cells it wrote. Bookings that are over are left alone.
 
 **Never twice.** A train, bus or ferry is already in the calendar when any event starts within five minutes of it, whatever its title. A flight that is already in the calendar is not added again. That means an event on the same day whose title holds the same flight number with any airline prefix: `EJU7883`, `U27883` and `U2 7883` are the same flight. In Contrail, a flight on the same day with the same route or the same flight number counts as already there. flightmail never changes or deletes events or flights it did not create.
 
@@ -208,6 +226,11 @@ In the `"flightmail"` sections of `config` and `secret`:
 | `contrail_url` | config | Contrail's address (default `http://127.0.0.1:3000`) |
 | `lookup_monthly_limit` | config | maximum AeroDataBox lookups per month (default 100) |
 | `home_timezone` | config | time zone for stations that match no known town (default `Europe/Amsterdam`) |
+| `things_project` | config | Things project for check-in to-dos (default `✈️ Travel`) |
+| `work_calendar_account`, `work_calendar_title` | config | calendar for busy blocks (default `TUe` / `Calendar`) |
+| `home_airports` | config | airports a trip starts from and returns to (default `AMS`, `EIN`, `RTM`) |
+| `trip_docs_skip` | config | booking codes that never go into a trip doc (for example a work trip) |
+| `trip_docs_folder` | config | id of the Google Drive folder for trip docs (the part after `folders/` in its link); empty: no trip docs |
 | `gmail_query` | config | optional Gmail search that preselects mail; empty uses the built-in one |
 | `gmail_app_password` | secret | a Gmail [app password](https://myaccount.google.com/apppasswords) (needs 2-Step Verification) |
 | `discord_webhook` | secret | Discord webhook for alerts; empty sends nothing |
@@ -222,7 +245,7 @@ mail/install.sh
 
 macOS gives calendar access per app and silently refuses it to a bare Python started by launchd. So the script builds a small AppleScript app, `~/.flightmail/flightmail.app`, which holds the Calendar permission and runs `flightmail.py`. It builds the app only once, because a rebuild changes its signature and macOS would ask again. The script then schedules the app every 60 minutes (launchd `nl.tue.flightmail`) and installs the Contrail service if it is missing.
 
-Then fill in the `flightmail` settings and, **with the screen unlocked**, run a dry run and click Allow on the Calendar prompt:
+Then fill in the `flightmail` settings and, **with the screen unlocked**, run a dry run and click Allow on the Calendar prompt (and, on the first real run that makes a to-do, on the prompt to control Things):
 
 ```
 open -W --env FLIGHTMAIL_ARGS=--dry-run ~/.flightmail/flightmail.app; tail -40 ~/.flightmail/run.log
@@ -236,6 +259,15 @@ open -W ~/.flightmail/flightmail.app; tail -40 ~/.flightmail/run.log
 
 The first run reads a year of matching mail and takes about ten minutes; later runs take seconds.
 
+**Trip docs (optional).** flightmail edits Google Docs with its own Google sign-in, made once:
+1. In the [Google Cloud console](https://console.cloud.google.com/), create a project (any name), then enable the **Google Drive API** and the **Google Docs API** (APIs & Services → Library).
+2. APIs & Services → OAuth consent screen: user type **External**, fill in the app name and your email, add yourself as a test user, then **Publish app** (status "In production"). In testing status Google expires the sign-in after 7 days. The app stays unverified; that only means a warning when you sign in.
+3. APIs & Services → Credentials → Create credentials → **OAuth client ID**, type **Desktop app**. Download the JSON and copy it to the Mac as `~/.flightmail/google_client.json`.
+4. Sign in once. On the Mac itself: `python mail/tripdocs.py auth` and open the printed link. From another computer, keep a tunnel open so Google's redirect reaches the Mac: `ssh -L 8765:localhost:8765 <mac>`, run the command there, and open the link on your own computer. After you allow access (click past the "unverified app" warning), the refresh token is saved to `~/.flightmail/google_token.json` (mode 600).
+5. Set `trip_docs_folder` in `config`, then do a dry run: it lists every cell it would write and every doc it would create.
+
+The sign-in asks for full Drive access, because the trip docs you made yourself must be editable too.
+
 ### Files
 
 | File | What it is |
@@ -244,6 +276,7 @@ The first run reads a year of matching mail and takes about ten minutes; later r
 | `~/.flightmail/state.json` | last message read, and the events and Contrail flights flightmail created |
 | `~/.flightmail/lookups.json` | AeroDataBox answers and this month's lookup count |
 | `~/.flightmail/flightmail.app` | the app that holds the Calendar permission |
+| `~/.flightmail/google_client.json`, `google_token.json` | the Google OAuth client and refresh token for the trip docs; never in the repo |
 
 Other commands: `mail/flightmail.py calendars` lists the calendars EventKit sees. `--rescan-days N` reads all matching mail of the last N days again, for example after new rules were added (`open -W --env FLIGHTMAIL_ARGS="--rescan-days 365" ~/.flightmail/flightmail.app`); nothing is added twice.
 
@@ -257,7 +290,8 @@ launchctl bootout gui/$(id -u)/nl.tue.flightmail; rm ~/Library/LaunchAgents/nl.t
 
 - **Languages:** English and Dutch text rules. Other languages (for example French Transavia emails) are read only through schema.org markup or AeroDataBox.
 - **Attachments:** PDF e-tickets and attachments are not read.
-- **Not travel:** hotels and cars are ignored on purpose. Trains, buses and ferries from operators without a rule or markup are not read; add a rule in `ground.py` with a fixture and a test.
+- **Not read:** trains, buses and ferries from operators without a rule or markup; add a rule in `ground.py` with a fixture and a test. Hotels and cars other than Booking.com, Airbnb, DiscoverCars and VIPCars; add a rule in `stays.py`.
+- **Trip docs:** trains, buses and ferries get no Transport row yet. A cancelled rental car is only logged; remove it from the doc by hand. A changed booking is treated as cancelled and booked again.
 - **New layouts:** a layout none of the rules handle shows up as a "could not read" alert. To support it, add an anonymised copy to `mail/fixtures/`, a test in `mail/test_parse.py`, then a rule in `parse.py`.
 
 ## Using Contrail
@@ -333,6 +367,9 @@ npm test                       # Contrail API, against a temporary copy with its
 python mail/test_parse.py      # reading emails (the fixtures in mail/fixtures)
 python mail/test_ground.py     # trains, buses and ferries, station time zones
 python mail/test_sync.py       # the change, rebooking, cancellation and duplicate rules
+python mail/test_plan.py       # check-in to-dos, busy blocks, trip banners
+python mail/test_stays.py      # hotel, Airbnb and rental car emails
+python mail/test_tripdocs.py   # trip docs, against a fake Google Docs
 python mail/test_flightmail.py # entry point, Contrail client, alerts
 ```
 

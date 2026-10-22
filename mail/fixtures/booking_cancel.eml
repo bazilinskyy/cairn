@@ -1,0 +1,24 @@
+From: Booking.com <noreply@booking.com>
+Subject: Booking cancelled for Test Hotel
+Date: Thu, 10 Dec 2026 10:00:00 +0000
+To: jan.testers@example.com
+Content-Type: text/html; charset="utf-8"
+MIME-Version: 1.0
+
+<html lang="en-gb"><head><title>Booking cancelled for Test Hotel</title></head><body>
+<table><tr><td><p>Confirmation number: <strong>5000000001</strong><p>PIN code: <strong>0000</strong></td></tr></table>
+<h1>Your booking has been successfully cancelled for free</h1>
+<p>Dear Jan Testers,
+<p>We can confirm that your reservation at Test Hotel has been cancelled.
+<table><tr><td><a href="https://example.com/"><b>Test Hotel</b></a></td></tr>
+<tr><td><address><a href="https://example.com/">Teststraat 1, Brussels, 1000, Belgium</a></address></td>
+<td aria-label="Booking status: CANCELLED">CANCELLED</td></tr></table>
+<table>
+<tr><td><b>You booked for</b></td><td>1 adult</td></tr>
+<tr><td><b>Check-in</b></td><td><time datetime="2026-12-16T12:00:00+01:00">Wednesday 16 December 2026</time></td></tr>
+<tr><td><b>Check-out</b></td><td><time datetime="2026-12-17T11:00:00+01:00">Thursday 17 December 2026</time></td></tr>
+<tr><td><b>Booking number</b></td><td>5000000001</td></tr>
+<tr><td><b>PIN code</b></td><td>0000</td></tr>
+</table>
+<table><tr><td><span>Free cancellation</span></td><td>€ 0</td></tr></table>
+</body></html>

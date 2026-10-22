@@ -2,7 +2,7 @@
 import csv
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 from html.parser import HTMLParser
 from zoneinfo import ZoneInfo
@@ -13,6 +13,7 @@ class Airport:
     name: str
     city: str
     tz: str
+    country: str = ""
 
 
 @dataclass(frozen=True)
@@ -29,6 +30,7 @@ class Leg:
     dep_tz: str = ""            # time zones of ground stations (flights use their airports')
     arr_tz: str = ""
     arr_guess: bool = False     # arrival time not in the email: one hour after departure
+    checkin_url: str = ""       # online check-in page, when the email's markup gives one
 
     @property
     def when(self):
@@ -71,7 +73,7 @@ def load_airports(path):
     with open(path, encoding="utf-8", newline="") as f:
         for row in csv.reader(f):
             if len(row) > 11 and re.fullmatch(r"[A-Z]{3}", row[4]) and "/" in row[11]:
-                out[row[4]] = Airport(row[1], row[2], row[11])
+                out[row[4]] = Airport(row[1], row[2], row[11], row[3])
     return out
 
 
@@ -211,8 +213,10 @@ def jsonld_legs(html, airports):
         flight = number if not airline or number.startswith(airline) else airline + number
         dep, arr = _code(f.get("departureAirport")), _code(f.get("arrivalAirport"))
         code = str(r.get("reservationNumber") or "").strip()
+        url = r.get("checkinUrl") or f.get("checkinUrl") or ""
         legs.append(Leg(flight, dep, arr, _time(f.get("departureTime"), dep, airports),
-                        _time(f.get("arrivalTime"), arr, airports), (code,) if code else ()))
+                        _time(f.get("arrivalTime"), arr, airports), (code,) if code else (),
+                        checkin_url=url if isinstance(url, str) and url.startswith("http") else ""))
     return legs
 
 
@@ -483,8 +487,8 @@ def _agency_name(sender):
     return parts[-2].capitalize() if len(parts) > 1 else domain
 
 
-def parse_email(msg, airports, airlines, places=None, home_tz="Europe/Amsterdam"):
-    """places: GeoNames towns (ground.load_cities) for the time zones of train, bus and ferry stations."""
+def message_parts(msg):
+    """(subject, sender address, received datetime, html, plain text) of an email."""
     from email.header import decode_header, make_header
     from email.utils import parseaddr, parsedate_to_datetime
 
@@ -503,6 +507,12 @@ def parse_email(msg, airports, airlines, places=None, home_tz="Europe/Amsterdam"
                 html = body
             elif part.get_content_subtype() == "plain" and not plain:
                 plain = body
+    return subject, sender, received, html, plain
+
+
+def parse_email(msg, airports, airlines, places=None, home_tz="Europe/Amsterdam"):
+    """places: GeoNames towns (ground.load_cities) for the time zones of train, bus and ferry stations."""
+    subject, sender, received, html, plain = message_parts(msg)
     text = html_to_text(html) if html else plain
     lines = text.split("\n")
     cities = {}
@@ -530,9 +540,9 @@ def parse_email(msg, airports, airlines, places=None, home_tz="Europe/Amsterdam"
         legs = []
         for m in markup:
             t = by_flight.get(m.flight) or (text_legs[0] if len(markup) == 1 and len(text_legs) == 1 else None)
-            legs.append(m if m.complete or not t else Leg(
-                m.flight, m.dep or t.dep, m.arr or t.arr, m.dep_local or t.dep_local, m.arr_local or t.arr_local, m.codes,
-                day=m.day or t.day))
+            legs.append(m if m.complete or not t else replace(
+                m, dep=m.dep or t.dep, arr=m.arr or t.arr, dep_local=m.dep_local or t.dep_local,
+                arr_local=m.arr_local or t.arr_local, day=m.day or t.day))
     else:
         legs = text_legs
     agency = f"{_agency_name(sender)} {numbers[0]}" if numbers else ""
@@ -543,7 +553,7 @@ def parse_email(msg, airports, airlines, places=None, home_tz="Europe/Amsterdam"
             continue
         seen.add(key)
         codes = tuple(dict.fromkeys(list(l.codes) + pnrs + numbers[:1]))
-        out.append(Leg(l.flight, l.dep, l.arr, l.dep_local, l.arr_local, codes, agency, l.day))
+        out.append(replace(l, codes=codes, agency=agency))
     old = [Leg(l.flight, l.dep, l.arr, l.dep_local, l.arr_local, tuple(dict.fromkeys(pnrs + numbers[:1])), agency, l.day) for l in old]
     dates = [d for line in [subject] + lines for _, d in _dates(line, received)]
     names = [((r.get("underName") or {}).get("name") or "").strip() for r in structured if isinstance(r.get("underName"), dict)]

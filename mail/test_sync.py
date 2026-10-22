@@ -197,11 +197,18 @@ def test_enrich_fills_from_lookup():
     assert look.calls == [("U27891", date(2027, 3, 5))]  # second time from the cache
 
 
-def test_enrich_lookup_wins_over_email():
-    found = Leg("SP412", "PDL", "SMA", D(2026, 10, 29, 13, 30), D(2026, 10, 29, 14, 5))
-    p = booking(Leg("SP412", "LIS", "PDL", D(2026, 10, 29, 10, 0), D(2026, 10, 29, 11, 45), ("ABC123",)))
-    leg = sync.enrich(p, Lookup(found), {}, NOW, 100).legs[0]
-    assert (leg.dep, leg.arr, leg.dep_local) == ("PDL", "SMA", D(2026, 10, 29, 13, 30))
+def test_enrich_keeps_email_route_when_lookup_disagrees():
+    # one flight number can fly several hops; the email's route is the passenger's
+    found = Leg("SP564", "PDL", "SMA", D(2026, 10, 29, 13, 30), D(2026, 10, 29, 14, 5))
+    mine = Leg("SP564", "LIS", "PDL", D(2026, 10, 29, 10, 0), D(2026, 10, 29, 11, 45), ("ABC123",))
+    assert sync.enrich(booking(mine), Lookup(found), {}, NOW, 100).legs[0] == mine
+
+
+def test_enrich_takes_lookup_times_for_the_same_route():
+    found = Leg("KL1234", "AMS", "LIS", D(2026, 11, 16, 16, 30), D(2026, 11, 16, 18, 15))
+    mine = Leg("KL1234", "AMS", "LIS", D(2026, 11, 16, 16, 10), D(2026, 11, 16, 17, 55), ("ABC123",))
+    leg = sync.enrich(booking(mine), Lookup(found), {}, NOW, 100).legs[0]
+    assert (leg.dep_local, leg.arr_local, leg.codes) == (D(2026, 11, 16, 16, 30), D(2026, 11, 16, 18, 15), ("ABC123",))
 
 
 def test_enrich_keeps_email_when_unknown_and_skips_past_and_cap():
@@ -257,11 +264,52 @@ def test_enrich_skips_ground_legs():
     assert look.calls == []
 
 
+def test_seen_records_every_future_flight_i_am_on():
+    cal, con, state = FakeCalendar(foreign={("KL1234", date(2026, 11, 16))}), FakeContrail(), {}
+    run(booking(leg()), state, cal, con)
+    assert list(state["seen"]) == ["KL1234@2026-11-16"]
+    assert state["seen"]["KL1234@2026-11-16"]["codes"] == ["ABC123"]
+    run(booking(bus()), state, cal, con)
+    assert list(state["seen"]) == ["KL1234@2026-11-16"]  # flights only
+
+
+def test_seen_follows_schedule_change_and_cancel():
+    cal, con, state = FakeCalendar(), FakeContrail(), {}
+    run(booking(leg()), state, cal, con)
+    moved = leg(dep_local=D(2026, 11, 17, 9, 0), arr_local=D(2026, 11, 17, 10, 45))
+    run(booking(moved, kind="change"), state, cal, con)
+    assert list(state["seen"]) == ["KL1234@2026-11-17"]
+    run(booking(Leg("KL1234", "AMS", "LIS", None, None, ("ABC123",)), kind="cancel"), state, cal, con)
+    assert state["seen"] == {}
+
+
+def test_seen_drops_rebooked_old_legs():
+    cal, con, state = FakeCalendar(), FakeContrail(), {}
+    run(booking(leg()), state, cal, con)
+    new = leg(flight="AF1229", dep="AMS", arr="MAD", dep_local=D(2026, 11, 17, 6, 50), arr_local=D(2026, 11, 17, 9, 15))
+    old = Leg("KL1234", "AMS", "LIS", D(2026, 11, 16, 16, 10), None, ("ABC123",))
+    run(booking(new, kind="change", old=[old]), state, cal, con)
+    assert list(state["seen"]) == ["AF1229@2026-11-17"]
+
+
 def test_other_kind_does_nothing():
     cal, con, state = FakeCalendar(), FakeContrail(), {}
     assert run(booking(leg(), kind="other"), state, cal, con) == []
     assert cal.events == {} and con.flights == {}
 
+
+
+def test_ground_legs_are_tracked_for_busy_blocks():
+    cal, con, state = FakeCalendar(), FakeContrail(), {}
+    run(booking(bus()), state, cal, con)
+    (sid, row), = state["ground"].items()
+    assert row["mode"] == "bus" and row["tz"] == ["Europe/Lisbon", "Europe/Lisbon"] and row["dep_local"] == bus().dep_local.isoformat()
+    run(Parsed("cancel", [], [], False, [], date(2026, 11, 1), ("3000000001",)), state, cal, con)
+    assert state["ground"] == {}
+    start = bus().instants(AIRPORTS)[0]  # also when the event was not made by flightmail
+    state = {}
+    run(booking(bus()), state, FakeCalendar(foreign_at={start}), con)
+    assert len(state["ground"]) == 1
 
 if __name__ == "__main__":
     tests = [f for n, f in sorted(globals().items()) if n.startswith("test_")]
