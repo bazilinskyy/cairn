@@ -41,6 +41,7 @@ flightmail:
 - Adds the same flight to **Contrail**
 - Also adds **trains, buses and ferries** to the calendar, for example `🚆 EC9236: Breda - Bruxelles Midi` or `🚌 Lisboa (Oriente) - Porto (Campanhã)` (not to Contrail, which is a flight log)
 - Follows **schedule changes, rebookings and cancellations**
+- For every flight: a **check-in to-do in Things**, scheduled the day before, with the airline's check-in link; a **busy block in your work calendar** from 2 hours before departure to 1 hour after landing; and an all-day **trip banner** ("Tenerife", "Portugal") over each trip
 - **Never duplicates** a flight that is already in the calendar or in Contrail, and never touches events it did not create
 - Posts what it **could not read** to Discord, so a missed booking is not silent
 
@@ -56,6 +57,7 @@ flightmail:
 | `mail/parse.py` | reads flight legs out of an email (no network) |
 | `mail/ground.py` | trains, buses and ferries: operator rules and station time zones (no network) |
 | `mail/sync.py` | decides what an email changes; AeroDataBox enrichment (no network) |
+| `mail/plan.py` | check-in to-dos, busy blocks and trip banners from the flights you are on (no network) |
 | `mail/test_*.py`, `mail/fixtures/` | flightmail tests and anonymised test emails |
 | `mail/install.sh`, `mail/contrail.plist.template` | install flightmail and the Contrail service on a Mac (launchd) |
 | `docs/superpowers/` | design and implementation plan of flightmail |
@@ -168,6 +170,11 @@ Each event:
 
 A Contrail flight gets the date, route, flight number, airline and duration; the server computes the distance.
 
+**Around each flight.** flightmail keeps a list of every future flight you are on, also the ones whose events you made yourself, and on every run keeps three things in step with it. When a flight moves or is cancelled, they follow; things in the past are left alone.
+- **Check-in to-do** in a Things project (`things_project`, default "✈️ Travel"): `Check in ✈️ KL1234: Amsterdam - Lisbon`, scheduled the day before departure (today if that has passed), with the check-in link (from the booking markup, else the airline's check-in page, else a web search) and the booking code in its notes. A cancelled flight cancels its to-do.
+- **Busy block** in your work calendar (`work_calendar_account` / `work_calendar_title`): `🛑 Vibe-busy`, from 2 hours before departure to 1 hour after landing, shown as busy, no alerts, with `[auto-split]` in its notes so [calsplit](https://github.com/bazilinskyy/vibe-work)'s nightly cleanup deletes it once past.
+- **Trip banner**: an all-day event in the travel calendar from the day you leave a home airport (`home_airports`) to the day you are back, named after the place you stay ("Tenerife"), the country when you stay in several places ("Portugal"), or the countries ("Spain · France"). It is shown as free, with alerts at 15:00 the day before and 09:00 on the day. When an all-day event of yours already covers the trip, no banner is made. A trip without a known return gets no banner yet.
+
 **Never twice.** A train, bus or ferry is already in the calendar when any event starts within five minutes of it, whatever its title. A flight that is already in the calendar is not added again. That means an event on the same day whose title holds the same flight number with any airline prefix: `EJU7883`, `U27883` and `U2 7883` are the same flight. In Contrail, a flight on the same day with the same route or the same flight number counts as already there. flightmail never changes or deletes events or flights it did not create.
 
 **Alerts** go to a Discord webhook:
@@ -208,6 +215,9 @@ In the `"flightmail"` sections of `config` and `secret`:
 | `contrail_url` | config | Contrail's address (default `http://127.0.0.1:3000`) |
 | `lookup_monthly_limit` | config | maximum AeroDataBox lookups per month (default 100) |
 | `home_timezone` | config | time zone for stations that match no known town (default `Europe/Amsterdam`) |
+| `things_project` | config | Things project for check-in to-dos (default `✈️ Travel`) |
+| `work_calendar_account`, `work_calendar_title` | config | calendar for busy blocks (default `TUe` / `Calendar`) |
+| `home_airports` | config | airports a trip starts from and returns to (default `AMS`, `EIN`, `RTM`) |
 | `gmail_query` | config | optional Gmail search that preselects mail; empty uses the built-in one |
 | `gmail_app_password` | secret | a Gmail [app password](https://myaccount.google.com/apppasswords) (needs 2-Step Verification) |
 | `discord_webhook` | secret | Discord webhook for alerts; empty sends nothing |
@@ -222,7 +232,7 @@ mail/install.sh
 
 macOS gives calendar access per app and silently refuses it to a bare Python started by launchd. So the script builds a small AppleScript app, `~/.flightmail/flightmail.app`, which holds the Calendar permission and runs `flightmail.py`. It builds the app only once, because a rebuild changes its signature and macOS would ask again. The script then schedules the app every 60 minutes (launchd `nl.tue.flightmail`) and installs the Contrail service if it is missing.
 
-Then fill in the `flightmail` settings and, **with the screen unlocked**, run a dry run and click Allow on the Calendar prompt:
+Then fill in the `flightmail` settings and, **with the screen unlocked**, run a dry run and click Allow on the Calendar prompt (and, on the first real run that makes a to-do, on the prompt to control Things):
 
 ```
 open -W --env FLIGHTMAIL_ARGS=--dry-run ~/.flightmail/flightmail.app; tail -40 ~/.flightmail/run.log
@@ -333,6 +343,7 @@ npm test                       # Contrail API, against a temporary copy with its
 python mail/test_parse.py      # reading emails (the fixtures in mail/fixtures)
 python mail/test_ground.py     # trains, buses and ferries, station time zones
 python mail/test_sync.py       # the change, rebooking, cancellation and duplicate rules
+python mail/test_plan.py       # check-in to-dos, busy blocks, trip banners
 python mail/test_flightmail.py # entry point, Contrail client, alerts
 ```
 
