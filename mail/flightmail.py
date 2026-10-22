@@ -371,7 +371,7 @@ def run(args, cfg, sec):
             if parsed.kind != "other" or parsed.legs:
                 name, addr = parseaddr(msg.get("From", ""))
                 sender = str(make_header(decode_header(name))) if name else addr.rsplit("@", 1)[-1]
-                subject = str(make_header(decode_header(msg.get("Subject", ""))))
+                subject = " ".join(str(make_header(decode_header(msg.get("Subject", "")))).split())  # unfold
                 try:
                     received = parsedate_to_datetime(msg.get("Date")).date()
                 except (TypeError, ValueError):

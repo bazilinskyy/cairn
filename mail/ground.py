@@ -179,6 +179,16 @@ def _rne(lines, cities, home_tz):
 
 
 def legs(sender, subject, html, lines, year_hint, cities, home_tz, mode):
+    """Legs of a ground booking, each journey once (some emails repeat their markup)."""
+    seen, out = set(), []
+    for leg in _legs(sender, subject, html, lines, year_hint, cities, home_tz, mode):
+        if (leg.key, leg.dep_local) not in seen:
+            seen.add((leg.key, leg.dep_local))
+            out.append(leg)
+    return out
+
+
+def _legs(sender, subject, html, lines, year_hint, cities, home_tz, mode):
     s = sender.lower()
     if html and reservations(html, tuple(MODES)):
         return _markup(html, mode, cities, home_tz)
