@@ -425,7 +425,7 @@ def open_docs(cfg, dry):
     token, client = home() / "google_token.json", home() / "google_client.json"
     if not cfg.get("trip_docs_folder") or not token.exists():
         return None
-    return tripdocs.TripDocs(tripdocs.Google(client, token), cfg["trip_docs_folder"], log, dry)
+    return tripdocs.TripDocs(tripdocs.Google(client, token), cfg["trip_docs_folder"], log, dry, cfg.get("trip_docs_skip", []))
 
 
 def note_stay(state, s, now):

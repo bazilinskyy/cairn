@@ -229,6 +229,7 @@ In the `"flightmail"` sections of `config` and `secret`:
 | `things_project` | config | Things project for check-in to-dos (default `✈️ Travel`) |
 | `work_calendar_account`, `work_calendar_title` | config | calendar for busy blocks (default `TUe` / `Calendar`) |
 | `home_airports` | config | airports a trip starts from and returns to (default `AMS`, `EIN`, `RTM`) |
+| `trip_docs_skip` | config | booking codes that never go into a trip doc (for example a work trip) |
 | `trip_docs_folder` | config | id of the Google Drive folder for trip docs (the part after `folders/` in its link); empty: no trip docs |
 | `gmail_query` | config | optional Gmail search that preselects mail; empty uses the built-in one |
 | `gmail_app_password` | secret | a Gmail [app password](https://myaccount.google.com/apppasswords) (needs 2-Step Verification) |

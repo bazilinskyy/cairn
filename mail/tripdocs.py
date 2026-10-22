@@ -303,13 +303,13 @@ def pick_doc(files, start, end):
 
 # --- one run: what should be in the docs, and making it so ---
 
-def wanted(state, airports, now, home):
-    """{item id: spec} for every stay, car and flight that is not over yet."""
+def wanted(state, airports, now, home, skip=()):
+    """{item id: spec} for every stay, car and flight that is not over yet, except bookings whose code is in skip."""
     import plan
     today = now.date().isoformat()
     out = {}
     for code, s in state.get("stays", {}).items():
-        if not s.get("cancelled") and s.get("start") and s.get("end") and s["end"] >= today:
+        if code not in skip and not s.get("cancelled") and s.get("start") and s.get("end") and s["end"] >= today:
             out[f"{s['what']}:{code}"] = {k: s.get(k, "") for k in ("what", "code", "place", "country", "start", "end", "type", "price", "link")}
     rows = [r for r in state.get("seen", {}).values() if r["dep"] in airports and r["arr"] in airports]
     trips = plan.trips(rows, home, airports)
@@ -338,8 +338,8 @@ def _stub(name):
 
 
 class TripDocs:
-    def __init__(self, google, folder, log, dry=False):
-        self.g, self.folder, self.log, self.dry, self.names = google, folder, log, dry, {}
+    def __init__(self, google, folder, log, dry=False, skip=()):
+        self.g, self.folder, self.log, self.dry, self.skip, self.names = google, folder, log, dry, set(skip), {}
 
     def files(self):
         out = {}
@@ -450,7 +450,7 @@ class TripDocs:
         import plan
         reg = state.setdefault("docs", {})
         done = reg.setdefault("done", {})
-        desired = wanted(state, airports, now, home)
+        desired = wanted(state, airports, now, home, self.skip)
         steps = plan.reconcile(desired, done)
         if not any(steps.values()):
             return

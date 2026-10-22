@@ -197,6 +197,11 @@ def test_dry_run_writes_nothing():
     assert any("Hostel" in m for m in log), log
 
 
+def test_skipped_bookings_get_no_doc():
+    state = {"stays": {"1": stay("1", "Faro", "2026-11-12", "2026-11-13"), "2": stay("2", "Lagos", "2026-11-13", "2026-11-14")}}
+    assert list(tripdocs.wanted(state, AIRPORTS, NOW, ["AMS"], skip={"1"})) == ["stay:2"]
+
+
 def test_past_items_are_left_alone():
     state = {"stays": {"1": stay("1", "Faro", "2026-10-01", "2026-10-03")}}
     assert tripdocs.wanted(state, AIRPORTS, NOW, ["AMS"]) == {}
