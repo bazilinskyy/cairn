@@ -25,19 +25,33 @@ class Leg:
     codes: tuple = ()           # airline PNR first, then the agency number
     agency: str = ""            # "eDreams 11112222333"
     day: date | None = None     # departure day when the times are unknown
+    mode: str = "flight"        # flight | train | bus | ferry; dep/arr are station names for the last three
+    dep_tz: str = ""            # time zones of ground stations (flights use their airports')
+    arr_tz: str = ""
+    arr_guess: bool = False     # arrival time not in the email: one hour after departure
 
     @property
     def when(self):
         return self.dep_local.date() if self.dep_local else self.day
 
     @property
+    def key(self):
+        """Identity used to recognise the leg again: the flight or service number, else the route."""
+        return self.flight or f"{self.mode}:{self.dep}>{self.arr}"
+
+    def tz(self, airports):
+        dep = self.dep_tz or (airports[self.dep].tz if self.dep in airports else "")
+        arr = self.arr_tz or (airports[self.arr].tz if self.arr in airports else "")
+        return dep, arr
+
+    @property
     def complete(self):
-        return bool(self.flight and self.dep and self.arr and self.dep_local and self.arr_local)
+        return bool((self.flight or self.mode != "flight") and self.dep and self.arr and self.dep_local and self.arr_local)
 
     def instants(self, airports):
-        """Departure and arrival as aware datetimes in each airport's own zone."""
-        return (self.dep_local.replace(tzinfo=ZoneInfo(airports[self.dep].tz)),
-                self.arr_local.replace(tzinfo=ZoneInfo(airports[self.arr].tz)))
+        """Departure and arrival as aware datetimes in each airport's (or station's) own zone."""
+        dep, arr = self.tz(airports)
+        return self.dep_local.replace(tzinfo=ZoneInfo(dep)), self.arr_local.replace(tzinfo=ZoneInfo(arr))
 
 
 @dataclass
@@ -48,6 +62,7 @@ class Parsed:
     looks_like_flight: bool
     old_legs: list = field(default_factory=list)  # legs a rebooking replaces
     latest_date: date | None = None               # latest date mentioned anywhere in the email
+    codes: tuple = ()                             # booking codes of the email (also when no leg could be read)
 
 
 def load_airports(path):
@@ -146,8 +161,8 @@ class _Microdata(HTMLParser):
                 break
 
 
-def reservations(html):
-    """All schema.org FlightReservation objects in JSON-LD scripts and microdata."""
+def reservations(html, types=("FlightReservation",)):
+    """All schema.org reservations of these types in JSON-LD scripts and microdata."""
     found = []
 
     def walk(x):
@@ -155,7 +170,7 @@ def reservations(html):
             for y in x:
                 walk(y)
         elif isinstance(x, dict):
-            if x.get("@type") == "FlightReservation":
+            if x.get("@type") in types:
                 found.append(x)
             for k in ("@graph", "itemListElement"):
                 walk(x.get(k))
@@ -400,7 +415,7 @@ def _codes(lines, airlines):
         for m in CODE_RX.finditer(line):
             rest = line[m.end():].strip(" :|#-–")
             value = (rest or (lines[i + 1] if i + 1 < len(lines) else "")).strip(" :|#").split(" ")[0].strip("()[],.;")
-            if re.fullmatch(r"[A-Z0-9]{5,8}", value) and re.search(r"[A-Z]", value) and not _flights(value, airlines):
+            if re.fullmatch(r"[A-Z0-9]{5,12}", value) and re.search(r"[A-Z]", value) and not _flights(value, airlines):
                 if value not in pnrs:
                     pnrs.append(value)
             elif re.fullmatch(r"\d[\d-]{6,}\d", value) and value not in numbers:
@@ -468,7 +483,8 @@ def _agency_name(sender):
     return parts[-2].capitalize() if len(parts) > 1 else domain
 
 
-def parse_email(msg, airports, airlines):
+def parse_email(msg, airports, airlines, places=None, home_tz="Europe/Amsterdam"):
+    """places: GeoNames towns (ground.load_cities) for the time zones of train, bus and ferry stations."""
     from email.header import decode_header, make_header
     from email.utils import parseaddr, parsedate_to_datetime
 
@@ -494,6 +510,17 @@ def parse_email(msg, airports, airlines):
         cities.setdefault(a.city.lower(), set()).add(code)
     cities = {c: next(iter(s)) for c, s in cities.items() if len(s) == 1}
 
+    pnrs, numbers = _codes([subject] + lines, airlines)
+    import ground
+    mode = ground.mode_of(sender, html)
+    if mode:  # trains, buses, ferries: their own rules, no flights in these emails
+        found = ground.legs(sender, subject, html, lines, received, places or {}, home_tz, mode)
+        codes = tuple(dict.fromkeys(pnrs + numbers[:1]))
+        found = [Leg(l.flight, l.dep, l.arr, l.dep_local, l.arr_local, tuple(dict.fromkeys(list(l.codes) + list(codes))),
+                     "", l.day, l.mode, l.dep_tz, l.arr_tz, l.arr_guess) for l in found]
+        dates = [d for line in [subject] + lines for _, d in _dates(line, received)]
+        return Parsed(_kind(subject, lines), found, _passengers(lines, []), bool(found), [],
+                      max(dates).date() if dates else None, tuple(dict.fromkeys(list(codes) + [c for l in found for c in l.codes])))
     structured = reservations(html) if html else []
     markup = jsonld_legs(html, airports) if html else []
     new, old = _labelled_legs(lines, airlines, airports, cities, received)
@@ -508,7 +535,6 @@ def parse_email(msg, airports, airlines):
                 day=m.day or t.day))
     else:
         legs = text_legs
-    pnrs, numbers = _codes([subject] + lines, airlines)
     agency = f"{_agency_name(sender)} {numbers[0]}" if numbers else ""
     out, seen = [], set()
     for l in legs:
@@ -522,4 +548,5 @@ def parse_email(msg, airports, airlines):
     dates = [d for line in [subject] + lines for _, d in _dates(line, received)]
     names = [((r.get("underName") or {}).get("name") or "").strip() for r in structured if isinstance(r.get("underName"), dict)]
     return Parsed(_kind(subject, lines), out, _passengers(lines, names),
-                  bool(out or _occurrences(lines, airlines, airports, cities)), old, max(dates).date() if dates else None)
+                  bool(out or _occurrences(lines, airlines, airports, cities)), old, max(dates).date() if dates else None,
+                  tuple(dict.fromkeys(pnrs + numbers[:1])))
