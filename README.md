@@ -3,7 +3,7 @@
 A personal flight tracker that runs on your own machine: a modern replacement for [openflights.org](https://openflights.org/), plus **flightmail**, which reads your booking emails and keeps both Contrail and your travel calendar up to date by itself.
 
 - **Contrail** (`app.js`, `public/`): a small Node/Express web app with a world map of your routes, statistics and a searchable flight list. Flights are stored in `data/flights.json`.
-- **flightmail** (`mail/`): a Python job that checks Gmail every hour. It turns flight bookings, schedule changes and cancellations into calendar events and Contrail flights. It uses no LLM and no paid service.
+- **flightmail** (`mail/`): a Python job that checks Gmail every hour. It turns flight bookings, schedule changes and cancellations into calendar events and Contrail flights, and train, bus and ferry tickets into calendar events. It uses no LLM and no paid service.
 
 ![Map — light mode, individual markers](docs/map-screenshot.jpg)
 
@@ -39,6 +39,7 @@ flightmail:
 - Finds the flights in booking emails from airlines and agencies, in English and Dutch (KLM, Ryanair, easyJet, eDreams, Gotogate, Booking.com, Air France-KLM and similar layouts)
 - Creates one **calendar event per flight**, for example `✈️ KL1234: Amsterdam - Lisbon`. Events start and end at the right moment in each airport's time zone, with the booking code (PNR) in the notes.
 - Adds the same flight to **Contrail**
+- Also adds **trains, buses and ferries** to the calendar, for example `🚆 EC9236: Breda - Bruxelles Midi` or `🚌 Lisboa (Oriente) - Porto (Campanhã)` (not to Contrail, which is a flight log)
 - Follows **schedule changes, rebookings and cancellations**
 - **Never duplicates** a flight that is already in the calendar or in Contrail, and never touches events it did not create
 - Posts what it **could not read** to Discord, so a missed booking is not silent
@@ -53,6 +54,7 @@ flightmail:
 | `test/api.test.js` | tests of the Contrail API |
 | `mail/flightmail.py` | flightmail entry point: Gmail, calendar, Contrail and Discord |
 | `mail/parse.py` | reads flight legs out of an email (no network) |
+| `mail/ground.py` | trains, buses and ferries: operator rules and station time zones (no network) |
 | `mail/sync.py` | decides what an email changes; AeroDataBox enrichment (no network) |
 | `mail/test_*.py`, `mail/fixtures/` | flightmail tests and anonymised test emails |
 | `mail/install.sh`, `mail/contrail.plist.template` | install flightmail and the Contrail service on a Mac (launchd) |
@@ -153,18 +155,20 @@ Every hour flightmail reads the Gmail messages that arrived since its last run. 
 | **Schedule change** | The event and the Contrail flight get the new times; the event gets a dated note such as `Updated 2026-10-21: schedule change (Gotogate)`. |
 | **Rebooking** | The old flight is deleted from both places and the new one created with a `Rebooked from KL1234 on 2026-11-16` note. |
 | **Cancellation** | The event and the Contrail flight are deleted. |
-| **Anything else** | Ignored: check-in reminders, boarding passes, price alerts, surveys, newsletters, "choose an option" emails, replies and forwards, hotels, cars, trains and buses. |
+| **Train, bus or ferry ticket** | One calendar event per journey (calendar only). Cancellations delete it, also when the email gives only the booking number. |
+| **Anything else** | Ignored: check-in reminders, boarding passes, price alerts, surveys, newsletters, "choose an option" emails, replies and forwards, hotels and cars. |
 
 Each event:
-- **Title:** `✈️ <flight>: <departure city> - <arrival city>`
+- **Title:** `✈️ <flight>: <departure city> - <arrival city>` for flights; `🚆` trains, `🚌` buses and `⛴️` ferries use the station names and, for trains, the train number: `🚆 EC9236: Breda - Bruxelles Midi`
 - **Times:** start and end at the real departure and arrival moments; the event's time zone is the departure airport's
-- **Location:** the departure airport
+- **Location:** the departure airport or station
 - **Notes:** `Confirmation Code: <PNR>`, the agency's number if any, and a `flightmail` marker line
 - **Alert:** one reminder 15 minutes before
+- When an email gives no arrival time (SNCF Connect), the event lasts one hour and its notes say the end time is a guess.
 
 A Contrail flight gets the date, route, flight number, airline and duration; the server computes the distance.
 
-**Never twice.** A flight that is already in the calendar is not added again. That means an event on the same day whose title holds the same flight number with any airline prefix: `EJU7883`, `U27883` and `U2 7883` are the same flight. In Contrail, a flight on the same day with the same route or the same flight number counts as already there. flightmail never changes or deletes events or flights it did not create.
+**Never twice.** A train, bus or ferry is already in the calendar when any event starts within five minutes of it, whatever its title. A flight that is already in the calendar is not added again. That means an event on the same day whose title holds the same flight number with any airline prefix: `EJU7883`, `U27883` and `U2 7883` are the same flight. In Contrail, a flight on the same day with the same route or the same flight number counts as already there. flightmail never changes or deletes events or flights it did not create.
 
 **Alerts** go to a Discord webhook:
 - emails about a trip still ahead that look like a flight booking but could not be read
@@ -186,7 +190,8 @@ The mailbox is only read (IMAP `EXAMINE`, `BODY.PEEK`): nothing is marked, moved
    A flight number counts only when its airline exists in OpenFlights' `airlines.dat` and an airport or a flight word is nearby, so codes like `V33IPW` or an IBAN are not mistaken for flights. Dates and times are read in English and Dutch. Booking codes come from labels such as PNR, booking reference, boekingscode or reserveringsnummer, and agency numbers from eDreams, Booking.com and Gotogate. The email is classed as booking, change, cancellation or other.
 3. **AeroDataBox** (`sync.enrich`): for every future leg, flightmail asks Contrail's `/api/flights/lookup` for the airports and scheduled local times of that flight number on that day, and these win over the email. This fixes layouts that give only city names or put details in odd places. Each flight and day is looked up once (cache `~/.flightmail/lookups.json`), at most `lookup_monthly_limit` times per month. Flights AeroDataBox does not know keep the email's data.
 4. **Deciding** (`sync.apply`): the rules above, against a state file that remembers which events and Contrail flights flightmail created.
-5. **Writing:** calendar events go through macOS Calendar (EventKit), so any calendar macOS sees works, for example a Google calendar added in System Settings. Contrail flights go through its REST API.
+5. **Trains, buses and ferries** (`ground.py`): recognised by the sender (NS International, SNCF Connect, Deutsche Bahn, Eurostar, Trainline, FlixBus, redBus, Rede Expressos, 12Go, ferry operators and more) or by schema.org `BusReservation` / `TrainReservation` / `BoatReservation` markup, which is read first. NS International, SNCF Connect, redBus and Rede Expressos have their own text rules. A station's time zone comes from the [GeoNames](https://www.geonames.org/) list of towns over 1,000 people (`data/cities1000.txt`, downloaded once, CC BY 4.0): the biggest town whose name starts the station name ("Bruxelles Midi" → Brussels), else `home_timezone`.
+6. **Writing:** calendar events go through macOS Calendar (EventKit), so any calendar macOS sees works, for example a Google calendar added in System Settings. Contrail flights go through its REST API.
 
 Time zones come from the airport database: every local time is placed in its airport's zone, including across daylight-saving changes and for flights that land after midnight.
 
@@ -202,6 +207,7 @@ In the `"flightmail"` sections of `config` and `secret`:
 | `lookback_days` | config | how far the first run looks back (default 365) |
 | `contrail_url` | config | Contrail's address (default `http://127.0.0.1:3000`) |
 | `lookup_monthly_limit` | config | maximum AeroDataBox lookups per month (default 100) |
+| `home_timezone` | config | time zone for stations that match no known town (default `Europe/Amsterdam`) |
 | `gmail_query` | config | optional Gmail search that preselects mail; empty uses the built-in one |
 | `gmail_app_password` | secret | a Gmail [app password](https://myaccount.google.com/apppasswords) (needs 2-Step Verification) |
 | `discord_webhook` | secret | Discord webhook for alerts; empty sends nothing |
@@ -239,7 +245,7 @@ The first run reads a year of matching mail and takes about ten minutes; later r
 | `~/.flightmail/lookups.json` | AeroDataBox answers and this month's lookup count |
 | `~/.flightmail/flightmail.app` | the app that holds the Calendar permission |
 
-Other commands: `mail/flightmail.py calendars` lists the calendars EventKit sees.
+Other commands: `mail/flightmail.py calendars` lists the calendars EventKit sees. `--rescan-days N` reads all matching mail of the last N days again, for example after new rules were added (`open -W --env FLIGHTMAIL_ARGS="--rescan-days 365" ~/.flightmail/flightmail.app`); nothing is added twice.
 
 To remove the hourly job:
 
@@ -251,7 +257,7 @@ launchctl bootout gui/$(id -u)/nl.tue.flightmail; rm ~/Library/LaunchAgents/nl.t
 
 - **Languages:** English and Dutch text rules. Other languages (for example French Transavia emails) are read only through schema.org markup or AeroDataBox.
 - **Attachments:** PDF e-tickets and attachments are not read.
-- **Not flights:** hotels, cars, trains and buses are ignored on purpose.
+- **Not travel:** hotels and cars are ignored on purpose. Trains, buses and ferries from operators without a rule or markup are not read; add a rule in `ground.py` with a fixture and a test.
 - **New layouts:** a layout none of the rules handle shows up as a "could not read" alert. To support it, add an anonymised copy to `mail/fixtures/`, a test in `mail/test_parse.py`, then a rule in `parse.py`.
 
 ## Using Contrail
@@ -325,6 +331,7 @@ Moving to MongoDB later only needs the data layer in `app.js` (the `flights` arr
 ```
 npm test                       # Contrail API, against a temporary copy with its own data
 python mail/test_parse.py      # reading emails (the fixtures in mail/fixtures)
+python mail/test_ground.py     # trains, buses and ferries, station time zones
 python mail/test_sync.py       # the change, rebooking, cancellation and duplicate rules
 python mail/test_flightmail.py # entry point, Contrail client, alerts
 ```
