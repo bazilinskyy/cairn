@@ -1,0 +1,26 @@
+From: FlixBus <noreply@booking.flixbus.com>
+To: jan.testers@example.com
+Subject: Booking Confirmation #3000000001
+Date: Tue, 20 Oct 2026 09:00:00 +0000
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+MIME-Version: 1.0
+
+<html><head><script type=3D"application/ld+json">[{"@context": "http://schema=
+.org", "@type": "BusReservation", "reservationNumber": "3000000001", "underNa=
+me": {"@type": "Person", "name": "Jan Testers"}, "reservationStatus": "http:/=
+/schema.org/ReservationConfirmed", "reservationFor": {"@type": "BusTrip", "bu=
+sNumber": "1010", "busName": "Porto (Campanh\u00e3)", "busCompany": {"@type":=
+ "Organization", "name": "Flix"}, "departureBusStop": {"@type": "BusStop", "n=
+ame": "Lisboa (Oriente)", "address": {"@type": "PostalAddress", "addressLocal=
+ity": "Lisboa", "addressCountry": "PT"}}, "departureTime": "2026-11-21T09:30:=
+00+00:00", "arrivalBusStop": {"@type": "BusStop", "name": "Porto (Campanh\u00=
+e3)", "address": {"@type": "PostalAddress", "addressLocality": "Porto", "addr=
+essCountry": "PT"}}, "arrivalTime": "2026-11-21T13:00:00+00:00"}}]</script></=
+head><body><h1>Booking Confirmed!</h1><p>Booking Number: 3000000001</p><p><ti=
+me>Sat, 21 Nov</time></p><div>FlixBus</div><table><tr><td><div>Departure</div=
+><p><div>Station</div>Lisboa (Oriente)</p></td><td><div>Time</div><h3><time>0=
+9:30</time></h3></td></tr><tr><td><div>Arrival</div><p><div>Station</div>Port=
+o (Campanh=C3=A3)</p></td><td><div>Time</div><h3><time>13:00</time></h3></td>=
+</tr></table><h3>Real-time updates!</h3><p>Track your bus and receive timely =
+notifications with our App.</p></body></html>

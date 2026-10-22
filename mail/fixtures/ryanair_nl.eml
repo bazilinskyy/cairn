@@ -1,0 +1,303 @@
+From: Ryanair <Itinerary@ryanair.com>
+To: jan.testers@example.com
+Subject: Ryanair Reisoverzicht
+Date: Wed, 21 Oct 2026 10:00:00 +0000
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+MIME-Version: 1.0
+
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "https://examp=
+le.com/"><html xmlns=3D"https://example.com/"><body><center><table rules=3D"n=
+one"><tbody><tr><td><table><tbody><tr><td><center><table><tbody><tr><td><cent=
+er><table><tbody><tr><td></td><td><table><tbody><tr><td></td><td><div><a href=
+=3D"https://example.com/"><span>myRyanair</span></a></div></td></tr></tbody><=
+/table></td></tr></tbody></table></center></td></tr></tbody></table></center>=
+</td></tr></tbody></table><table><tbody><tr><td><table><tbody><tr><td><center=
+><table><tbody><tr><td><table><tbody><tr><td><center><table><tbody><tr><td><t=
+able><tbody><tr><td><table><tbody><tr><td><div>Bestemming::</div><div>Alicant=
+e </div></td><td><div>Reserveringsnummer:</div><div>DEF456</div></td></tr></t=
+body></table></td></tr></tbody></table></td></tr></tbody></table></center></t=
+d></tr></tbody></table></td></tr></tbody></table></center></td></tr></tbody><=
+/table></td></tr></tbody></table><table><tbody><tr><td><table><tbody><tr><td>=
+<center><table><tbody><tr><td><center><table><tbody><tr><td /><td><center><ta=
+ble><tbody><tr><td><table><tbody><tr><td /></tr></tbody></table><div>
+Jouw vluchtinformatie
+</div><table><tbody><tr><td /></tr></tbody></table></td></tr></tbody></table>=
+</center></td><td /></tr></tbody></table></center><div itemscope=3D"itemscope=
+" itemtype=3D"http://schema.org/FlightReservation" xmlns=3D""><meta itemprop=
+=3D"reservationNumber" content=3D"DEF456" /><link itemprop=3D"reservationStat=
+us" href=3D"https://example.com/" /><div itemprop=3D"underName" itemscope=3D"=
+itemscope" itemtype=3D"http://schema.org/Person"><meta itemprop=3D"name" cont=
+ent=3D"Jan Testers" /></div><div itemprop=3D"reservationFor" itemscope=3D"ite=
+mscope" itemtype=3D"http://schema.org/Flight"><meta itemprop=3D"flightNumber"=
+ content=3D"8302" /><div itemprop=3D"airline" itemscope=3D"itemscope" itemtyp=
+e=3D"http://schema.org/Airline"><meta itemprop=3D"name" content=3D"Ryanair" /=
+><meta itemprop=3D"iataCode" content=3D"FR" /></div><div itemprop=3D"departur=
+eAirport" itemscope=3D"itemscope" itemtype=3D"http://schema.org/Airport"><met=
+a itemprop=3D"name" content=3D"Eindhoven " /><meta itemprop=3D"iataCode" cont=
+ent=3D"EIN" /></div><meta itemprop=3D"departureTime" content=3D"2026-11-20T07=
+:15:00" /><div itemprop=3D"arrivalAirport" itemscope=3D"itemscope" itemtype=
+=3D"http://schema.org/Airport"><meta itemprop=3D"name" content=3D"Alicante " =
+/><meta itemprop=3D"iataCode" content=3D"" /></div><meta itemprop=3D"arrivalT=
+ime" content=3D"2026-11-20T09:50:00" /></div><link itemprop=3D"checkinUrl" hr=
+ef=3D"https://example.com/" /></div><table><tr><td><center><![if !mso & !IE]>=
+<div><![endif]><table><tr><td><table><tr><td><table><tr><td></td><td><table><=
+tbody><tr><td /></tr></tbody></table><div>
+Naar Alicante <span>FR8302</span></div><table><tbody><tr><td /></tr></tbody><=
+/table></td></tr></table></td></tr><tr><td><table><tr><td><table><tbody><tr><=
+td>Eindhoven  -
+Alicante </td></tr><tr><td /></tr><tr><td>20/11/2026</td></tr><tr><td>
+Vertrek - <strong>07:15</strong></td></tr><tr><td>
+Aankomst - <strong>09:50</strong></td></tr><tr><td>
+(EIN) -
+(ALC)
+</td></tr></tbody></table></td></tr></table></td></tr></table></td></tr></tab=
+le><![if !mso & !IE]></div><![endif]></center><table><tr><td /></tr></table><=
+/td></tr></table><table><tr><td><table><tbody><tr><td /></tr></tbody></table>=
+<table><tr><td></td></tr></table><table><tr><td colspan=3D"2"><table><tbody><=
+tr><td /></tr></tbody></table><div>Passagier(s):</div><table><tbody><tr><td /=
+></tr></tbody></table></td></tr><tr><td><table><tr><td colspan=3D"3">Dhr. JAN=
+ TESTERS</td></tr><tr><td>=E2=97=8F</td><td>Uitgaande vlucht:</td><td>FR8302<=
+/td><td /></tr></table></td></tr></table><div><table role=3D"presentation"><t=
+body><tr><td><div><table role=3D"presentation"><tbody><tr><td><p /></td></tr>=
+<tr><td><div>Ontvangstbewijs:</div></td></tr><tr><td><table><tr><td>
+Totale prijs van je gekochte reis
+via
+PayPal
+eindigend in:
+0000</td><td>55.99 EUR</td></tr></table></td></tr><tr><td><div>Over internati=
+onale vluchten wordt geen BTW berekend, echter op binnenlandse vluchten kan e=
+r lokale BTW worden geheven.</div></td></tr></tbody></table></div></td></tr><=
+/tbody></table></div><div><table role=3D"presentation"><tbody><tr><td><div><t=
+able role=3D"presentation"><tbody><tr><td><table role=3D"presentation"><tbody=
+><tr><td><table role=3D"presentation"><tbody><tr><td role=3D"presentation"><a=
+ href=3D"https://example.com/" target=3D"_blank">
+Nu inchecken
+</a></td></tr></tbody></table></td></tr></tbody></table></td></tr></tbody></t=
+able></div></td></tr></tbody></table></div><div><table role=3D"presentation">=
+<tbody><tr><td><div><table role=3D"presentation"><tbody><tr><td><div>
+Moet je iets wijzigen?
+</div></td></tr><tr><td><div>
+Wijzig je naam, vluchten en meer in je myRyanair-account.
+</div></td></tr><tr><td><table role=3D"presentation"><tbody><tr><td role=3D"p=
+resentation"><a href=3D"https://example.com/" target=3D"_blank">
+Boeking beheren
+</a></td></tr></tbody></table></td></tr></tbody></table></div></td></tr></tbo=
+dy></table></div></td></tr></table></td></tr></tbody></table></center></td></=
+tr></tbody></table></td></tr></tbody></table><div><table role=3D"presentation=
+"><tbody><tr><td><div><table role=3D"presentation"><tbody><tr><td><table role=
+=3D"presentation"><tbody><tr><td><div>Je moet de Ryanair-app downloaden om to=
+egang te krijgen tot je digitale instapkaart.</div></td></tr></tbody></table>=
+</td></tr></tbody></table></div><div><table role=3D"presentation"><tbody><tr>=
+<td><div>We accepteren geen afgedrukte instapkaarten meer.</div></td></tr><tr=
+><td><div>Wat moet ik doen?</div></td></tr><tr><td><div>Download de Ryanair-a=
+pp. Zo simpel is het.</div></td></tr><tr><td><table role=3D"presentation"><tb=
+ody><tr><td role=3D"presentation"><a href=3D"https://example.com/" target=3D"=
+_blank">
+Download de Ryanair-app
+</a></td></tr></tbody></table></td></tr></tbody></table></div></td></tr></tbo=
+dy></table></div><table><tbody><tr><td><table><tbody><tr><td><center><table><=
+tbody><tr><td><center><table><tbody><tr><td /><td><center><table><tbody><tr><=
+td /></tr></tbody></table><table><tbody><tr><td><div>Essenti=C3=83=C2=ABle re=
+isbenodigdheden</div><table><tbody><tr><td /></tr></tbody></table></td></tr><=
+/tbody></table></center></td><td /></tr></tbody></table></center><table><tbod=
+y><tr><td /><td><center><![if !mso & !IE]><div><![endif]><table><tbody><tr><t=
+d><a href=3D"https://example.com/"><span></span></a></td></tr></tbody></table=
+><table><tbody><tr><td><![if !mso & !IE]><a href=3D"https://example.com/"><di=
+v><![endif]><table><tr><td><table><tbody><tr><td /></tr></tbody></table><![if=
+ !mso & !IE]><table><tbody><tr><td /></tr></tbody></table><![endif]><div>Fast=
+ Track</div></td></tr><tr><td /></tr><tr><td><div><table><tr><td>Ga binnen 5 =
+minuten of minder door de luchthavenbeveiliging met een speciale wachtrij.</t=
+d></tr></table></div></td></tr></table><![if !mso & !IE]></div></a><![endif]>=
+<table><tbody><tr><td><a href=3D"https://example.com/">
+Nu toevoegen
+</a></td></tr></tbody></table></td><![if !mso & !IE]><td><table><tr><td></td>=
+</tr></table></td><![endif]></tr></tbody></table><![if !mso & !IE]></div><fon=
+t> </font><![endif]><![if !mso & !IE]><div><![endif]><table><tbody><tr><td><a=
+ href=3D"https://example.com/"><span></span></a></td></tr></tbody></table><ta=
+ble><tbody><tr><td><![if !mso & !IE]><a href=3D"https://example.com/"><div><!=
+[endif]><table><tr><td><table><tbody><tr><td /></tr></tbody></table><![if !ms=
+o & !IE]><table><tbody><tr><td /></tr></tbody></table><![endif]><div>Upgrade =
+en bespaar 10%</div></td></tr><tr><td /></tr><tr><td><div><table><tr><td>Een =
+koffer van 20 kg, een gereserveerde stoel en Instappen met prioriteit en twee=
+ stuks handbagage in =C3=83=C2=A9=C3=83=C2=A9n pakket.</td></tr></table></div=
+></td></tr></table><![if !mso & !IE]></div></a><![endif]><table><tbody><tr><t=
+d><a href=3D"https://example.com/">
+Nu toevoegen
+</a></td></tr></tbody></table></td><![if !mso & !IE]><td><table><tr><td></td>=
+</tr></table></td><![endif]></tr></tbody></table><![if !mso & !IE]></div><![e=
+ndif]></center></td><td /></tr></tbody></table><table><tbody><tr><td /></tr><=
+/tbody></table><table><tbody><tr><td /><td><center><![if !mso & !IE]><div><![=
+endif]><table><tbody><tr><td><a href=3D"https://example.com/"><span></span></=
+a></td></tr></tbody></table><table><tbody><tr><td><![if !mso & !IE]><a href=
+=3D"https://example.com/"><div><![endif]><table><tr><td><table><tbody><tr><td=
+ /></tr></tbody></table><![if !mso & !IE]><table><tbody><tr><td /></tr></tbod=
+y></table><![endif]><div>Autoverhuur</div></td></tr><tr><td /></tr><tr><td><d=
+iv><table><tr><td>Je vindt geen betere deal dankzij onze besteprijsgarantie.<=
+/td></tr></table></div></td></tr></table><![if !mso & !IE]></div></a><![endif=
+]><table><tbody><tr><td><a href=3D"https://example.com/">
+Bekijk de aanbieding
+</a></td></tr></tbody></table></td><![if !mso & !IE]><td><table><tr><td></td>=
+</tr></table></td><![endif]></tr></tbody></table><![if !mso & !IE]></div><fon=
+t> </font><![endif]><![if !mso & !IE]><div><![endif]><table><tbody><tr><td><a=
+ href=3D"https://example.com/"><span></span></a></td></tr></tbody></table><ta=
+ble><tbody><tr><td><![if !mso & !IE]><a href=3D"https://example.com/"><div><!=
+[endif]><table><tr><td><table><tbody><tr><td /></tr></tbody></table><![if !ms=
+o & !IE]><table><tbody><tr><td /></tr></tbody></table><![endif]><div>Luchthav=
+en Parking</div></td></tr><tr><td /></tr><tr><td><div><table><tr><td>Je kunt =
+veilig parkeren op de luchthaven reserveren bij Ryanair.</td></tr></table></d=
+iv></td></tr></table><![if !mso & !IE]></div></a><![endif]><table><tbody><tr>=
+<td><a href=3D"https://example.com/">
+Nu toevoegen
+</a></td></tr></tbody></table></td><![if !mso & !IE]><td><table><tr><td></td>=
+</tr></table></td><![endif]></tr></tbody></table><![if !mso & !IE]></div><![e=
+ndif]></center></td><td /></tr></tbody></table><table><tbody><tr><td /></tr><=
+/tbody></table><table><tbody><tr><td /><td><center><![if !mso & !IE]><div><![=
+endif]><table><tbody><tr><td><a href=3D"https://example.com/"><span></span></=
+a></td></tr></tbody></table><table><tbody><tr><td><![if !mso & !IE]><a href=
+=3D"https://example.com/"><div><![endif]><table><tr><td><table><tbody><tr><td=
+ /></tr></tbody></table><![if !mso & !IE]><table><tbody><tr><td /></tr></tbod=
+y></table><![endif]><div>Instappen met prioriteit en twee stuks handbagage</d=
+iv></td></tr><tr><td /></tr><tr><td><div><table><tr><td>Als u 2 stuks handbag=
+age aan boord wilt meenemen, moet u Instappen met prioriteit en twee stuks ha=
+ndbagage.</td></tr></table></div></td></tr></table><![if !mso & !IE]></div></=
+a><![endif]><table><tbody><tr><td><a href=3D"https://example.com/">
+Nu toevoegen
+</a></td></tr></tbody></table></td><![if !mso & !IE]><td><table><tr><td></td>=
+</tr></table></td><![endif]></tr></tbody></table><![if !mso & !IE]></div><fon=
+t> </font><![endif]><![if !mso & !IE]><div><![endif]><table><tbody><tr><td><a=
+ href=3D"https://example.com/"><span></span></a></td></tr></tbody></table><ta=
+ble><tbody><tr><td><![if !mso & !IE]><a href=3D"https://example.com/"><div><!=
+[endif]><table><tr><td><table><tbody><tr><td /></tr></tbody></table><![if !ms=
+o & !IE]><table><tbody><tr><td /></tr></tbody></table><![endif]><div>Kies uw =
+favoriete stoel</div></td></tr><tr><td /></tr><tr><td><div><table><tr><td>Wis=
+t u dat u uw stoel tot 2 uur voor uw vertrek kunt veranderen?</td></tr></tabl=
+e></div></td></tr></table><![if !mso & !IE]></div></a><![endif]><table><tbody=
+><tr><td><a href=3D"https://example.com/">
+Boek nu
+</a></td></tr></tbody></table></td><![if !mso & !IE]><td><table><tr><td></td>=
+</tr></table></td><![endif]></tr></tbody></table><![if !mso & !IE]></div><![e=
+ndif]></center></td><td /></tr></tbody></table><table><tbody><tr><td /></tr><=
+/tbody></table><table><tbody><tr><td /></tr></tbody></table></td></tr></tbody=
+></table></center></td></tr></tbody></table></td></tr></tbody></table><table>=
+<tbody><tr><td><table><tbody><tr><td><center><table><tbody><tr><td><center><t=
+able><tbody><tr><td /><td><center><table><tbody><tr><td><div>Profiteer van al=
+les wat Ryanair te bieden heeft.</div><table><tbody><tr><td /></tr></tbody></=
+table></td></tr></tbody></table></center></td><td /></tr></tbody></table></ce=
+nter><table><tbody><tr><td /><td><center><![if !mso & !IE]><div><![endif]><ta=
+ble><tbody><tr><td><a href=3D"https://example.com/"><span></span></a></td></t=
+r></tbody></table><table><tbody><tr><td><![if !mso & !IE]><a href=3D"https://=
+example.com/"><div><![endif]><table><tr><td><table><tbody><tr><td /></tr></tb=
+ody></table><![if !mso & !IE]><table><tbody><tr><td /></tr></tbody></table><!=
+[endif]><div>Meer bagage toevoegen</div></td></tr><tr><td /></tr><tr><td><div=
+><table><tr><td>Je kunt tot 2 uur voordat je vertrekt maximaal 3 koffers van =
+20 kg toevoegen aan je reis.</td></tr></table></div></td></tr></table><![if !=
+mso & !IE]></div></a><![endif]><table><tbody><tr><td><a href=3D"https://examp=
+le.com/">
+Nu toevoegen
+</a></td></tr></tbody></table></td><![if !mso & !IE]><td><table><tr><td></td>=
+</tr></table></td><![endif]></tr></tbody></table><![if !mso & !IE]></div><fon=
+t> </font><![endif]><![if !mso & !IE]><div><![endif]><table><tbody><tr><td><a=
+ href=3D"https://example.com/"><span></span></a></td></tr></tbody></table><ta=
+ble><tbody><tr><td><![if !mso & !IE]><a href=3D"https://example.com/"><div><!=
+[endif]><table><tr><td><table><tbody><tr><td /></tr></tbody></table><![if !ms=
+o & !IE]><table><tbody><tr><td /></tr></tbody></table><![endif]><div>Ryaniar =
+Rooms</div></td></tr><tr><td /></tr><tr><td><div><table><tr><td>Kwalitatief h=
+oogwaardige kamers tegen betaalbare prijzen. Boek een verblijf voor minder da=
+n =E2=82=AC 99 per nacht.</td></tr></table></div></td></tr></table><![if !mso=
+ & !IE]></div></a><![endif]><table><tbody><tr><td><a href=3D"https://example.=
+com/">
+Bekijk meer
+</a></td></tr></tbody></table></td><![if !mso & !IE]><td><table><tr><td></td>=
+</tr></table></td><![endif]></tr></tbody></table><![if !mso & !IE]></div><![e=
+ndif]></center></td><td /></tr></tbody></table><table><tbody><tr><td /></tr><=
+/tbody></table><table><tbody><tr><td /><td><center><![if !mso & !IE]><div><![=
+endif]><table><tbody><tr><td><a href=3D"https://example.com/"><span></span></=
+a></td></tr></tbody></table><table><tbody><tr><td><![if !mso & !IE]><a href=
+=3D"https://example.com/"><div><![endif]><table><tr><td><table><tbody><tr><td=
+ /></tr></tbody></table><![if !mso & !IE]><table><tbody><tr><td /></tr></tbod=
+y></table><![endif]><div>Tijdschrift aan boord</div></td></tr><tr><td /></tr>=
+<tr><td><div><table><tr><td>Download en bekijk ons tijdschrift aan boord voor=
+dat je vertrekt.</td></tr></table></div></td></tr></table><![if !mso & !IE]><=
+/div></a><![endif]><table><tbody><tr><td><a href=3D"https://example.com/">
+Nu downloaden
+</a></td></tr></tbody></table></td><![if !mso & !IE]><td><table><tr><td></td>=
+</tr></table></td><![endif]></tr></tbody></table><![if !mso & !IE]></div><fon=
+t> </font><![endif]><![if !mso & !IE]><div><![endif]><table><tbody><tr><td><a=
+ href=3D"https://example.com/"><span></span></a></td></tr></tbody></table><ta=
+ble><tbody><tr><td><![if !mso & !IE]><a href=3D"https://example.com/"><div><!=
+[endif]><table><tr><td><table><tbody><tr><td /></tr></tbody></table><![if !ms=
+o & !IE]><table><tbody><tr><td /></tr></tbody></table><![endif]><div>Reisverz=
+ekering</div></td></tr><tr><td /></tr><tr><td><div><table><tr><td>Verzeker je=
+ met Verzekering.</td></tr></table></div></td></tr></table><![if !mso & !IE]>=
+</div></a><![endif]><table><tbody><tr><td><a href=3D"https://example.com/">
+Nu toevoegen
+</a></td></tr></tbody></table></td><![if !mso & !IE]><td><table><tr><td></td>=
+</tr></table></td><![endif]></tr></tbody></table><![if !mso & !IE]></div><![e=
+ndif]></center></td><td /></tr></tbody></table><table><tbody><tr><td /></tr><=
+/tbody></table></td></tr></tbody></table></center></td></tr></tbody></table><=
+/td></tr></tbody></table><div><table role=3D"presentation"><tbody><tr><td><di=
+v><table role=3D"presentation"><tbody><tr><td><table role=3D"presentation"><t=
+body><tr><td></td></tr></tbody></table></td></tr><tr><td><div>Assistent op je=
+ reisdag-app</div></td></tr><tr><td><div>Wanneer het tijd is om te vliegen, m=
+aakt onze assistent voor je reisdag je traject door de luchthaven gemakkelijk=
+er. Ontvang direct live updates over je terminal, gate en vlucht op je telefo=
+on. Ontvang tijdens grote storingen regelmatig video-updates van ons Operatio=
+ns Centre, zodat je op de hoogte blijft van hoe de verstoring wordt opgelost.=
+</div></td></tr></tbody></table></div></td></tr></tbody></table></div><table>=
+<tr><td><table><tbody><tr><td /><td><center><table><tbody><tr><td><table><tr>=
+<td><![if !mso & !IE]><div><![endif]><table><tbody><tr><td /></tr></tbody></t=
+able><div>
+Neem contact met ons op
+</div><table><tbody><tr><td /></tr></tbody></table><![if !mso & !IE]></div><!=
+[endif]><![if !mso & !IE]><div><![endif]><table><tr><td><a href=3D"https://ex=
+ample.com/"></a></td><td><a href=3D"https://example.com/"></a></td><td><a hre=
+f=3D"https://example.com/"></a></td><td><a href=3D"https://example.com/"></a>=
+</td><td><a href=3D"https://example.com/"></a></td></tr></table><![if !mso & =
+!IE]></div><![endif]><![if !mso & !IE]><div><![endif]><table><tbody><tr><td /=
+></tr></tbody></table><div>
+Download nu onze app!
+</div><table><tbody><tr><td /></tr></tbody></table><table><tr><td><a href=3D"=
+https://example.com/"></a></td><td><a href=3D"https://example.com/"></a></td>=
+</tr></table><![if !mso & !IE]></div><![endif]></td></tr></table><table><tr><=
+td><![if !mso & !IE]><div><![endif]><table><tbody><tr><td /></tr></tbody></ta=
+ble><div>
+Betalingsmogelijkheden
+</div><table><tbody><tr><td /></tr></tbody></table><![if !mso & !IE]></div><!=
+[endif]><![if !mso & !IE]><div><![endif]><table><tr><td></td><td></td><td></t=
+d><td></td><td></td><td></td></tr></table><![if !mso & !IE]></div><![endif]><=
+/td></tr></table></td></tr></tbody></table></center></td><td /></tr></tbody><=
+/table><table><tbody><tr><td><center><table><tbody><tr><td><table><tr><td><a =
+href=3D"https://example.com/"></a></td><td>
+2026                              Ryanair DAC   | =20
+<a href=3D"https://example.com/">Gebruiksvoorwaarden</a>
+  | =20
+<a href=3D"https://example.com/">Privacybeleid</a>
+  | =20
+<a href=3D"https://example.com/">Contact met ons opnemen</a></td></tr></table=
+></td></tr></tbody></table></center></td></tr></tbody></table></td></tr></tab=
+le><table><tbody><tr><td /></tr></tbody></table><table><tbody><tr><td>
+Als je een combinatie van reisdiensten bij elkaar hebt geboekt (bijv. een com=
+binatie van vlucht, hotel of autohuur), zijn wij volledig verantwoordelijk vo=
+or de juiste prestaties van het pakket. Daarnaast bieden we bescherming om er=
+ zeker van te zijn dat eventuele ongebruikte diensten aan je worden terugbeta=
+ald en, indien een vlucht is inbegrepen, om je repatri=C3=83=C2=ABring te ver=
+zekeren in het onwaarschijnlijke geval dat we insolvent worden. Je kunt meer =
+informatie vinden. <a href=3D"https://example.com/"> hier </a></td></tr><tr><=
+td>
+Als het bovenstaande niet van toepassing is en je een of meer extra reisdiens=
+ten bij ons hebt geboekt binnen 24 uur na het boeken van de eerste reisdienst=
+ (d.w.z. het boeken van een hotel of autohuur die gekoppeld is aan een vlucht=
+ geboekt in de afgelopen 24 uur), dan profiteer je van alle EU-rechten die ge=
+lden voor dergelijke gelinkte reisarrangementen en word je ook gedekt door on=
+ze insolventiebescherming die zorgt dat je wordt terugbetaald voor eventuele =
+ongebruikte diensten en, indien een vlucht is inbegrepen, dat je wordt gerepa=
+trieerd in het onwaarschijnlijke geval dat we insolvent worden. Klik voor mee=
+r informatie over insolventiebescherming. <a href=3D"https://example.com/"> h=
+ier </a></td></tr><br /><tr><td>
+Meer informatie over gereserveerde stoelen <a href=3D"https://example.com/"> =
+hier </a></td></tr><tr><td>
+Voor meer informatie over ons bagagebeleid, <a href=3D"https://example.com/">=
+ klik hier </a></td></tr><tr /></tbody></table><table><tbody><tr><td /></tr><=
+/tbody></table><center>Version: 17 824 886</center></td></tr></tbody></table>=
+</center></body></html>

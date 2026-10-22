@@ -1,0 +1,37 @@
+From: Booking.com <noreply@booking.com>
+To: jan.testers@example.com
+Subject: Budapest flight booking confirmed
+Date: Wed, 21 Oct 2026 10:00:00 +0000
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+MIME-Version: 1.0
+
+<html><body>
+<div>Your flight to <strong>Budapest</strong> is confirmed =E2=80=93 thanks f=
+or booking!</div>
+<script type=3D"application/ld+json">[{"@context":"http://schema.org","@type"=
+:"FlightReservation","reservationNumber":"","reservationStatus":"http://schem=
+a.org/Confirmed","underName":{"@type":"Person","name":"Jan Testers"},"reserva=
+tionFor":{"@type":"Flight","flightNumber":"2202","airline":{"@type":"Airline"=
+,"name":"Wizz Air","iataCode":"W6"},"departureAirport":{"@type":"Airport","na=
+me":"Eindhoven Airport","iataCode":"EIN"},"departureTime":"2026-11-26T21:15:0=
+0","arrivalAirport":{"@type":"Airport","name":"Budapest Ferenc Liszt Internat=
+ional Airport","iataCode":"BUD"},"arrivalTime":"2026-11-26T23:20:00"}}]</scri=
+pt>
+<h1>Jan, you&#x27;re flying to Budapest</h1><div>Hi Jan Testers,</div>
+<div>Your flight to <strong>Budapest</strong> is confirmed =E2=80=93 you=E2=
+=80=99re all set!</div>
+<table><tr><td><div>Customer reference</div><div><span>40-0000000001</span></=
+div></td><td><div>PIN code</div><div><span>0000</span></div></td></tr></table>
+<div role=3D"heading" aria-label=3D"Eindhoven (EIN) to Budapest (BUD)"><span>=
+Eindhoven</span> <span>(EIN)</span> to <span>Budapest</span> <span>(BUD)</spa=
+n></div>
+<div><span>Thu 26 Nov</span><span> =C2=B7 </span><span>21:15</span><span> - <=
+/span><span>Thu 26 Nov</span><span> =C2=B7 </span><span>23:20</span></div>
+<div><span>Direct </span><span> =C2=B7 </span><span>2h 5m</span><span> =C2=B7=
+ </span><span>Economy</span></div>
+<div><span>Wizz Air</span><span> =C2=B7 </span><span><span>W62202</span></spa=
+n></div>
+<div><span>Booking reference: QWE321 </span></div>
+<div>Total price for 1 traveller: =E2=82=AC29.92</div>
+</body></html>

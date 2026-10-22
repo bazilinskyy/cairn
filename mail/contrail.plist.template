@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Contrail server on mini. mail/install.sh fills in __REPO__, __NODE__ and __HOME__. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>nl.tue.contrail</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__NODE__</string>
+    <string>__REPO__/app.js</string>
+  </array>
+  <key>WorkingDirectory</key><string>__REPO__</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>__HOME__/.flightmail/contrail.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/.flightmail/contrail.log</string>
+</dict>
+</plist>

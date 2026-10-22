@@ -1,0 +1,19 @@
+From: KLM <KLM@klm-info.com>
+To: jan.testers@example.com
+Subject: Uw vlucht KL1234 is geannuleerd
+Date: Wed, 21 Oct 2026 10:00:00 +0000
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+MIME-Version: 1.0
+
+<html><body>
+<p>Beste Jan Testers,</p>
+<p>Helaas is uw vlucht geannuleerd. Wij bieden u onze excuses aan voor het on=
+gemak.</p>
+<table><tr><td>Boekingscode</td><td>ABC123</td></tr>
+<tr><td>Vlucht</td><td>KL1234</td></tr>
+<tr><td>Datum</td><td>maandag 16 november 2026</td></tr>
+<tr><td>Van</td><td>Amsterdam, Schiphol Airport (AMS)</td></tr>
+<tr><td>Naar</td><td>Lisbon, Humberto Delgado Airport (LIS)</td></tr></table>
+<p>U kunt in Mijn Reis kosteloos omboeken of uw ticket laten terugbetalen.</p>
+</body></html>

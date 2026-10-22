@@ -1,0 +1,22 @@
+From: 12Go <32000000@b.12go.asia>
+To: jan.testers@example.com
+Subject: Booking confirmation #INTA00TEST
+Date: Tue, 20 Oct 2026 09:00:00 +0000
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+MIME-Version: 1.0
+
+<html><script type=3D"application/ld+json">{"@context": "http://schema.org", =
+"@type": "BusReservation", "reservationNumber": "32000000", "underName": {"@t=
+ype": "Person", "name": "Jan Testers"}, "reservationFor": {"@type": "BusTrip"=
+, "busCompany": {"@type": "Organization", "name": "Aerobus"}, "departureBusSt=
+op": {"@type": "BusStop", "name": "Kuala Lumpur (KL Sentral, departure time: =
+2026-12-05 18:00)"}, "departureTime": "2026-12-05T18:00:00+07:00", "arrivalBu=
+sStop": {"@type": "BusStop", "name": "Kuala Lumpur (Klia1, departure time: 20=
+26-12-05 18:45)"}, "arrivalTime": "2026-12-05T19:00:00+07:00"}}</script><body=
+><h1>Booking Confirmed!</h1><p>Booking ID: #INTA00TEST</p><p>Hi Jan,</p><p>Yo=
+u're booked from Kuala Lumpur (KL Sentral, departure time: 2026-12-05 18:00) =
+To Kuala Lumpur (Klia1, departure time: 2026-12-05 18:45).</p><div>Departure<=
+/div><div>Saturday, December 5, 2026</div><div>06:00 PM</div><div>Passengers<=
+/div><div>Jan Testers</div><div>Vehicle Type</div><div>Express</div></body></=
+html>
