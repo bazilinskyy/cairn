@@ -231,7 +231,7 @@ def test_looks_like_flight():
 def test_hotel_and_train_give_no_flights():
     for name in ("hotel_booking", "ns_train"):
         p = parsed(name)
-        assert p.legs == [] and not p.looks_like_flight, (name, p.legs)
+        assert [l for l in p.legs if l.mode == "flight"] == [] and not p.looks_like_flight, (name, p.legs)
 
 
 def test_action_needed_is_other():

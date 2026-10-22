@@ -22,3 +22,10 @@ tables and wording are the airline's own.
 | `easyjet_city_names.eml` | easyJet booking | the easyJet fixture with a city name that matches no airport (`Majorca (Palma)`) |
 | `hotel_booking.eml` | Booking.com hotel confirmation | must give no flights |
 | `ns_train.eml` | NS International train tickets | train numbers like `EC 9236` and an IBAN, must give no flights |
+| `ns_train.eml` (also) | NS International | outward and return train, used for train tests too |
+| `sncf_ground.eml` | SNCF Connect order | journey only (origin, destination, departure time), no arrival time |
+| `redbus_ground.eml` | redBus ticket | 12-hour times (`09:45 PM`), boarding and dropping points |
+| `flix_bus.eml` | FlixBus confirmation | written by hand in the same layout; schema.org `BusReservation` |
+| `flix_cancel.eml` | FlixBus cancellation | written by hand; only the booking number |
+| `twelvego_bus.eml` | 12Go confirmation | written by hand; `BusReservation` with a wrong time-zone offset and stop names with "departure time" in them |
+| `rne_bus.eml` | Rede Expressos ticket | written by hand in the same layout; departure, connection and arrival |
