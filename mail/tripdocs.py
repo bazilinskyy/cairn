@@ -278,14 +278,29 @@ def car_row(plan, car):
 
 
 def leg_row(transport, leg):
-    """("done", row) if a Transport row has this flight on this day, else ("fill", first empty row) or ("insert", last)."""
-    first_empty = None
-    for r, row in enumerate(transport["rows"][1:], 1):
-        if leg["flight"] in row[0]["text"].replace(" ", "") and leg["date"][:8] in " ".join(c["text"] for c in row):
+    """("done", row) if a Transport row has this trip on this day (same title, or same flight or train number);
+    else its place in time order: ("fill", row) when that row is empty, or ("insert", row to insert below)."""
+    rows, me, after = transport["rows"], _when(leg["date"]), 0
+    for r, row in enumerate(rows[1:], 1):
+        text = " ".join(c["text"] for c in row)
+        same = row[0]["text"] == leg["title"] or (leg["flight"] and leg["flight"] in row[0]["text"].replace(" ", ""))
+        if same and leg["date"][:8] in text:
             return "done", r
-        if first_empty is None and not any(c["text"] for c in row):
-            first_empty = r
-    return ("fill", first_empty) if first_empty else ("insert", len(transport["rows"]) - 1)
+        when = _when(text)
+        if when and when <= me:
+            after = r
+    if after + 1 < len(rows) and not any(c["text"] for c in rows[after + 1]):
+        return "fill", after + 1
+    return "insert", after
+
+
+def _when(text):
+    """(day, "HH:MM") of the first date in text, for ordering Transport rows; None without a date."""
+    days = parse_dates(text)
+    if not days:
+        return None
+    t = re.search(r"\b(\d{1,2}):(\d{2})\b", text)
+    return days[0], f"{int(t.group(1)):02d}:{t.group(2)}" if t else "00:00"
 
 
 def pick_doc(files, start, end):
@@ -304,7 +319,8 @@ def pick_doc(files, start, end):
 # --- one run: what should be in the docs, and making it so ---
 
 def wanted(state, airports, now, home, skip=()):
-    """{item id: spec} for every stay, car and flight that is not over yet, except bookings whose code is in skip."""
+    """{item id: spec} for every stay, car, flight, train, bus and ferry that is not over yet, except bookings
+    whose code is in skip."""
     import plan
     today = now.date().isoformat()
     out = {}
@@ -324,6 +340,17 @@ def wanted(state, airports, now, home, skip=()):
                              "title": f"✈️ {r['flight']}: {plan._city(r['dep'], airports)} - {plan._city(r['arr'], airports)}",
                              "codes": r.get("codes", []), "start": trip["start"] if trip else day, "end": trip["end"] if trip else r["arr_local"][:10],
                              "name": trip["name"] if trip else plan._city(away, airports)}
+    for sid, r in state.get("ground", {}).items():
+        if r["arr_local"][:10] < today:
+            continue
+        day = r["dep_local"][:10]
+        trip = next((t for t in trips if t["start"] <= day <= t["end"]), None)
+        number = "" if r["flight"].startswith(r["mode"] + ":") else r["flight"]  # "bus:A>B" when it has none
+        out["ride:" + sid] = {"what": "leg", "mode": r["mode"], "flight": number, "dep_local": r["dep_local"],
+                              "date": f"{datetime.fromisoformat(r['dep_local']):%d.%m.%y %H:%M}",
+                              "title": f"{plan.EMOJI.get(r['mode'], '🚌')} {number + ': ' if number else ''}{r['dep']} - {r['arr']}",
+                              "codes": r.get("codes", []), "start": trip["start"] if trip else day,
+                              "end": trip["end"] if trip else r["arr_local"][:10]}
     return out
 
 
@@ -422,7 +449,7 @@ class TripDocs:
             return
         if any(car["code"] in l for row in t["rows"] for c in row for l in c["links"]):
             return
-        values = {"transport": ("Rental car", car["link"] or None), "date": car_text(car) + car["end"][2:4],
+        values = {"transport": ("Rental car", car["link"] or None), "date": car_text(car) + "." + car["end"][2:4],
                   "price": car["price"], "comments": car["place"]}
         empty = next((r for r, row in enumerate(t["rows"][1:], 1) if not any(c["text"] for c in row)), None)
         if empty:
@@ -454,16 +481,20 @@ class TripDocs:
         steps = plan.reconcile(desired, done)
         if not any(steps.values()):
             return
+        waiting = [i for i in desired if i in done and not done[i]["doc"] and i not in steps["update"]]
         files = self.files()
         today = now.date().isoformat()
         for i in steps["remove"] + steps["update"]:
             if done[i]["spec"]["end"] >= today and done[i]["doc"] in files:
                 self.remove(done[i]["doc"], done[i]["spec"])
             del done[i]
-        for i in sorted(steps["create"] + steps["update"], key=lambda i: (desired[i]["start"], desired[i].get("dep_local", ""))):
+        for i in sorted(steps["create"] + steps["update"] + waiting, key=lambda i: (desired[i]["start"], desired[i].get("dep_local", ""))):
             spec = desired[i]
             s, e = date.fromisoformat(spec["start"]), date.fromisoformat(spec["end"])
             doc_id = pick_doc(files, s, e)
+            if not doc_id and spec.get("mode", "flight") != "flight":  # trains, buses, ferries only join a trip's doc
+                done[i] = {"doc": None, "spec": spec}
+                continue
             if not doc_id:
                 doc_id = self.create(f"{spec.get('name') or spec.get('country') or spec['place']} {s.year}")
                 files[doc_id] = {"name": self.names[doc_id], "start": spec["start"], "end": spec["end"]}

@@ -16,7 +16,8 @@ CHECKIN = {  # airline IATA code -> online check-in page; others get a web searc
     "AI": "https://www.airindia.com/in/en/manage/web-checkin.html", "BA": "https://www.britishairways.com/travel/olcilandingpageauthreq/public/en_nl",
 }
 STAY = timedelta(hours=12)  # a gap this long between two flights means a stay, not a connection
-WORK_HOURS = (9, 17)  # weekdays, in the home time zone
+WORK_HOURS = (9, 17)
+EMOJI = {"flight": "✈️", "train": "🚆", "bus": "🚌", "ferry": "⛴️"}  # weekdays, in the home time zone
 
 
 def _t(s):

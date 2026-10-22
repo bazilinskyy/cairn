@@ -183,7 +183,7 @@ A Contrail flight gets the date, route, flight number, airline and duration; the
 - **Hotel or Airbnb:** the Plan row with that place and overlapping dates gets the Accommodation (the type, "Hotel", "Hostel", "Flat", "Room" or "House", linked to the booking) and the Price, but only cells that are empty. With no such row, a new row goes in date order with the place, the dates written `22–23.10.26`, the accommodation and the price.
 - **Cancelled hotel or Airbnb:** its Accommodation and Price cells are emptied; place and dates stay.
 - **Rental car:** `Rental car 26–30.09`, linked to the booking, is added to the Comments (or a Car column) of the row whose stay holds the pick-up day, else to a Transport row.
-- **Flights:** one Transport row each: `✈️ KL1234: Amsterdam - Lisbon`, `07.12.26 16:10`, and the booking code in Comments. Empty rows are filled first. A cancelled or rebooked flight empties its row.
+- **Flights, trains, buses and ferries:** one Transport row each, titled like the calendar event (`✈️ KL1234: Amsterdam - Lisbon`, `🚌 Faro - Albufeira`), with the departure (`07.12.26 16:10`) and the booking code in Comments, in time order: an empty row in that place is filled, else a row is inserted. A cancelled or rebooked trip empties its row. A train, bus or ferry only joins a doc that covers its day; it never creates one, and waits until a flight or stay brings one.
 - **Your text is never changed**: flightmail only writes into empty cells, adds rows, and empties the cells it wrote. Bookings that are over are left alone.
 
 **Never twice.** A train, bus or ferry is already in the calendar when any event starts within five minutes of it, whatever its title. A flight that is already in the calendar is not added again. That means an event on the same day whose title holds the same flight number with any airline prefix: `EJU7883`, `U27883` and `U2 7883` are the same flight. In Contrail, a flight on the same day with the same route or the same flight number counts as already there. flightmail never changes or deletes events or flights it did not create.
@@ -291,7 +291,7 @@ launchctl bootout gui/$(id -u)/nl.tue.flightmail; rm ~/Library/LaunchAgents/nl.t
 - **Languages:** English and Dutch text rules. Other languages (for example French Transavia emails) are read only through schema.org markup or AeroDataBox.
 - **Attachments:** PDF e-tickets and attachments are not read.
 - **Not read:** trains, buses and ferries from operators without a rule or markup; add a rule in `ground.py` with a fixture and a test. Hotels and cars other than Booking.com, Airbnb, DiscoverCars and VIPCars; add a rule in `stays.py`.
-- **Trip docs:** trains, buses and ferries get no Transport row yet. A cancelled rental car is only logged; remove it from the doc by hand. A changed booking is treated as cancelled and booked again.
+- **Trip docs:** a cancelled rental car is only logged; remove it from the doc by hand. A changed booking is treated as cancelled and booked again.
 - **New layouts:** a layout none of the rules handle shows up as a "could not read" alert. To support it, add an anonymised copy to `mail/fixtures/`, a test in `mail/test_parse.py`, then a rule in `parse.py`.
 
 ## Using Contrail

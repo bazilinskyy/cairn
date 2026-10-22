@@ -143,7 +143,7 @@ def fetch_new(cfg, sec, state, since_days=None):
 
 # --- Travel calendar (EventKit) ---
 
-EMOJI = {"flight": "✈️", "train": "🚆", "bus": "🚌", "ferry": "⛴️"}
+EMOJI = plan.EMOJI
 
 
 def event_title(leg, airports):

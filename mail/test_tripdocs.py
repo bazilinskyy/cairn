@@ -187,6 +187,43 @@ def test_lone_flight_home_names_the_doc_after_where_it_left():
     assert g.created == ["Faro 2026"], g.created
 
 
+def ride(dep, arr, t0, t1, code, mode="bus", number=""):
+    return {"flight": number or f"{mode}:{dep}>{arr}", "dep": dep, "arr": arr, "dep_local": t0, "arr_local": t1,
+            "codes": [code], "mode": mode, "tz": ["Europe/Lisbon", "Europe/Lisbon"]}
+
+
+def test_trains_and_buses_join_the_doc_of_their_days():
+    g = FakeGoogle({"d1": {"name": "Portugal 2026", "tables": [rows(PLAN, ["Faro", "10–14.11.26", "", "", ""]),
+                                                               rows(TRANSPORT, ["✈️ X1: A - B", "13.11.26 08:00", "", ""], ["", "", "", ""])]}})
+    state = {"ground": {"a": ride("Faro", "Lagos", "2026-11-12T15:30:00", "2026-11-12T17:00:00", "B1"),
+                        "b": ride("Lagos", "Lisboa (Oriente)", "2026-11-14T09:00:00", "2026-11-14T13:00:00", "T1", "train", "IC571")}}
+    tripdocs.TripDocs(g, "folder", lambda m: None).run(state, AIRPORTS, NOW, ["AMS"])
+    assert texts(g.docs["d1"]["tables"][1])[1:] == [["🚌 Faro - Lagos", "12.11.26 15:30", "", "Booking code: B1"],  # in time order
+                                                   ["✈️ X1: A - B", "13.11.26 08:00", "", ""],
+                                                   ["🚆 IC571: Lagos - Lisboa (Oriente)", "14.11.26 09:00", "", "Booking code: T1"]]
+    assert not g.created
+
+
+def test_a_ride_without_a_doc_waits_for_one():
+    g = FakeGoogle({})
+    state = {"ground": {"a": ride("Faro", "Lagos", "2026-11-12T15:30:00", "2026-11-12T17:00:00", "B1")}}
+    docs = tripdocs.TripDocs(g, "folder", lambda m: None)
+    docs.run(state, AIRPORTS, NOW, ["AMS"])
+    assert not g.created  # a bus alone makes no doc
+    state["stays"] = {"1": stay("1", "Faro", "2026-11-11", "2026-11-13")}
+    docs.run(state, AIRPORTS, NOW, ["AMS"])  # the stay makes one, and the bus joins it
+    assert g.created == ["Portugal 2026"]
+    assert texts(g.docs["new1"]["tables"][1])[1] == ["🚌 Faro - Lagos", "12.11.26 15:30", "", "Booking code: B1"]
+
+
+def test_rental_car_without_its_stay_goes_to_transport():
+    g = FakeGoogle({"d1": {"name": "Portugal 2026", "tables": [rows(PLAN, ["Faro", "10–11.11.26", "", "", ""]), rows(TRANSPORT)]}})
+    car = {"what": "car", "code": "D2", "place": "Lagos", "country": "Portugal", "start": "2026-11-12", "end": "2026-11-16",
+           "type": "Rental car", "price": "50€", "link": "https://example.com/car"}
+    tripdocs.TripDocs(g, "folder", lambda m: None).run({"stays": {"D2": car}}, AIRPORTS, NOW, ["AMS"])
+    assert texts(g.docs["d1"]["tables"][1])[1] == ["Rental car", "12–16.11.26", "50€", "Lagos"]
+
+
 def test_dry_run_writes_nothing():
     g = FakeGoogle({})
     log = []
