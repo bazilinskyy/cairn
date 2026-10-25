@@ -1,14 +1,17 @@
 'use strict';
 // The map besides flights and ground trips: stays and rental cars (from flightmail), photos and Google Timeline (from
-// imports/), the countries visited, trips, a time window over everything, and "where was I on" a day.
+// imports/), Strava activities and the map tiles they explored, the countries visited, trips, a time window over
+// everything, and "where was I on" a day.
 // Loaded before the page's own script; uses its globals (map, allFlights, allAirports, allTrips, ...) when called.
 
 const COUNTRIES_URL = 'https://cdn.jsdelivr.net/npm/world-atlas@2.0.2/countries-50m.json';
 const stayLayer = L.layerGroup(), carLayer = L.layerGroup(), photoLayer = L.layerGroup();
-const timelineLayer = L.layerGroup(), countryLayer = L.layerGroup();
+const timelineLayer = L.layerGroup(), countryLayer = L.layerGroup(), activityLayer = L.layerGroup(), tileLayer = L.layerGroup();
+const cityLayer = L.layerGroup();
 const canvasRenderer = L.canvas({ padding: 0.5 });  // photos and Timeline can be many thousands of marks
 
 let allStays = [], allPhotos = [], allTimeline = { visits: [], paths: [] }, settings = { home_airports: [] };
+let allActivities = [], stravaStatus = {}, explored = null, topCities = [], citiesAsked = '';
 let journeys = [];               // trips: from leaving a home airport until coming back
 let win = { from: '', to: '' };  // the period shown, 'YYYY-MM-DD' inclusive; empty: everything
 let whereMarker = null, countryShapes = null, visitedCount = 0;
@@ -28,7 +31,8 @@ function extraLayers() {
   return {
     stay: ['🏨 Stays', stayLayer, '--stay'], car: ['🚗 Rental cars', carLayer, '--car'],
     photo: ['📷 Photos', photoLayer, '--photo'], timeline: ['🧭 Timeline', timelineLayer, '--timeline'],
-    country: ['🌍 Countries', countryLayer, '--country']
+    activity: ['🚴 Activities', activityLayer, '--ride'], tile: ['🟩 Explored tiles', tileLayer, '--tile'],
+    country: ['🌍 Countries', countryLayer, '--country'], city: ['🏙️ Cities', cityLayer, '--city']
   };
 }
 
@@ -37,7 +41,10 @@ function extraCounts() {
   return {
     stay: shown.filter(s => s.what !== 'car').length, car: shown.filter(s => s.what === 'car').length,
     photo: photoCells().reduce((n, c) => n + c.count, 0),
-    timeline: allTimeline.visits.filter(v => overlapsWin(v.start, v.end)).length, country: visitedCount
+    timeline: allTimeline.visits.filter(v => overlapsWin(v.start, v.end)).length, country: visitedCount,
+    activity: allActivities.filter(a => inWin(a.date)).length,
+    tile: explored?.tiles.size ? `${explored.tiles.size.toLocaleString()} · ▢${explored.square.size}` : 0,
+    city: topCities.length
   };
 }
 
@@ -45,7 +52,10 @@ function drawExtras() {
   drawStays();
   drawPhotos();
   drawTimeline();
+  drawActivities();
+  drawTiles();
   drawCountries();
+  drawCities();
 }
 
 // --- stays and rental cars ---
@@ -109,6 +119,238 @@ function drawTimeline() {
   });
 }
 
+// --- Strava activities and the tiles they explored ---
+// Made for thousands of activities: they load after the rest of the map; each route is decoded once; routes and
+// explored tiles are painted on canvas map tiles, only where the map is in view (never one map object per activity);
+// and the explored tiles of each activity come worked out from Contrail.
+
+const SPORTS = {
+  ride: /Ride|Velomobile|Handcycle|Wheelchair/, run: /Run/, walk: /Walk|Hike|Snowshoe/
+};
+const sportOf = s => Object.keys(SPORTS).find(k => SPORTS[k].test(s || '')) || 'sport';
+const sportEmoji = { ride: '🚴', run: '🏃', walk: '🥾', sport: '🏅' };
+const TILE_Z = 14, TILES = 2 ** TILE_Z;  // explored tiles are zoom-14 map tiles, packed as x * TILES + y
+const tileLat = y => Math.atan(Math.sinh(Math.PI * (1 - 2 * y / TILES))) * 180 / Math.PI;
+const tileLon = x => x / TILES * 360 - 180;
+// Web Mercator pixels at zoom z, and back
+const pxX = (lon, z) => (lon + 180) / 360 * 256 * 2 ** z;
+const pxY = (lat, z) => { const r = lat * Math.PI / 180; return (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * 256 * 2 ** z; };
+const lonAt = (x, z) => x / (256 * 2 ** z) * 360 - 180;
+const latAt = (y, z) => Math.atan(Math.sinh(Math.PI * (1 - 2 * y / (256 * 2 ** z)))) * 180 / Math.PI;
+
+let actShown = [], actColors = {}, tileBuckets = new Map(), lastPopup = 0;
+
+// Decode each route once into a flat array [lat, lon, lat, lon, ...] with its bounding box
+function prepareActivities(list) {
+  list.forEach(a => {
+    a.kind = sportOf(a.sport);
+    if (!a.path) return;
+    const pts = decodePath(a.path), f = new Float64Array(pts.length * 2);
+    let s = 90, w = 180, n = -90, e = -180;
+    pts.forEach(([lat, lon], i) => {
+      f[2 * i] = lat; f[2 * i + 1] = lon;
+      if (lat < s) s = lat; if (lat > n) n = lat; if (lon < w) w = lon; if (lon > e) e = lon;
+    });
+    a.pts = f;
+    a.bbox = [s, w, n, e];
+  });
+}
+
+const ActivityCanvas = L.GridLayer.extend({
+  createTile(coords) {
+    const c = L.DomUtil.create('canvas'), size = this.getTileSize(), z = coords.z;
+    c.width = size.x; c.height = size.y;
+    const ctx = c.getContext('2d'), ox = coords.x * size.x, oy = coords.y * size.y, pad = 4;
+    const west = lonAt(ox - pad, z), east = lonAt(ox + size.x + pad, z), north = latAt(oy - pad, z), south = latAt(oy + size.y + pad, z);
+    ctx.lineWidth = z < 9 ? 1 : z < 13 ? 1.6 : 2.4;
+    ctx.lineJoin = ctx.lineCap = 'round';
+    ctx.globalAlpha = 0.75;
+    for (const a of actShown) {
+      const [s, w, n, e] = a.bbox;
+      if (n < south || s > north || e < west || w > east) continue;
+      ctx.strokeStyle = actColors[a.kind];
+      ctx.beginPath();
+      let lx = null, ly = 0;
+      for (let i = 0; i < a.pts.length; i += 2) {
+        const x = pxX(a.pts[i + 1], z) - ox, y = pxY(a.pts[i], z) - oy;
+        if (lx === null) ctx.moveTo(x, y);
+        else if (Math.abs(x - lx) + Math.abs(y - ly) < 0.8 && i < a.pts.length - 2) continue;  // under a pixel apart
+        else ctx.lineTo(x, y);
+        lx = x; ly = y;
+      }
+      ctx.stroke();
+    }
+    return c;
+  }
+});
+
+// The explored tiles inside one map tile at zoom z (zoom 14 or less), grouped once per zoom
+function bucketsAt(z) {
+  if (!tileBuckets.has(z)) {
+    const shift = TILE_Z - z, m = new Map();
+    explored.tiles.forEach(k => {
+      const x = Math.floor(k / TILES), y = k % TILES, key = (x >> shift) + ',' + (y >> shift);
+      if (!m.has(key)) m.set(key, []);
+      m.get(key).push(k);
+    });
+    tileBuckets.set(z, m);
+  }
+  return tileBuckets.get(z);
+}
+
+const ExploredCanvas = L.GridLayer.extend({
+  createTile(coords) {
+    const c = L.DomUtil.create('canvas'), size = this.getTileSize(), z = coords.z;
+    c.width = size.x; c.height = size.y;
+    if (!explored?.tiles.size) return c;
+    const ctx = c.getContext('2d'), color = getCSSVar('--tile');
+    ctx.fillStyle = color;
+    const fill = (k, x, y, w) => {
+      ctx.globalAlpha = explored.cluster.has(k) ? 0.38 : 0.16;
+      ctx.fillRect(x, y, w, w);
+    };
+    if (z >= TILE_Z) {  // the map tile lies inside one explored tile, or none
+      const shift = z - TILE_Z, k = (coords.x >> shift) * TILES + (coords.y >> shift);
+      if (explored.tiles.has(k)) fill(k, 0, 0, size.x);
+      return c;
+    }
+    const shift = TILE_Z - z, px = size.x / 2 ** shift, gap = px > 6 ? 1 : 0;
+    (bucketsAt(z).get(coords.x + ',' + coords.y) || []).forEach(k => {
+      const x = Math.floor(k / TILES), y = k % TILES;
+      fill(k, (x - (coords.x << shift)) * px, (y - (coords.y << shift)) * px, Math.max(px - gap, 1));
+    });
+    return c;
+  }
+});
+
+const activityGrid = new ActivityCanvas({ pane: 'activities', updateWhenZooming: false, keepBuffer: 1 });
+const exploredGrid = new ExploredCanvas({ pane: 'explored', updateWhenZooming: false, keepBuffer: 1 });
+activityLayer.addLayer(activityGrid);
+tileLayer.addLayer(exploredGrid);
+const squareLayer = L.layerGroup().addTo(tileLayer);
+
+// Panes of their own between the map and the lines (the map's own pane is colour-inverted in dark mode), and a
+// click on a route opens it; called by initMap before the layers go on the map
+function initExtraPanes() {
+  map.createPane('explored').style.zIndex = 330;
+  map.createPane('activities').style.zIndex = 340;
+  ['explored', 'activities'].forEach(p => { map.getPane(p).style.pointerEvents = 'none'; });
+  map.on('popupopen', () => { lastPopup = Date.now(); });
+  map.on('click', e => setTimeout(() => { if (Date.now() - lastPopup > 150) openActivityAt(e.latlng); }, 0));
+}
+
+// The route nearest a click, within 6 pixels
+function openActivityAt(ll) {
+  if (!map.hasLayer(activityLayer) || !actShown.length) return;
+  const z = map.getZoom(), cx = pxX(ll.lng, z), cy = pxY(ll.lat, z), tol = 6, deg = tol / (256 * 2 ** z) * 360;
+  let best = null, bestD = tol;
+  for (const a of actShown) {
+    const [s, w, n, e] = a.bbox;
+    if (ll.lat < s - deg || ll.lat > n + deg || ll.lng < w - deg || ll.lng > e + deg) continue;
+    let px = pxX(a.pts[1], z), py = pxY(a.pts[0], z);
+    for (let i = 2; i < a.pts.length; i += 2) {
+      const qx = pxX(a.pts[i + 1], z), qy = pxY(a.pts[i], z), dx = qx - px, dy = qy - py;
+      const t = dx || dy ? Math.max(0, Math.min(1, ((cx - px) * dx + (cy - py) * dy) / (dx * dx + dy * dy))) : 0;
+      const d = Math.hypot(cx - px - t * dx, cy - py - t * dy);
+      if (d < bestD) { bestD = d; best = a; }
+      px = qx; py = qy;
+    }
+  }
+  if (!best) return;
+  L.popup({ maxWidth: 260 }).setLatLng(ll).setContent(`<b>${sportEmoji[best.kind]} ${escapeHTML(best.name)}</b><br>` +
+    `<small>${escapeHTML(best.sport)} · ${fmtDate(best.date)} · ${best.distance.toLocaleString()} km` +
+    `${best.elevation ? ` · ↑${best.elevation} m` : ''}</small>`).openOn(map);
+}
+
+function drawActivities() {
+  actShown = allActivities.filter(a => a.pts && inWin(a.date));
+  actColors = Object.fromEntries(['ride', 'run', 'walk', 'sport'].map(k => [k, getCSSVar('--' + k)]));
+  activityGrid.redraw();
+}
+
+// The explored tiles of the period, from each activity's own; the cluster (tiles whose four neighbours are explored
+// too, the biggest connected group of them) and the max square (the biggest square of explored tiles)
+function computeExplored() {
+  const tiles = new Set();
+  allActivities.forEach(a => { if (a.tiles && inWin(a.date)) a.tiles.forEach(k => tiles.add(k)); });
+  const size = new Map();
+  let square = { x: 0, y: 0, size: 0 };
+  [...tiles].sort((p, q) => (p % TILES) - (q % TILES) || p - q).forEach(k => {  // row by row, west to east
+    const n = 1 + Math.min(size.get(k - TILES) || 0, size.get(k - 1) || 0, size.get(k - TILES - 1) || 0);
+    size.set(k, n);
+    if (n > square.size) square = { x: Math.floor(k / TILES) - n + 1, y: k % TILES - n + 1, size: n };
+  });
+  const near = k => [k - TILES, k + TILES, k - 1, k + 1];
+  const inner = new Set([...tiles].filter(k => near(k).every(m => tiles.has(m))));
+  let cluster = new Set();
+  const seen = new Set();
+  inner.forEach(k => {
+    if (seen.has(k)) return;
+    const group = new Set([k]), todo = [k];
+    seen.add(k);
+    while (todo.length) near(todo.pop()).forEach(m => {
+      if (inner.has(m) && !seen.has(m)) { seen.add(m); group.add(m); todo.push(m); }
+    });
+    if (group.size > cluster.size) cluster = group;
+  });
+  return { tiles, cluster, square };
+}
+
+function drawTiles() {
+  explored = computeExplored();
+  tileBuckets = new Map();
+  exploredGrid.redraw();
+  squareLayer.clearLayers();
+  if (!explored.tiles.size) return;
+  const { x, y, size } = explored.square;
+  L.rectangle([[tileLat(y + size), tileLon(x)], [tileLat(y), tileLon(x + size)]], { color: getCSSVar('--text'), weight: 2, fill: false, dashArray: '6 4' })
+    .bindPopup(`<b>🟩 Explored tiles</b><br><small>${explored.tiles.size.toLocaleString()} tiles · max square ${size}×${size} · ` +
+      `max cluster ${explored.cluster.size.toLocaleString()} tiles</small>`).addTo(squareLayer);
+}
+
+// Strava's activities, after the rest of the map is up
+async function loadStrava() {
+  const list = await fetch('/api/strava').then(r => r.ok ? r.json() : []).catch(() => []);
+  if (!list.length) return;
+  allActivities = list;
+  prepareActivities(allActivities);
+  refreshYears();
+  drawActivities();
+  drawTiles();
+  drawCountries();
+  drawLegend();
+}
+
+// --- most visited cities ---
+
+const flagOf = cc => /^[A-Z]{2}$/.test(cc || '') ? String.fromCodePoint(...[...cc].map(c => 0x1F1E6 + c.charCodeAt(0) - 65)) + ' ' : '';
+
+// Contrail counts the days per town (cities.js); asked again when the period changes, drawn when the answer comes
+function drawCities() {
+  const q = new URLSearchParams({ from: win.from, to: win.to }).toString();
+  if (q === citiesAsked) return paintCities();
+  citiesAsked = q;
+  fetch('/api/cities?' + q).then(r => r.ok ? r.json() : []).catch(() => []).then(list => {
+    if (q !== citiesAsked) return;  // the period changed again meanwhile
+    topCities = list;
+    paintCities();
+    drawLegend();
+  });
+}
+
+function paintCities() {
+  cityLayer.clearLayers();
+  const color = getCSSVar('--city'), most = topCities[0]?.days || 1;
+  topCities.forEach((c, i) => {
+    const m = L.circleMarker([c.lat, c.lon], {
+      radius: 3 + 11 * Math.sqrt(c.days / most), color, weight: 1.5, fillColor: color, fillOpacity: 0.35
+    }).bindPopup(`<b>🏙️ ${flagOf(c.country)}${escapeHTML(c.name)}</b> · #${i + 1}<br><small>${c.days} day${c.days !== 1 ? 's' : ''}, ` +
+      `${c.visits} visit${c.visits !== 1 ? 's' : ''} · ${fmtDate(c.first)} – ${fmtDate(c.last)}</small>`);
+    if (i < 10) m.bindTooltip(`${i + 1}. ${escapeHTML(c.name)}`, { permanent: true, direction: 'right', className: 'city-label', offset: [6, 0] });
+    m.addTo(cityLayer);
+  });
+}
+
 // --- countries visited ---
 
 // Where you were in the period: the airports you arrived at (not only to change planes), the ends of trains, buses and
@@ -129,6 +371,7 @@ function visitPoints() {
   allStays.forEach(s => { if (s.lat != null && overlapsWin(s.start, s.end)) pts.push({ at: [s.lat, s.lon], date: day(s.start) }); });
   photoCells().forEach(c => pts.push({ at: [c.lat, c.lon], date: c.days.sort()[0] }));
   allTimeline.visits.forEach(v => { if (overlapsWin(v.start, v.end)) pts.push({ at: [v.lat, v.lon], date: day(v.start) }); });
+  allActivities.forEach(a => { if (a.at && inWin(a.date)) pts.push({ at: a.at, date: day(a.date) }); });
   return pts;
 }
 
@@ -136,11 +379,20 @@ function ringsOf(g) {
   return g.type === 'Polygon' ? [g.coordinates] : g.type === 'MultiPolygon' ? g.coordinates : [];
 }
 
+const boxOf = pts => {
+  let w = 180, s = 90, e = -180, n = -90;
+  pts.forEach(([x, y]) => { if (x < w) w = x; if (x > e) e = x; if (y < s) s = y; if (y > n) n = y; });
+  return [w, s, e, n];
+};
+const inBox = ([w, s, e, n], lat, lon) => lon >= w && lon <= e && lat >= s && lat <= n;
+
+// Even-odd ray casting; a ring whose box does not hold the point cannot flip the result, so it is skipped (most of a
+// country's outline parts are small islands far from the point)
 function inShape(shape, lat, lon) {
-  const [w, s, e, n] = shape.bbox;
-  if (lon < w || lon > e || lat < s || lat > n) return false;
+  if (!inBox(shape.bbox, lat, lon)) return false;
   let inside = false;
-  for (const poly of shape.polys) for (const ring of poly) {
+  for (const { box, ring } of shape.rings) {
+    if (!inBox(box, lat, lon)) continue;
     for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
       const [xi, yi] = ring[i], [xj, yj] = ring[j];
       if ((yi > lat) !== (yj > lat) && lon < (xj - xi) * (lat - yi) / (yj - yi) + xi) inside = !inside;
@@ -149,20 +401,21 @@ function inShape(shape, lat, lon) {
   return inside;
 }
 
-// The country of a point; a point just off the coast (a port, an airport on the shore) takes the nearest one
+// The country of a point, to about 5 km; a point just off the coast (a port, an airport on the shore) takes the one
+// within about 10 km. The country found last is tried first: points come in runs from the same place.
 const countryCache = new Map();
+let lastCountry = null;
 function countryAt(lat, lon) {
-  const key = lat.toFixed(2) + ',' + lon.toFixed(2);
+  const key = (Math.round(lat * 20) / 20) + ',' + (Math.round(lon * 20) / 20);
   if (!countryCache.has(key)) {
-    let hit = null;
-    for (const d of [0, 0.05, 0.15]) {
-      for (const [dy, dx] of d ? [[d, 0], [-d, 0], [0, d], [0, -d], [d, d], [-d, -d], [d, -d], [-d, d]] : [[0, 0]]) {
-        hit = countryShapes.find(c => inShape(c, lat + dy, lon + dx));
-        if (hit) break;
-      }
+    const find = (y, x) => (lastCountry && inShape(lastCountry, y, x) && lastCountry) || countryShapes.find(c => inShape(c, y, x));
+    let hit = find(lat, lon);
+    for (const [dy, dx] of [[0.1, 0], [-0.1, 0], [0, 0.1], [0, -0.1], [0.07, 0.07], [-0.07, -0.07], [0.07, -0.07], [-0.07, 0.07]]) {
       if (hit) break;
+      hit = find(lat + dy, lon + dx);
     }
-    countryCache.set(key, hit);
+    if (hit) lastCountry = hit;
+    countryCache.set(key, hit || null);
   }
   return countryCache.get(key);
 }
@@ -170,9 +423,8 @@ function countryAt(lat, lon) {
 async function loadCountries() {
   const topo = await fetch(COUNTRIES_URL).then(r => r.json());
   countryShapes = topojson.feature(topo, topo.objects.countries).features.map(f => {
-    const polys = ringsOf(f.geometry), xs = [], ys = [];
-    polys.forEach(p => p.forEach(r => r.forEach(([x, y]) => { xs.push(x); ys.push(y); })));
-    return { name: f.properties.name, feature: f, polys, bbox: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)] };
+    const rings = ringsOf(f.geometry).flat().map(ring => ({ box: boxOf(ring), ring }));
+    return { name: f.properties.name, feature: f, rings, bbox: boxOf(rings.map(r => r.box).flatMap(([w, s, e, n]) => [[w, s], [e, n]])) };
   });
 }
 
@@ -240,8 +492,19 @@ function years() {
   const ys = new Set();
   const add = d => { if (/^\d{4}/.test(d || '')) ys.add(+d.slice(0, 4)); };
   allFlights.forEach(f => add(f.date)); allTrips.forEach(t => add(t.date)); allStays.forEach(s => add(s.start));
-  allPhotos.forEach(c => ys.add(c.year)); allTimeline.paths.forEach(p => add(p.date));
+  allPhotos.forEach(c => ys.add(c.year)); allTimeline.paths.forEach(p => add(p.date)); allActivities.forEach(a => add(a.date));
   return [...ys].sort();
+}
+
+// The year lists again, when Strava's activities arrive after the control was made
+function refreshYears() {
+  ['p-from', 'p-to'].forEach((id, i) => {
+    const sel = document.getElementById(id);
+    if (!sel) return;
+    const keep = sel.value;
+    sel.innerHTML = `<option value="">${i ? 'last' : 'first'}</option>` + years().map(y => `<option value="${y}">${y}</option>`).join('');
+    sel.value = keep;
+  });
 }
 
 function addPeriodControl() {
@@ -257,7 +520,7 @@ function addPeriodControl() {
         `– <select id="p-to">${opt('', 'last')}${ys.map(y => opt(y, y)).join('')}</select></label>` +
         `<label>Trip <select id="p-trip">${opt('', 'all trips')}` +
         journeys.map((j, i) => opt(i, `${j.start.slice(0, 7)} · ${escapeHTML(j.name)}`)).join('') + `</select></label>` +
-        `<label>Where on <input type="date" id="p-day"></label>`;
+        `<label>Where on <input type="date" id="p-day"></label>` + stravaRow();
       return box;
     }
   });
@@ -279,6 +542,20 @@ function addPeriodControl() {
     if (b) map.fitBounds(b, { padding: [40, 40], maxZoom: 9 });
   });
   $('p-day').addEventListener('change', () => whereOn($('p-day').value));
+  $('p-strava')?.addEventListener('click', e => {
+    if (!e.target.dataset.sync) return;
+    e.preventDefault();
+    fetch('/api/strava/sync', { method: 'POST' }).then(() => toast('Strava: fetching activities; reload in a minute'));
+  });
+}
+
+// Strava's state in the period box: connect, or how many activities and a way to fetch new ones now
+function stravaRow() {
+  const s = stravaStatus;
+  if (!s.configured) return '';
+  if (!s.connected) return `<div id="p-strava"><a href="/auth/strava">Connect Strava</a></div>`;
+  return `<div id="p-strava" title="${escapeHTML(s.error || 'last fetched ' + (s.last_sync || 'never'))}">Strava: ` +
+    `${s.count.toLocaleString()} activities${s.error ? ' ⚠️' : ''} · <a href="#" data-sync="1">fetch now</a></div>`;
 }
 
 // --- where was I on a day ---
@@ -303,6 +580,10 @@ function whereOn(d) {
   allTimeline.visits.filter(v => day(v.start) <= d && d <= day(v.end)).slice(0, 6).forEach(v => {
     lines.push(`🧭 ${escapeHTML(v.name || 'a place')} ${escapeHTML(v.start.slice(11))}`);
     spots.push([v.lat, v.lon]);
+  });
+  allActivities.filter(a => day(a.date) === d).forEach(a => {
+    lines.push(`${sportEmoji[a.kind]} ${escapeHTML(a.name)}, ${a.distance.toLocaleString()} km`);
+    if (a.at) spots.push(a.at);
   });
   const shots = allPhotos.filter(c => (c.days || []).includes(d));
   if (shots.length) lines.push(`📷 photos in ${shots.length} place${shots.length !== 1 ? 's' : ''}`);

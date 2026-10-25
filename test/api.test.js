@@ -23,6 +23,8 @@ before(async () => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'contrail-test-'));
   fs.copyFileSync(path.join(ROOT, 'app.js'), path.join(dir, 'app.js'));
   fs.copyFileSync(path.join(ROOT, 'ground.js'), path.join(dir, 'ground.js'));
+  fs.copyFileSync(path.join(ROOT, 'strava.js'), path.join(dir, 'strava.js'));
+  fs.copyFileSync(path.join(ROOT, 'cities.js'), path.join(dir, 'cities.js'));
   fs.copyFileSync(path.join(ROOT, 'default.config'), path.join(dir, 'default.config'));
   fs.cpSync(path.join(ROOT, 'public'), path.join(dir, 'public'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'data'));
@@ -129,6 +131,17 @@ test('photos and Timeline come from the import files, read again when they chang
   fs.writeFileSync(path.join(dir, 'data', 'photos.json'), JSON.stringify(cells));
   assert.deepStrictEqual(await (await call('GET', '/api/photos')).json(), cells);
   assert.deepStrictEqual(await (await call('GET', '/api/settings')).json(), { home_airports: ['AMS', 'EIN', 'RTM'] });
+});
+
+test('Strava: not configured, not connected, no activities', async () => {
+  assert.deepStrictEqual(await (await call('GET', '/api/strava/status')).json(),
+    { configured: false, connected: false, athlete: '', count: 0, last_sync: '', error: '' });
+  assert.deepStrictEqual(await (await call('GET', '/api/strava')).json(), []);
+  assert.strictEqual((await fetch(BASE + '/auth/strava', { redirect: 'manual' })).status, 503);
+});
+
+test('cities: none without the town list', async () => {
+  assert.deepStrictEqual(await (await call('GET', '/api/cities?from=2024-01-01')).json(), []);
 });
 
 test('listens on 127.0.0.1 only', async (t) => {

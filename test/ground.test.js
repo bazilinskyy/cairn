@@ -84,3 +84,45 @@ test('similar names: typos and longer names yes, other places no', () => {
   assert.ok(!g.similar('Siem Riep', 'ried am riederberg'));
   assert.ok(!g.similar('Kaunas', 'tallinn'));
 });
+
+test('Strava: an activity keeps its route as a 6-decimal polyline, and full listings replace the list', () => {
+  const s = require('../strava');
+  const a = s.toActivity({ id: 7, name: 'Morning Ride', sport_type: 'Ride', start_date: '2024-06-01T07:00:00Z',
+    start_date_local: '2024-06-01T09:00:00Z', distance: 42195, moving_time: 5400, total_elevation_gain: 312.4,
+    map: { summary_polyline: '_p~iF~ps|U_ulLnnqC_mqNvxq`@' } });
+  assert.deepStrictEqual({ ...a, path: undefined, tiles: undefined }, { id: 7, name: 'Morning Ride', sport: 'Ride', date: '2024-06-01 09:00:00',
+    start: 1717225200, distance: 42.2, moving_time: 5400, elevation: 312, path: undefined, at: [38.5, -120.2], tiles: undefined });
+  assert.ok(a.tiles.length > 100, 'every tile along 600 km of route');
+  assert.deepStrictEqual(g.decode(a.path), [[38.5, -120.2], [40.7, -120.95], [43.252, -126.453]]);
+  assert.strictEqual(s.toActivity({ id: 8, type: 'Swim', start_date: '2024-06-02T07:00:00Z', map: {} }).path, '');
+  // zoom-14 tiles (OpenStreetMap's numbering), packed x * 16384 + y: Eindhoven station is in tile 8441/5452; a 3 km
+  // ride east passes through every tile on the way, also the one between
+  assert.deepStrictEqual(s.tilesOf([[51.4433, 5.4797]]), [8441 * 16384 + 5452]);
+  assert.deepStrictEqual(s.tilesOf([[51.4433, 5.4797], [51.4433, 5.52]]), [8441, 8442, 8443].map(x => x * 16384 + 5452));
+  const old = [{ id: 1, start: 10 }, { id: 2, start: 20 }];
+  assert.deepStrictEqual(s.merge(old, [{ id: 3, start: 30 }, { id: 2, start: 21 }], false).map(x => [x.id, x.start]), [[3, 30], [2, 21], [1, 10]]);
+  assert.deepStrictEqual(s.merge(old, [{ id: 2, start: 20 }], true).map(x => x.id), [2]);  // 1 was deleted on Strava
+});
+
+test('cities: a place goes to the town that pulls hardest, an airport to its own city, days and visits counted', () => {
+  const c = require('../cities'), fs = require('fs'), os = require('os'), path = require('path');
+  const row = (id, name, alt, lat, lon, code, cc, pop) => [id, name, name, alt, lat, lon, 'P', code, cc, '', '', '', '', '', pop, '', '', 'Europe/X', '2024-01-01'].join('\t');
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'towns-')), 'cities1000.txt');
+  fs.writeFileSync(file, [row(1, 'Eindhoven', '', 51.4416, 5.4697, 'PPLA2', 'NL', 235000),
+    row(2, 'Veldhoven', '', 51.4183, 5.4028, 'PPL', 'NL', 45000),
+    row(3, 'Kyiv', 'Kiev,Kiew', 50.4501, 30.5234, 'PPLC', 'UA', 2900000),
+    row(4, 'Boryspil', '', 50.3527, 30.9550, 'PPL', 'UA', 60000),
+    row(5, 'Strijp', '', 51.445, 5.45, 'PPLX', 'NL', 30000)].join('\n'));
+  const towns = c.load(file);
+  assert.strictEqual(c.townAt(towns, 51.4183, 5.4028).name, 'Veldhoven');      // in Veldhoven itself
+  assert.strictEqual(c.townAt(towns, 51.445, 5.45).name, 'Eindhoven');         // a part of town is its town
+  assert.strictEqual(c.townAt(towns, 50.345, 30.894).name, 'Boryspil');        // the airport by place alone...
+  assert.strictEqual(c.townNamed(towns, 'Kiev', 50.345, 30.894).name, 'Kyiv'); // ...and by its city's name
+  assert.strictEqual(c.townAt(towns, 40, 0), null);
+  const top = c.rank(towns, [
+    { at: [51.44, 5.47], day: '2024-06-01' }, { at: [51.44, 5.47], day: '2024-06-02' }, { at: [51.42, 5.40], day: '2024-06-02' },
+    { at: [51.44, 5.47], day: '2024-06-10' }, { at: [50.345, 30.894], day: '2024-07-01', city: 'Kiev' }]);
+  assert.deepStrictEqual(top.map(t => [t.name, t.days, t.visits, t.first, t.last]), [
+    ['Eindhoven', 3, 2, '2024-06-01', '2024-06-10'], ['Kyiv', 1, 1, '2024-07-01', '2024-07-01'], ['Veldhoven', 1, 1, '2024-06-02', '2024-06-02']]);
+  assert.strictEqual(c.load(file + '.missing'), null);
+});

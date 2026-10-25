@@ -95,6 +95,30 @@ def test_photo_cells():
         {"lat": 51.44, "lon": 5.47, "year": 2024, "count": 2, "days": ["2024-06-01", "2024-06-02"]}]
 
 
+def test_google_takeout_zip_and_folder():
+    import zipfile
+    meta = {"title": "IMG_1.jpg", "photoTakenTime": {"timestamp": "1717225200"},  # 2024-06-01 07:00 UTC
+            "geoData": {"latitude": 51.4416, "longitude": 5.4697, "altitude": 0.0}}
+    no_place = {"title": "IMG_2.jpg", "photoTakenTime": {"timestamp": "1717225300"},
+                "geoData": {"latitude": 0.0, "longitude": 0.0}, "geoDataExif": {"latitude": 38.71, "longitude": -9.14}}
+    nowhere = {"title": "IMG_3.jpg", "photoTakenTime": {"timestamp": "1717225400"}, "geoData": {"latitude": 0.0, "longitude": 0.0}}
+    with tempfile.TemporaryDirectory() as d:
+        z = Path(d) / "takeout-1.zip"
+        with zipfile.ZipFile(z, "w") as f:
+            f.writestr("Takeout/Google Photos/Photos from 2024/IMG_1.jpg.supplemental-metadata.json", json.dumps(meta))
+            f.writestr("Takeout/Google Photos/Holiday/IMG_1.jpg.json", json.dumps(meta))  # the same photo in an album
+            f.writestr("Takeout/Google Photos/Holiday/metadata.json", json.dumps({"title": "Holiday"}))
+            f.writestr("Takeout/Google Photos/Photos from 2024/IMG_2.jpg.json", json.dumps(no_place))
+            f.writestr("Takeout/Google Photos/Photos from 2024/IMG_3.jpg.json", json.dumps(nowhere))
+            f.writestr("Takeout/Google Photos/Photos from 2024/IMG_1.jpg", b"not read")
+        assert photos.cells(photos.from_takeout([z])) == [
+            {"lat": 38.71, "lon": -9.14, "year": 2024, "count": 1, "days": ["2024-06-01"]},
+            {"lat": 51.44, "lon": 5.47, "year": 2024, "count": 1, "days": ["2024-06-01"]}]
+        folder = Path(d) / "unpacked"
+        zipfile.ZipFile(z).extractall(folder)
+        assert sum(c["count"] for c in photos.cells(photos.from_takeout([folder]))) == 2
+
+
 if __name__ == "__main__":
     tests = [f for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
     for t in tests:
