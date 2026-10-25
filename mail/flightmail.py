@@ -336,9 +336,16 @@ class ThingsTodos:
 class WorkBlocks:
     """Busy blocks in the work calendar, in calsplit's style so its nightly cleanup deletes them once past."""
     TITLE, MARKER = "🛑 Vibe-busy", "[auto-split]"
+    BUSY = "Busy"  # the owner's own all-day "Busy" event already blocks the day: no block then
 
     def __init__(self, ek, account, title):
         self.ek, self.cal = ek, ek.calendar(account, title)
+
+    def busy_all_day(self, start, end):
+        """Whether an all-day event titled BUSY in the work calendar overlaps start..end."""
+        pred = self.ek.store.predicateForEventsWithStartDate_endDate_calendars_(self.ek._ns(start), self.ek._ns(end), [self.cal])
+        return any(ev.isAllDay() and (ev.title() or "").strip() == self.BUSY
+                   for ev in self.ek.store.eventsMatchingPredicate_(pred) or [])
 
     def _fill(self, ev, spec):
         start, end = (datetime.fromisoformat(t) for t in spec)
@@ -474,7 +481,7 @@ def _ahead(kind, spec, now):
 
 def run_extras(state, todos, blocks, banners, airports, now, home, work_tz="Europe/Amsterdam"):
     """Keep a check-in to-do per booking (before its first flight) in state["seen"], a busy block per future flight or ground leg
-    (state["ground"]) in working hours, and a banner per trip, in step. Items that are past are forgotten, never changed."""
+    (state["ground"]) in working hours on a day without an all-day "Busy" event, and a banner per trip, in step. Items that are past are forgotten, never changed."""
     seen, ground = state.setdefault("seen", {}), state.setdefault("ground", {})
     oldest = (now.date() - timedelta(days=30)).isoformat()
     for reg in (seen, ground):
@@ -485,7 +492,7 @@ def run_extras(state, todos, blocks, banners, airports, now, home, work_tz="Euro
     rides = {**future, **{"ground:" + k: r for k, r in ground.items() if datetime.fromisoformat(r["dep_local"]) > now}}
     want = {"todos": {k: plan.todo(r, airports, now) for k, r in plan.first_of_bookings(known).items() if k in future},
             "blocks": {k: [t.isoformat() for t in b] for k, r in rides.items()
-                       for b in [plan.block(r, airports)] if plan.in_work_hours(*b, work_tz)},
+                       for b in [plan.block(r, airports)] if plan.in_work_hours(*b, work_tz) and not blocks.busy_all_day(*b)},
             "banners": {t["id"]: t for t in plan.trips(list(known.values()), home, airports)
                         if t["end"] >= now.date().isoformat()}}
     for kind, store in (("todos", todos), ("blocks", blocks), ("banners", banners)):
@@ -596,6 +603,9 @@ class Logged:
 
     def has_event_at(self, *a):
         return self.store.has_event_at(*a)
+
+    def busy_all_day(self, *a):  # a question, also asked in a dry run
+        return self.store.busy_all_day(*a)
 
     def __getattr__(self, action):
         def call(*a):

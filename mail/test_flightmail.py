@@ -260,6 +260,11 @@ class Store:
         self.calls.append("remove")
         del self.items[ref]
 
+    busy = ()  # days (YYYY-MM-DD) with an all-day "Busy" event in the work calendar
+
+    def busy_all_day(self, start, end):
+        return any(start.date().isoformat() <= d <= end.date().isoformat() for d in self.busy)
+
 
 def seen_row(flight, dep, arr, t0, t1):
     return {"flight": flight, "dep": dep, "arr": arr, "dep_local": t0, "arr_local": t1, "codes": ["ABC123"], "checkin_url": ""}
@@ -348,6 +353,20 @@ def test_blocks_only_in_work_hours_and_for_ground_legs():
     flightmail.run_extras(state, todos, blocks, banners, ap, flightmail.datetime(2026, 10, 22, 8, 0), ["AMS"])
     assert list(blocks.items.values()) == [["2026-11-17T08:00:00+00:00", "2026-11-17T14:00:00+00:00"]]
     assert len(todos.items) == 1  # the Saturday flight still gets its check-in to-do
+
+
+def test_no_block_on_a_day_with_an_all_day_busy_event():
+    ap = test_parse.airports()
+    state = {"seen": {"KL1234@2026-11-16": seen_row("KL1234", "AMS", "LIS", "2026-11-16T16:10:00", "2026-11-16T17:55:00"),
+                      "KL1235@2026-11-20": seen_row("KL1235", "LIS", "AMS", "2026-11-20T10:00:00", "2026-11-20T13:45:00")}}
+    todos, blocks, banners = Store(), Store(), Store()
+    now = flightmail.datetime(2026, 10, 22, 8, 0)
+    flightmail.run_extras(state, todos, blocks, banners, ap, now, ["AMS"])
+    assert len(blocks.items) == 2
+    blocks.busy = ("2026-11-20",)  # the owner blocked the return day with an all-day "Busy" later
+    flightmail.run_extras(state, todos, blocks, banners, ap, now, ["AMS"])
+    assert list(blocks.items.values()) == [["2026-11-16T14:10:00+01:00", "2026-11-16T18:55:00+00:00"]]  # its block is removed
+
 
 if __name__ == "__main__":
     tests = [f for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f) and hasattr(f, "__code__")]
