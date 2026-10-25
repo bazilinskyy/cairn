@@ -32,6 +32,7 @@ Contrail:
 - **Hotels, Airbnbs and rental cars** from your booking emails, **photos** from your photo library and **Google Maps Timeline**, and the **countries** you have been to (see [The map](#the-map))
 - **Strava activities** and the **map tiles** they explored, with the max square and cluster, as statshunters counts them; quick with thousands of activities
 - Your **most visited cities**, on the map and in the stats
+- A **Sports** tab for your Strava activities, cycling and running first: Eddington numbers, the year race, every day of a year, when you go out, explored tiles over time, records, best efforts, year by year and where you go
 - **Trips**, a **period** of years, and **where you were** on any day
 - **Stats dashboard**: total distance, flight hours, airports, countries, airlines, top routes and flights per year
 - **Flight list** with search and sortable columns
@@ -59,10 +60,11 @@ flightmail:
 | `strava.js` | Strava sign-in, the activity list and each activity's explored tiles |
 | `cities.js` | most visited cities: places and days put in their towns (GeoNames) |
 | `public/index.html` | Contrail web page (map, stats, list) |
+| `public/sports.js` | the Sports tab: cards, charts and tables of your Strava activities |
 | `public/layers.js` | the map's stays, rental cars, photos, Timeline, Strava activities and tiles, countries, trips, period and "where on" |
 | `imports/photos.py`, `imports/timeline.py` | photo places and Google Timeline into Contrail (see [The map](#the-map)); `imports/test_imports.py` tests them |
 | `default.config`, `default.secret` | committed templates for `config` and `secret` (see [Setup](#setup)) |
-| `test/api.test.js`, `test/ground.test.js` | tests of the Contrail API and of `ground.js` |
+| `test/*.test.js` | tests of the Contrail API, `ground.js`, `strava.js`, `cities.js` and the Sports tab's numbers |
 | `mail/flightmail.py` | flightmail entry point: Gmail, calendar, Contrail and Discord |
 | `mail/parse.py` | reads flight legs out of an email (no network) |
 | `mail/ground.py` | trains, buses and ferries: operator rules and station time zones (no network) |
@@ -341,6 +343,8 @@ It reads the library at `~/Pictures/Photos Library.photoslibrary` (another with 
 python imports/photos.py --takeout ~/Downloads/takeout-*.zip --send mini:repos/contrail/data/photos.json
 ```
 
+Sources can be combined in one run, for example the laptop's library copied to mini and the Google Takeout: `--library ~/Pictures/Laptop.photoslibrary --takeout ~/Takeout/takeout-*.zip`. A photo that is in both (the same moment and place) counts once; each run replaces the file, so give every source each time.
+
 Only the small `.json` file Google puts beside each photo is read (when it was taken and where, from the camera or a place you set in Google Photos), never the photo itself; a photo that is also in an album counts once. A new export replaces the last one, so export everything each time.
 
 **Google Maps Timeline.** Export it on your phone (Android: Settings > Location > Location services > Timeline > Export Timeline data; iPhone: Google Maps > Settings > Personal content > Export Timeline data), or use an older Takeout of Location History, then:
@@ -382,6 +386,24 @@ Date,From,To,Flight_Number,Airline,Distance,Duration,Seat,Seat_Type,Class,Reason
 ```
 
 Missing distances are computed from airport coordinates (Haversine formula).
+
+### Sports
+
+The **Sports** tab shows your Strava activities, cycling and running first (pick another sport, all sports, or a year at the top; the cards, the day calendar, the start times, the histograms, records and best efforts follow both; the per-year charts and tables show every year).
+- **Cards**: activities and days out, distance (per sport), moving time, climbing (in Everests), **Eddington numbers** for cycling and running (the biggest E such that you rode or ran E km on E days, and how many more days the next one needs), the longest streak of days in a row, and explored tiles with the max square and cluster.
+- **Distance per year**, cycling and running side by side.
+- **Year race**: the distance through each year, day by day: the year picked (else the latest) in the accent colour, your best year in the sport's colour, the others muted.
+- **Every day of a year**: a square per day, the darker the further you went; hover for the day.
+- **When you go out**: weekday against hour of the start, the bigger the dot the more activities.
+- **Eddington number**: days with at least n km against n, around E, where the bars cross the line.
+- **Explored tiles** month by month, and the **max square** at the end of each year.
+- **How far you go**: a histogram of distances per sport.
+- **Records** per sport: longest, most climbing, longest moving time, fastest average (rides of 20 km or more, runs of 5 km or more, no trainer rides), highest average heart rate, most kudos, biggest week, month and year, longest streak. Click an activity to see it on the map, its route highlighted.
+- **Best efforts**: the best average pace of your runs of about 5 km, 10 km, a half and a full marathon, and the best average speed of rides of 50, 100, 160 and 200+ km. Strava's activity list has no splits, so these are whole-activity averages.
+- **Year by year**: activities, km, hours, climbing, longest and km a week.
+- **Where you start** and **Countries**: the towns and countries your activities start in (all years), from GeoNames' towns as for the most visited cities.
+
+Sport colours: orange cycling, violet running, magenta walks and hikes, yellow other sports (validated for colour-blind readers in both themes).
 
 ### Importing from TripIt
 
@@ -444,7 +466,7 @@ At most one request a second goes to each service; a service that is down is tri
 - `data/stays.json` (`stays_file`): hotels, Airbnbs and rental cars, one per booking code: `code`, `what` (`stay` or `car`), `provider`, `place`, `country`, `start`, `end`, `type`, `price`, and `lat`, `lon` once found (`unplaced` when not).
 - `data/photos.json` (`photos_file`): `[{"lat", "lon", "year", "count", "days"}]`, written by `imports/photos.py`.
 - `data/timeline.json` (`timeline_file`): `{"visits": [{"lat", "lon", "start", "end", "name"}], "paths": [{"date", "path"}]}`, written by `imports/timeline.py`.
-- `data/strava.json` (`strava_file`): `{"activities": [{"id", "name", "sport", "date", "start", "distance", "moving_time", "elevation", "path"}], "last_sync", "last_full"}`, `date` in the activity's local time, `distance` in km, `path` an encoded polyline with 6 decimals, `at` its first point, `tiles` the zoom-14 tiles it passes through (x × 16384 + y). `data/strava_token.json` (`strava_token_file`): the sign-in token.
+- `data/strava.json` (`strava_file`): `{"activities": [{"id", "name", "sport", "date", "start", "distance", "moving_time", "elevation", "path"}], "last_sync", "last_full"}`, `date` in the activity's local time, `distance` in km, `elapsed_time`, `heartrate` (average, when recorded), `prs`, `kudos`, `commute`, `trainer`, `path` an encoded polyline with 6 decimals, `at` its first point, `tiles` the zoom-14 tiles it passes through (x × 16384 + y). `data/strava_token.json` (`strava_token_file`): the sign-in token.
 
 Moving to MongoDB later only needs the data layer in `app.js` (the `flights` array, `saveFlights()` and `init()`) replaced by a Mongoose model; the API routes stay the same.
 
@@ -469,6 +491,7 @@ Moving to MongoDB later only needs the data layer in `app.js` (the `flights` arr
 | `GET` | `/api/settings` | `home_airports`, for the trips on the map |
 | `GET` | `/api/strava`, `/api/strava/status` | the Strava activities (gzipped when asked, `304` when the browser has them); whether Strava is set up and connected, how many activities, the last fetch and error |
 | `GET` | `/api/cities?from=&to=` | the 100 most visited towns in the period (dates `YYYY-MM-DD`, both optional): `name`, `country`, `lat`, `lon`, `days`, `visits`, `first`, `last` |
+| `GET` | `/api/strava/places` | where activities start: the towns and countries per kind of sport (`ride`, `run`, `walk`, `sport`, `all`) |
 | `POST` | `/api/strava/sync` | fetch new activities from Strava now |
 | `GET` | `/auth/strava` | sign in to Strava (redirects back to `/auth/strava/callback`) |
 

@@ -13,6 +13,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/topojson-client@3.1.0/dist/topojson-client.min.js"></script>
   <script src="layers.js"></script>
+  <script src="sports.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -36,10 +37,10 @@
       --photo:    #4dd0e1;
       --timeline: #b0bec5;
       --country:  #7c4dff;
-      --ride:     #ff7043;
-      --run:      #ef5350;
-      --walk:     #bcaaa4;
-      --sport:    #90caf9;
+      --ride:     #d95926;  /* sports: validated categorical slots (dataviz), dark steps */
+      --run:      #9085e9;
+      --walk:     #d55181;
+      --sport:    #c98500;
       --tile:     #66bb6a;
       --city:     #eceff1;
     }
@@ -63,10 +64,10 @@
       --photo:     #00838f;
       --timeline:  #455a64;
       --country:   #5c35cc;
-      --ride:      #e64a19;
-      --run:       #c62828;
-      --walk:      #6d4c41;
-      --sport:     #1565c0;
+      --ride:      #eb6834;
+      --run:       #6250d6;
+      --walk:      #e87ba4;
+      --sport:     #eda100;
       --tile:      #2e7d32;
       --city:      #37474f;
     }
@@ -201,6 +202,35 @@
     .top-list-row .name { flex: 1; padding: 0 8px; }
     .top-list-row .count { color: var(--accent); font-weight: 600; font-size: 13px; }
 
+    /* --- Sports (sports.js) --- */
+    .sp-head { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; }
+    .sp-head h2 { font-size: 16px; font-weight: 600; margin-right: auto; }
+    .sp-head select { background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font: inherit; }
+    .sp-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 0 24px; }
+    .sp-multi { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 16px; }
+    .chart-section h4 { font-size: 12px; font-weight: 600; color: var(--text2); margin: 14px 0 6px; }
+    .chart-wrap.tall { height: 320px; }
+    .chart-wrap.short { height: 170px; }
+    .sp-scroll { overflow-x: auto; }
+    .sp-svg text { fill: var(--text2); font-size: 10px; }
+    .sp-svg [data-tip]:hover { stroke: var(--text); stroke-width: 1.5; }
+    .sp-legend { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text2); margin-top: 8px; }
+    .sp-swatch, .sp-dot { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
+    .sp-dot { border-radius: 50%; margin-right: 5px; vertical-align: -1px; }
+    .sp-note { font-size: 11px; color: var(--text2); margin-top: 8px; line-height: 1.5; }
+    .sp-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .sp-table th, .sp-table td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    .sp-table thead th { color: var(--text2); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+    .sp-table tbody th { font-weight: 500; white-space: nowrap; }
+    .sp-table td b { display: block; color: var(--text); }
+    .sp-table td small { display: block; color: var(--text2); font-size: 11px; }
+    .sp-table td .sp-link { display: block; color: var(--accent); text-decoration: none; }
+    .sp-table td .sp-link:hover { text-decoration: underline; }
+    .sp-table tr.sp-hi { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+    .sp-rank { color: var(--text2); width: 20px; }
+    .sp-tip { display: none; position: fixed; z-index: 3000; pointer-events: none; background: var(--surface); color: var(--text);
+      border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; font-size: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.3); }
+
     /* --- Flights table --- */
     .flights-page { padding: 20px 28px; width: 100%; }
     .flights-header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
@@ -288,6 +318,7 @@
   <div class="tabs">
     <button class="tab active" data-tab="map">Map</button>
     <button class="tab" data-tab="stats">Stats</button>
+    <button class="tab" data-tab="sports">Sports</button>
     <button class="tab" data-tab="flights">Flights</button>
     <button class="tab tab-add" data-tab="add">+ Add Flight</button>
   </div>
@@ -358,6 +389,25 @@
         </div>
       </div>
     </div>
+  </div>
+
+  <!-- SPORTS (sports.js) -->
+  <div id="tab-sports" class="tab-content">
+    <div class="stats-page">
+      <div class="sp-head">
+        <h2>Sports</h2>
+        <select id="sp-kinds" aria-label="Sport">
+          <option value="main">Cycling &amp; running</option>
+          <option value="ride">Cycling</option>
+          <option value="run">Running</option>
+          <option value="walk">Walks &amp; hikes</option>
+          <option value="all">All sports</option>
+        </select>
+        <select id="sp-year" aria-label="Year"><option value="">All years</option></select>
+      </div>
+      <div id="sports-body"></div>
+    </div>
+    <div id="sp-tip" class="sp-tip"></div>
   </div>
 
   <!-- FLIGHTS -->
@@ -487,6 +537,7 @@ function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
   document.getElementById('theme-toggle').textContent = theme === 'dark' ? '☀️' : '🌙';
   if (document.getElementById('tab-stats').classList.contains('active')) renderStats();
+  if (document.getElementById('tab-sports').classList.contains('active') && typeof renderSports === 'function') renderSports();
   if (typeof drawAirports === 'function' && airportLayer) redrawMap();
 }
 
@@ -519,6 +570,7 @@ document.querySelectorAll('.tab[data-tab]').forEach(btn => {
     btn.classList.add('active');
     document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
     if (btn.dataset.tab === 'map' && map) setTimeout(() => map.invalidateSize(), 50);
+    if (btn.dataset.tab === 'sports') renderSports();
   });
 });
 
@@ -1109,6 +1161,7 @@ async function init() {
   loadStrava();  // thousands of activities: after the rest of the map is up
   renderStats();
   renderTopCities();
+  initSports();
   renderTable();
 
   // Default table sort header indicator

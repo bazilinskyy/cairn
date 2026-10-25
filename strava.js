@@ -38,7 +38,9 @@ function toActivity(a) {
     id: a.id, name: a.name || '', sport: a.sport_type || a.type || 'Workout',
     date: (a.start_date_local || '').replace('T', ' ').replace('Z', ''), start: Date.parse(a.start_date) / 1000 || 0,
     distance: Math.round((a.distance || 0) / 100) / 10, moving_time: a.moving_time || 0,
-    elevation: Math.round(a.total_elevation_gain || 0), path: pts.length > 1 ? ground.encode(pts) : '',
+    elevation: Math.round(a.total_elevation_gain || 0), elapsed_time: a.elapsed_time || 0,
+    heartrate: a.average_heartrate ? Math.round(a.average_heartrate) : null, prs: a.pr_count || 0, kudos: a.kudos_count || 0,
+    commute: !!a.commute, trainer: !!a.trainer, path: pts.length > 1 ? ground.encode(pts) : '',
     at: pts.length ? pts[0].map(x => Math.round(x * 1e5) / 1e5) : null, tiles: pts.length > 1 ? tilesOf(pts) : []
   };
 }
