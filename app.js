@@ -36,6 +36,9 @@ const DATA_DIR      = path.join(__dirname, config.data_dir);
 const AIRPORTS_FILE = path.join(__dirname, config.airports_file);
 const FLIGHTS_FILE  = path.join(__dirname, config.flights_file);
 const GROUND_FILE   = path.join(__dirname, config.ground_file);
+const STAYS_FILE    = path.join(__dirname, config.stays_file);
+const PHOTOS_FILE   = path.join(__dirname, config.photos_file);
+const TIMELINE_FILE = path.join(__dirname, config.timeline_file);
 const AIRPORTS_URL  = 'https://raw.githubusercontent.com/jpatokal/openflights/master/data/airports.dat';
 
 // --- In-memory stores ---
@@ -43,6 +46,7 @@ const AIRPORTS_URL  = 'https://raw.githubusercontent.com/jpatokal/openflights/ma
 let airports = {}; // IATA -> {name, city, country, lat, lon}
 let flights  = [];
 let trips    = []; // trains, buses and ferries (ground.js)
+let stays    = []; // hotels, Airbnbs and rental cars
 
 // --- Helpers ---
 
@@ -145,13 +149,29 @@ function saveTrips() {
   fs.writeFileSync(GROUND_FILE, JSON.stringify(trips, null, 2));
 }
 
-// Places and tracks of new ground trips, one pass at a time, when ground_lookups is on
+function saveStays() {
+  fs.writeFileSync(STAYS_FILE, JSON.stringify(stays, null, 2));
+}
+
+// A file an import script wrote (photos, Timeline), read again when it changes; [] or {} when there is none
+const imported = {};
+function readImport(file, empty) {
+  try {
+    const mtime = fs.statSync(file).mtimeMs;
+    if (imported[file]?.mtime !== mtime) imported[file] = { mtime, data: JSON.parse(fs.readFileSync(file, 'utf8')) };
+    return imported[file].data;
+  } catch (_) {
+    return empty;
+  }
+}
+
+// Places and tracks of new ground trips and places of stays, one pass at a time, when ground_lookups is on
 let lookingUp = false, lookAgain = false;
 function lookUpTrips() {
   if (!config.ground_lookups) return;
   if (lookingUp) { lookAgain = true; return; }
   lookingUp = true;
-  const store = { trips, flights: () => flights, airports: () => airports, save: saveTrips };
+  const store = { trips, stays, flights: () => flights, airports: () => airports, save: saveTrips, saveStays };
   ground.enrich(store).catch(e => console.warn('[ground]', e.message)).finally(() => {
     lookingUp = false;
     if (lookAgain) { lookAgain = false; lookUpTrips(); }
@@ -267,6 +287,10 @@ async function init() {
     trips = JSON.parse(fs.readFileSync(GROUND_FILE, 'utf8'));
     console.log(`[init] Loaded ${trips.length} ground trips from ${config.ground_file}`);
   }
+  if (fs.existsSync(STAYS_FILE)) {
+    stays = JSON.parse(fs.readFileSync(STAYS_FILE, 'utf8'));
+    console.log(`[init] Loaded ${stays.length} stays and rental cars from ${config.stays_file}`);
+  }
 }
 
 // --- Express ---
@@ -377,6 +401,57 @@ app.delete('/api/ground/:id', (req, res) => {
   const [t] = trips.splice(i, 1);
   saveTrips();
   res.json({ deleted: t.id });
+});
+
+// --- Stays and rental cars (from flightmail), photos and Timeline (from the import scripts) ---
+
+app.get('/api/stays', (_req, res) => {
+  res.json(stays);
+});
+
+// One per booking code: posting the same booking again updates it
+app.post('/api/stays', (req, res) => {
+  const s = req.body;
+  if (!s.code || !s.place || !s.start) return res.status(400).json({ error: 'code, place and start are required' });
+  const same = stays.find(x => x.code === s.code);
+  if (same) {
+    const { id, ...changes } = s;
+    ground.forgetStay(same, changes);
+    Object.assign(same, changes);
+  } else {
+    s.id = nextId(stays);
+    stays.push(s);
+  }
+  saveStays();
+  lookUpTrips();
+  res.json(same || s);
+});
+
+app.put('/api/stays/:id', (req, res) => {
+  const s = stays.find(x => x.id === Number(req.params.id));
+  if (!s) return res.status(404).json({ error: 'no such stay' });
+  const { id, ...changes } = req.body;
+  ground.forgetStay(s, changes);
+  Object.assign(s, changes);
+  saveStays();
+  lookUpTrips();
+  res.json(s);
+});
+
+app.delete('/api/stays/:id', (req, res) => {
+  const i = stays.findIndex(x => x.id === Number(req.params.id));
+  if (i < 0) return res.status(404).json({ error: 'no such stay' });
+  const [s] = stays.splice(i, 1);
+  saveStays();
+  res.json({ deleted: s.id });
+});
+
+app.get('/api/photos', (_req, res) => res.json(readImport(PHOTOS_FILE, [])));
+app.get('/api/timeline', (_req, res) => res.json(readImport(TIMELINE_FILE, { visits: [], paths: [] })));
+
+// What the map needs from config: the airports trips start from and return to
+app.get('/api/settings', (_req, res) => {
+  res.json({ home_airports: config.flightmail?.home_airports || ['AMS', 'EIN', 'RTM'] });
 });
 
 // --- TripIt iCal import ---

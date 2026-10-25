@@ -107,6 +107,30 @@ test('ground trips: added, updated in place when posted again, edited and delete
   assert.deepStrictEqual(onDisk.map(t => t.id), [1]);
 });
 
+test('stays: one per booking code, a new place forgets the old position', async () => {
+  const faro = { code: 'B1', what: 'stay', provider: 'Booking.com', place: 'Faro', country: 'Portugal', start: '2026-10-22', end: '2026-10-23', type: 'Hostel' };
+  const a = await (await call('POST', '/api/stays', faro)).json();
+  await call('PUT', `/api/stays/${a.id}`, { lat: 37.02, lon: -7.93 });
+  const b = await (await call('POST', '/api/stays', { ...faro, end: '2026-10-24' })).json();
+  assert.strictEqual(b.id, a.id);
+  assert.strictEqual(b.lat, 37.02);  // same place: position kept
+  const c = await (await call('POST', '/api/stays', { ...faro, place: 'Olhão' })).json();
+  assert.strictEqual(c.lat, undefined);
+  assert.strictEqual((await call('POST', '/api/stays', { code: 'X' })).status, 400);
+  assert.strictEqual((await (await call('GET', '/api/stays')).json()).length, 1);
+  assert.deepStrictEqual(await (await call('DELETE', `/api/stays/${a.id}`)).json(), { deleted: a.id });
+  assert.strictEqual((await call('DELETE', `/api/stays/${a.id}`)).status, 404);
+});
+
+test('photos and Timeline come from the import files, read again when they change', async () => {
+  assert.deepStrictEqual(await (await call('GET', '/api/photos')).json(), []);
+  assert.deepStrictEqual(await (await call('GET', '/api/timeline')).json(), { visits: [], paths: [] });
+  const cells = [{ lat: 51.44, lon: 5.47, year: 2024, count: 2, days: ['2024-06-01'] }];
+  fs.writeFileSync(path.join(dir, 'data', 'photos.json'), JSON.stringify(cells));
+  assert.deepStrictEqual(await (await call('GET', '/api/photos')).json(), cells);
+  assert.deepStrictEqual(await (await call('GET', '/api/settings')).json(), { home_airports: ['AMS', 'EIN', 'RTM'] });
+});
+
 test('listens on 127.0.0.1 only', async (t) => {
   const lan = Object.values(os.networkInterfaces()).flat().find(a => a && a.family === 'IPv4' && !a.internal);
   if (!lan) return t.skip('no non-loopback IPv4 address');

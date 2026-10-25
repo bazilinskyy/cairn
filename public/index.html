@@ -11,6 +11,8 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/topojson-client@3.1.0/dist/topojson-client.min.js"></script>
+  <script src="layers.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -29,6 +31,11 @@
       --train:    #ffb74d;
       --bus:      #81c784;
       --ferry:    #b39ddb;
+      --stay:     #f06292;
+      --car:      #ffd54f;
+      --photo:    #4dd0e1;
+      --timeline: #b0bec5;
+      --country:  #7c4dff;
     }
 
     [data-theme="light"] {
@@ -45,6 +52,11 @@
       --train:     #c77700;
       --bus:       #1e8449;
       --ferry:     #8e44ad;
+      --stay:      #c2185b;
+      --car:       #9a7d0a;
+      --photo:     #00838f;
+      --timeline:  #455a64;
+      --country:   #5c35cc;
     }
 
     html, body { height: 100%; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; }
@@ -132,6 +144,11 @@
     .map-legend input { accent-color: var(--accent); margin: 0; }
     .map-legend .swatch { width: 18px; height: 0; border-top: 3px solid; display: inline-block; }
     .map-legend .count { color: var(--text2); margin-left: auto; padding-left: 8px; }
+    .map-period label { gap: 5px; }
+    .map-period select, .map-period input {
+      background: var(--surface2); color: var(--text); border: 1px solid var(--border); border-radius: 4px;
+      font: inherit; font-size: 12px; padding: 1px 3px; max-width: 190px;
+    }
     .popup-flights-btn {
       margin-top: 10px; display: inline-block; padding: 6px 12px;
       background: rgba(79,195,247,0.15); border: 1px solid rgba(79,195,247,0.4);
@@ -446,7 +463,7 @@ function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
   document.getElementById('theme-toggle').textContent = theme === 'dark' ? '☀️' : '🌙';
   if (document.getElementById('tab-stats').classList.contains('active')) renderStats();
-  if (typeof drawAirports === 'function' && airportLayer) { drawRoutes(); drawGround(); drawAirports(); }
+  if (typeof drawAirports === 'function' && airportLayer) redrawMap();
 }
 
 function toggleTheme() {
@@ -581,7 +598,8 @@ function initMap() {
   let hidden = [];
   try { hidden = JSON.parse(localStorage.getItem('hiddenLines') || '[]'); } catch (_) {}
   const layers = { flight: ['✈️ Flights', routeLayer, '--accent'],
-    ...Object.fromEntries(Object.entries(groundModes).map(([m, label]) => [m, [label, groundLayer[m], '--' + m]])) };
+    ...Object.fromEntries(Object.entries(groundModes).map(([m, label]) => [m, [label, groundLayer[m], '--' + m]])),
+    ...extraLayers() };
   Object.entries(layers).forEach(([k, [, layer]]) => { if (!hidden.includes(k)) layer.addTo(map); });
   const Legend = L.Control.extend({
     options: { position: 'topright' },
@@ -601,19 +619,26 @@ function initMap() {
   });
   new Legend().addTo(map);
   drawLegend = () => {
-    const n = { flight: allFlights.length };
-    allTrips.forEach(t => { n[t.mode] = (n[t.mode] || 0) + 1; });
+    const n = { flight: allFlights.filter(f => inWin(f.date)).length, ...extraCounts() };
+    allTrips.forEach(t => { if (inWin(t.date)) n[t.mode] = (n[t.mode] || 0) + 1; });
     document.getElementById('map-legend').innerHTML = Object.entries(layers).filter(([k]) => k === 'flight' || n[k])
       .map(([k, [label, layer, color]]) => `<label><input type="checkbox" data-layer="${k}" ${map.hasLayer(layer) ? 'checked' : ''}>` +
         `<span class="swatch" style="border-color:${getCSSVar(color)}"></span>${label}<span class="count">${n[k] || 0}</span></label>`).join('');
   };
 
-  drawRoutes();
-  drawGround();
-  drawAirports();
+  addPeriodControl();
+  redrawMap();
 }
 
 let drawLegend = () => {};
+
+// Everything on the map, for the period shown (layers.js)
+function redrawMap() {
+  drawRoutes();
+  drawAirports();
+  drawExtras();
+  drawGround();  // last: it also redraws the legend, with the counts of the others
+}
 
 function greatCircle(lat1, lon1, lat2, lon2, n = 60) {
   const toRad = x => x * Math.PI / 180;
@@ -644,15 +669,16 @@ function greatCircle(lat1, lon1, lat2, lon2, n = 60) {
 
 function drawRoutes() {
   routeLayer.clearLayers();
+  const shown = allFlights.filter(f => inWin(f.date));
   const routeCount = {};
-  allFlights.forEach(f => {
+  shown.forEach(f => {
     if (!f.from || !f.to || !allAirports[f.from] || !allAirports[f.to]) return;
     const key = [f.from, f.to].sort().join('|');
     routeCount[key] = (routeCount[key] || 0) + 1;
   });
 
   const drawn = new Set();
-  allFlights.forEach(f => {
+  shown.forEach(f => {
     const a = allAirports[f.from], b = allAirports[f.to];
     if (!a || !b) return;
     const key = [f.from, f.to].sort().join('|');
@@ -690,7 +716,7 @@ function drawGround() {
   Object.values(groundLayer).forEach(l => l.clearLayers());
   const routes = {};
   allTrips.forEach(t => {
-    if (t.from_lat == null || t.to_lat == null || !groundLayer[t.mode]) return;
+    if (t.from_lat == null || t.to_lat == null || !groundLayer[t.mode] || !inWin(t.date)) return;
     const ends = [[t.from_lat, t.from_lon], [t.to_lat, t.to_lon]].map(p => p.map(x => x.toFixed(2)).join(',')).sort();
     const key = t.mode + '|' + ends.join('|');
     const r = routes[key] = routes[key] || { trips: [] };
@@ -717,10 +743,11 @@ function drawAirports() {
   if (airportLayer) map.removeLayer(airportLayer);
 
   const visitCount = {};
-  allFlights.forEach(f => {
+  allFlights.filter(f => inWin(f.date)).forEach(f => {
     if (f.from) visitCount[f.from] = (visitCount[f.from] || 0) + 1;
     if (f.to)   visitCount[f.to]   = (visitCount[f.to]   || 0) + 1;
   });
+  const shownAirports = Object.entries(allAirports).filter(([iata]) => visitCount[iata]);
 
   const makePopup = (iata, ap, count) =>
     `<b>${iata}</b> — ${ap.name}<br>` +
@@ -741,7 +768,7 @@ function drawAirports() {
         });
       }
     });
-    Object.entries(allAirports).forEach(([iata, ap]) => {
+    shownAirports.forEach(([iata, ap]) => {
       if (isNaN(ap.lat) || isNaN(ap.lon)) return;
       const count = visitCount[iata] || 1;
       const radius = Math.min(2 + Math.log2(count) * 1.2, 9);
@@ -749,7 +776,7 @@ function drawAirports() {
     });
   } else {
     airportLayer = L.layerGroup();
-    Object.entries(allAirports).forEach(([iata, ap]) => {
+    shownAirports.forEach(([iata, ap]) => {
       if (isNaN(ap.lat) || isNaN(ap.lon)) return;
       const count = visitCount[iata] || 1;
       const radius = Math.min(2 + Math.log2(count) * 1.2, 9);
@@ -1017,11 +1044,14 @@ window.showAirportFlights = function(iata) {
 // --- Init ---
 
 async function init() {
-  [allFlights, allAirports, allTrips] = await Promise.all([
+  const optional = (url, empty) => fetch(url).then(r => r.ok ? r.json() : empty).catch(() => empty);
+  [allFlights, allAirports, allTrips, allStays, allPhotos, allTimeline, settings] = await Promise.all([
     fetch('/api/flights').then(r => r.json()),
     fetch('/api/airports').then(r => r.json()),
-    fetch('/api/ground').then(r => r.ok ? r.json() : []).catch(() => [])
+    optional('/api/ground', []), optional('/api/stays', []), optional('/api/photos', []),
+    optional('/api/timeline', { visits: [], paths: [] }), optional('/api/settings', { home_airports: [] })
   ]);
+  computeJourneys();
 
   initMap();
   renderStats();
