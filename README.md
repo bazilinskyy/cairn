@@ -28,6 +28,7 @@ A personal flight tracker that runs on your own machine: a modern replacement fo
 
 Contrail:
 - **World map** of all your routes with great-circle arcs and airport markers (clustered when zoomed out)
+- **Trains, buses and ferries** on the same map, each mode in its own colour, along the real track where one is found (see [Ground trips](#ground-trips))
 - **Stats dashboard**: total distance, flight hours, airports, countries, airlines, top routes and flights per year
 - **Flight list** with search and sortable columns
 - **Add a flight by flight number and date**: airports, airline, aircraft and duration are looked up via AeroDataBox
@@ -39,7 +40,7 @@ flightmail:
 - Finds the flights in booking emails from airlines and agencies, in English and Dutch (KLM, Ryanair, easyJet, eDreams, Gotogate, Booking.com, Air France-KLM and similar layouts)
 - Creates one **calendar event per flight**, for example `✈️ KL1234: Amsterdam - Lisbon`. Events start and end at the right moment in each airport's time zone, with the booking code (PNR) in the notes.
 - Adds the same flight to **Contrail**
-- Also adds **trains, buses and ferries** to the calendar, for example `🚆 EC9236: Breda - Bruxelles Midi` or `🚌 Lisboa (Oriente) - Porto (Campanhã)` (not to Contrail, which is a flight log)
+- Also adds **trains, buses and ferries** to the calendar, for example `🚆 EC9236: Breda - Bruxelles Midi` or `🚌 Lisboa (Oriente) - Porto (Campanhã)`, and to Contrail's map
 - Follows **schedule changes, rebookings and cancellations**
 - For every flight: a **check-in to-do in Things**, scheduled the day before, with the airline's check-in link; a **busy block in your work calendar** from 2 hours before departure to 1 hour after landing; and an all-day **trip banner** ("Tenerife", "Portugal") over each trip
 - **Never duplicates** a flight that is already in the calendar or in Contrail, and never touches events it did not create
@@ -50,9 +51,10 @@ flightmail:
 | Path | What it is |
 |---|---|
 | `app.js` | Contrail server (Express): REST API, AeroDataBox lookup, imports |
+| `ground.js` | places and tracks of trains, buses and ferries (Photon, Transitous, OSRM) |
 | `public/index.html` | Contrail web page (map, stats, list) |
 | `default.config`, `default.secret` | committed templates for `config` and `secret` (see [Setup](#setup)) |
-| `test/api.test.js` | tests of the Contrail API |
+| `test/api.test.js`, `test/ground.test.js` | tests of the Contrail API and of `ground.js` |
 | `mail/flightmail.py` | flightmail entry point: Gmail, calendar, Contrail and Discord |
 | `mail/parse.py` | reads flight legs out of an email (no network) |
 | `mail/ground.py` | trains, buses and ferries: operator rules and station time zones (no network) |
@@ -159,7 +161,7 @@ Every hour flightmail reads the Gmail messages that arrived since its last run. 
 | **Schedule change** | The event and the Contrail flight get the new times; the event gets a dated note such as `Updated 2026-10-21: schedule change (Gotogate)`. |
 | **Rebooking** | The old flight is deleted from both places and the new one created with a `Rebooked from KL1234 on 2026-11-16` note. |
 | **Cancellation** | The event and the Contrail flight are deleted. |
-| **Train, bus or ferry ticket** | One calendar event per journey (calendar only). Cancellations delete it, also when the email gives only the booking number. |
+| **Train, bus or ferry ticket** | One calendar event per journey and the same trip in Contrail, for the map. Cancellations delete both, also when the email gives only the booking number. |
 | **Hotel, Airbnb or rental car** | Booking.com, Airbnb, DiscoverCars and VIPCars confirmations go into the trip docs (below), not the calendar. Their cancellations undo that. |
 | **Anything else** | Ignored: check-in reminders, boarding passes, price alerts, surveys, newsletters, "choose an option" emails, replies and forwards. |
 
@@ -347,6 +349,30 @@ All flights are in `data/flights.json`, a JSON array; `data/` is gitignored. To 
 | `registration` | aircraft registration |
 | `trip`, `note` | trip name or ID; free text |
 
+### Ground trips
+
+Trains, buses and ferries are in `data/ground.json` (`ground_file`), apart from the flights so they never count in the flight statistics. flightmail adds them from ticket emails, like flights, and only for trips still ahead; older trips can be added with `POST /api/ground`. Contrail then looks each one up once, in the background, and keeps the result in the trip:
+
+1. **Places** from [Photon](https://photon.komoot.io) (OpenStreetMap): towns, islands, stations, ports and airports, near where you were just before (the last flight or trip of the three weeks before), the destination near the departure. Photon's first answer wins, unless a place with exactly that name is bigger (the city Málaga over a house called Malaga), or as big and about as near. A bare "airport" is the airport nearest to the other end. A name that only resembles the result is accepted for typos ("Isntabul"), an unrelated one is not. A trip whose place is not found gets `unplaced` and no line: send a better name, or its coordinates, with `PUT /api/ground/:id`.
+2. **Track** from [Transitous](https://transitous.org) (timetables of trains and coaches across Europe and beyond); a past trip is looked up on the same weekday in the coming week, as timetables cover only about a year ahead. Buses it does not know follow the roads ([OSRM](https://project-osrm.org)). Otherwise, and for ferries, the line is straight and drawn dashed.
+
+At most one request a second goes to each service; a service that is down is tried again an hour later. `"ground_lookups": false` in `config` turns the lookups off (the trips then have no lines).
+
+| Field | Description |
+|-------|-------------|
+| `id` | number, assigned by the server |
+| `date`, `arrival` | local departure and arrival (`YYYY-MM-DD HH:MM:SS`) |
+| `mode` | `train`, `bus` or `ferry` |
+| `service` | train or bus number, when known |
+| `from`, `to` | station or place names as on the ticket or in the calendar |
+| `event_id` | the calendar event flightmail made for it |
+| `source` | where the trip came from, e.g. `flightmail` (a ticket email) |
+| `from_lat`, `from_lon`, `to_lat`, `to_lon` | where the two places are |
+| `path` | the track as an encoded polyline with 6 decimals; empty for a straight line |
+| `path_source` | `transitous`, `osrm` or `straight` |
+| `distance` | km along the track |
+| `unplaced` | `true` when a place was not found |
+
 Moving to MongoDB later only needs the data layer in `app.js` (the `flights` array, `saveFlights()` and `init()`) replaced by a Mongoose model; the API routes stay the same.
 
 ## API
@@ -359,11 +385,15 @@ Moving to MongoDB later only needs the data layer in `app.js` (the `flights` arr
 | `POST` | `/api/flights` | add a flight (at least `from`, `to` and `date`); the distance is computed when missing |
 | `PUT` | `/api/flights/:id` | change fields of a flight; the distance is recomputed when the route changes |
 | `DELETE` | `/api/flights/:id` | delete a flight |
+| `GET` | `/api/ground` | all trains, buses and ferries |
+| `POST` | `/api/ground` | add a trip (at least `mode`, `from`, `to` and `date`); a trip with the same `event_id`, or the same departure minute and mode, is updated instead |
+| `PUT` | `/api/ground/:id` | change fields of a trip; a new place name or position is looked up again |
+| `DELETE` | `/api/ground/:id` | delete a trip |
 
 ## Tests
 
 ```
-npm test                       # Contrail API, against a temporary copy with its own data
+npm test                       # Contrail API (against a temporary copy with its own data) and ground.js, no network
 python mail/test_parse.py      # reading emails (the fixtures in mail/fixtures)
 python mail/test_ground.py     # trains, buses and ferries, station time zones
 python mail/test_sync.py       # the change, rebooking, cancellation and duplicate rules
@@ -381,6 +411,7 @@ This repository is public, so nothing personal is committed:
 - `config`, `secret` and `data/` are gitignored, along with flightmail's files in `~/.flightmail/`.
 - The test emails in `mail/fixtures/` are anonymised copies of real layouts. Names, booking codes, agency numbers, flight numbers, routes, dates, prices and links are replaced with fake ones (`Jan Testers`, `ABC123`, `example.com`).
 - flightmail reads the mailbox read only and keeps no copy of any email.
+- For the lines of trains, buses and ferries, Contrail sends their place names to Photon (photon.komoot.io) and their positions and departure times (of the coming week, for past trips) to Transitous (api.transitous.org) and OSRM (router.project-osrm.org), once per trip. `"ground_lookups": false` stops that.
 
 ## Troubleshooting
 

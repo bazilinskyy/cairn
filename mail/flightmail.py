@@ -516,18 +516,33 @@ class ContrailHTTP:
             return None
         return Leg(flight, r.get("from", ""), r.get("to", ""), dep, arr) if r.get("from") and r.get("to") else None
 
-    def add(self, leg):
+    def _ground(self, leg):
+        dep, arr = leg.instants(self.airports)
+        minutes = int((arr - dep).total_seconds() // 60)
+        return {"date": f"{leg.dep_local:%Y-%m-%d %H:%M:%S}", "arrival": f"{leg.arr_local:%Y-%m-%d %H:%M:%S}",
+                "mode": leg.mode, "service": leg.flight, "from": leg.dep, "to": leg.arr,
+                "duration": f"{minutes // 60:02d}:{minutes % 60:02d}", "source": "flightmail"}
+
+    @staticmethod
+    def _path(cid):
+        """Contrail ids of ground trips are kept as "ground/12", of flights as plain numbers."""
+        return f"/api/{cid}" if str(cid).startswith("ground/") else f"/api/flights/{cid}"
+
+    def add(self, leg, event_id=None):
+        if leg.mode != "flight":  # Contrail keeps one trip per departure minute and mode: posting it again updates it
+            trip = {**self._ground(leg), **({"event_id": event_id} if event_id else {})}
+            return f"ground/{self._call('POST', '/api/ground', trip)['id']}"
         f = self._call("POST", "/api/flights", self._payload(leg))
         self._flights = None
         return f["id"]
 
     def update(self, cid, leg):
-        self._call("PUT", f"/api/flights/{cid}", self._payload(leg))
+        self._call("PUT", self._path(cid), self._ground(leg) if leg.mode != "flight" else self._payload(leg))
         self._flights = None
 
     def delete(self, cid):
         try:
-            self._call("DELETE", f"/api/flights/{cid}")
+            self._call("DELETE", self._path(cid))
         except urllib.error.HTTPError as e:
             if e.code != 404:  # already deleted by hand
                 raise
