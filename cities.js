@@ -64,7 +64,7 @@ function townNamed(grid, name, lat, lon) {
 
 // points: [{ at: [lat, lon], day: 'YYYY-MM-DD', city? }] (city: an airport's city) -> the towns by days there, with
 // the number of separate visits (a gap of more than a day starts a new one), the first and the last day
-function rank(grid, points, limit = 100) {
+function rank(grid, points, limit = Infinity) {
   const cache = new Map(), days = new Map();
   for (const { at, day, city } of points) {
     if (!at || !day) continue;

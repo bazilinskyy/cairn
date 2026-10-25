@@ -14,11 +14,16 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 
 let sportCharts = [], sportPlaces = null, sportPicked = { kinds: 'main', year: '' };
 
-const km0 = v => Math.round(v).toLocaleString();
-const km1 = v => (Math.round(v * 10) / 10).toLocaleString();
+// Numbers in the unit chosen in the settings (layers.js: dist, DU, height, HU); activities keep km and m
+const km0 = v => Math.round(dist(v)).toLocaleString();
+const km1 = v => (Math.round(dist(v) * 10) / 10).toLocaleString();
+const up = m => Math.round(height(m)).toLocaleString();
 const hours = s => Math.round(s / 3600).toLocaleString();
-const pace = a => { const s = a.moving_time / a.distance; return `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')} /km`; };
-const speed = a => `${km1(a.distance / (a.moving_time / 3600))} km/h`;
+const pace = a => {
+  const s = a.moving_time / dist(a.distance), m = Math.floor(s / 60), r = Math.round(s % 60);
+  return `${r === 60 ? m + 1 : m}:${String(r === 60 ? 0 : r).padStart(2, '0')} /${DU()}`;
+};
+const speed = a => `${(Math.round(dist(a.distance) / (a.moving_time / 3600) * 10) / 10).toLocaleString()} ${imperial() ? 'mph' : 'km/h'}`;
 const dayOf = a => (a.date || '').slice(0, 10);
 const yearOf = a => (a.date || '').slice(0, 4);
 const color = k => getCSSVar('--' + k);
@@ -35,7 +40,7 @@ function picked({ allYears = false } = {}) {
 // Eddington number: the biggest E such that on E days you covered at least E km
 function eddington(list) {
   const perDay = {};
-  list.forEach(a => { perDay[dayOf(a)] = (perDay[dayOf(a)] || 0) + a.distance; });
+  list.forEach(a => { perDay[dayOf(a)] = (perDay[dayOf(a)] || 0) + dist(a.distance); });  // in km or miles
   const d = Object.values(perDay).sort((a, b) => b - a);
   let e = 0;
   while (e < d.length && d[e] >= e + 1) e++;
@@ -59,7 +64,7 @@ function streaks(list) {
 // Explored tiles of these activities, with max square and cluster (as on the map)
 function exploredOf(list) {
   const tiles = new Set();
-  list.forEach(a => (a.tiles || []).forEach(k => tiles.add(k)));
+  list.forEach(a => actTiles(a).forEach(k => tiles.add(k)));  // at the zoom chosen in the settings
   const size = new Map();
   let square = 0;
   [...tiles].sort((p, q) => (p % TILES) - (q % TILES) || p - q).forEach(k => {
@@ -172,20 +177,20 @@ function renderCards(list, kinds) {
   const card = (label, value, sub = '') => `<div class="stat-card"><div class="label">${label}</div><div class="value">${value}</div><div class="sub">${sub}</div></div>`;
   const per = kinds.map(k => {
     const l = list.filter(a => a.kind === k);
-    return `<span class="sp-dot" style="background:${color(k)}"></span>${KINDS[k]} ${km0(total(a => a.distance, l))} km`;
+    return `<span class="sp-dot" style="background:${color(k)}"></span>${KINDS[k]} ${km0(total(a => a.distance, l))} ${DU()}`;
   }).join(' · ');
   const edd = kinds.filter(k => k === 'ride' || k === 'run').map(k => {
     const e = eddington(list.filter(a => a.kind === k));
-    return card(`Eddington, ${KINDS[k].toLowerCase()}`, e.e, `${e.missing} more day${e.missing !== 1 ? 's' : ''} of ${e.next}+ km for ${e.next}`);
+    return card(`Eddington, ${KINDS[k].toLowerCase()}`, e.e, `${e.missing} more day${e.missing !== 1 ? 's' : ''} of ${e.next}+ ${DU()} for ${e.next}`);
   }).join('');
   document.getElementById('sp-cards').innerHTML =
     card('Activities', list.length.toLocaleString(), `${st.days.toLocaleString()} days out`) +
-    card('Distance', `${km0(total(a => a.distance))} km`, per) +
+    card('Distance', `${km0(total(a => a.distance))} ${DU()}`, per) +
     card('Moving time', `${hours(total(a => a.moving_time))} h`, `${(total(a => a.moving_time) / 86400).toFixed(1)} days`) +
-    card('Climbing', `${km0(total(a => a.elevation))} m`, `${(total(a => a.elevation) / 8849).toFixed(1)}× Everest`) +
+    card('Climbing', `${up(total(a => a.elevation))} ${HU()}`, `${(total(a => a.elevation) / 8849).toFixed(1)}× Everest`) +
     edd +
     card('Longest streak', `${st.best.n} day${st.best.n !== 1 ? 's' : ''}`, st.best.end ? `to ${fmtDate(st.best.end)}${st.current ? ` · now ${st.current}` : ''}` : '') +
-    card('Explored tiles', ex.tiles.toLocaleString(), `max square ${ex.square}×${ex.square} · cluster ${ex.cluster.toLocaleString()}`);
+    card(TILE_Z === 14 ? 'Explored tiles' : 'Squadratinhos', ex.tiles.toLocaleString(), `max square ${ex.square}×${ex.square} · cluster ${ex.cluster.toLocaleString()}`);
 }
 
 // --- charts ---
@@ -196,11 +201,11 @@ function renderYears(all, kinds) {
     type: 'bar',
     data: { labels: years, datasets: kinds.map(k => ({
       label: KINDS[k], backgroundColor: color(k), borderRadius: 4, borderSkipped: 'bottom', maxBarThickness: 28,
-      data: years.map(y => Math.round(all.filter(a => a.kind === k && yearOf(a) === y).reduce((s, a) => s + a.distance, 0)))
+      data: years.map(y => Math.round(dist(all.filter(a => a.kind === k && yearOf(a) === y).reduce((s, a) => s + a.distance, 0))))
     })) },
-    options: { responsive: true, maintainAspectRatio: false, scales: axes('km'),
+    options: { responsive: true, maintainAspectRatio: false, scales: axes(DU()),
       plugins: { legend: { display: kinds.length > 1, position: 'top', align: 'end', labels: { boxWidth: 10, boxHeight: 10 } },
-        tooltip: { callbacks: { label: c => `${c.dataset.label}: ${c.parsed.y.toLocaleString()} km` } } } }
+        tooltip: { callbacks: { label: c => `${c.dataset.label}: ${c.parsed.y.toLocaleString()} ${DU()}` } } } }
   });
 }
 
@@ -210,7 +215,7 @@ function renderRace(all, yearShown) {
   const byYear = {};
   all.forEach(a => {
     const y = yearOf(a), d = Math.floor((Date.parse(dayOf(a)) - Date.parse(y + '-01-01')) / 864e5);
-    (byYear[y] = byYear[y] || new Array(366).fill(0))[d] += a.distance;
+    (byYear[y] = byYear[y] || new Array(366).fill(0))[d] += dist(a.distance);
   });
   const totals = Object.fromEntries(Object.entries(byYear).map(([y, d]) => [y, d.reduce((s, x) => s + x, 0)]));
   const best = Object.keys(totals).sort((a, b) => totals[b] - totals[a])[0];
@@ -227,12 +232,12 @@ function renderRace(all, yearShown) {
   chart('sp-race', {
     type: 'line', data: { datasets },
     options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'nearest', intersect: false },
-      scales: axes('km', { x: { type: 'linear', min: 0, max: 365, ticks: { stepSize: 30.4, callback: v => MONTHS[Math.round(v / 30.4)] || '' } } }),
+      scales: axes(DU(), { x: { type: 'linear', min: 0, max: 365, ticks: { stepSize: 30.4, callback: v => MONTHS[Math.round(v / 30.4)] || '' } } }),
       plugins: {
         legend: { display: true, position: 'top', align: 'end', labels: { boxWidth: 14, boxHeight: 2,
           filter: item => item.text === yearShown || item.text === best } },
         tooltip: { callbacks: { title: items => { const d = new Date(Date.UTC(2001, 0, 1) + items[0].parsed.x * 864e5); return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`; },
-          label: c => `${c.dataset.label}: ${c.parsed.y.toLocaleString()} km` } }
+          label: c => `${c.dataset.label}: ${c.parsed.y.toLocaleString()} ${DU()}` } }
       } }
   });
 }
@@ -254,13 +259,13 @@ function renderCalendar(list, year) {
     const key = d.toISOString().slice(0, 10), w = Math.floor((i + offset) / 7), wd = (i + offset) % 7, v = per[key] || 0;
     const fill = v ? ramp[cuts.filter(c => v > c).length] : getCSSVar('--surface2');
     svg += `<rect x="${left + w * (cell + gap)}" y="${top + wd * (cell + gap)}" width="${cell}" height="${cell}" rx="2" fill="${fill}"
-      data-tip="${fmtDate(key)}: ${v ? `${km1(v)} km in ${count[key]} activit${count[key] > 1 ? 'ies' : 'y'}` : 'nothing'}"/>`;
+      data-tip="${fmtDate(key)}: ${v ? `${km1(v)} ${DU()} in ${count[key]} activit${count[key] > 1 ? 'ies' : 'y'}` : 'nothing'}"/>`;
     if (d.getUTCDate() === 1) months += `<text x="${left + w * (cell + gap)}" y="11">${MONTHS[d.getUTCMonth()]}</text>`;
   }
   const days = [0, 2, 4].map(i => `<text x="0" y="${top + i * (cell + gap) + 10}">${WEEKDAYS[i]}</text>`).join('');
   const legend = ['less'].concat(ramp.map((c, i) => `<span class="sp-swatch" style="background:${c}"></span>`), ['more']).join(' ');
   box.innerHTML = `<svg class="sp-svg" width="${left + 54 * (cell + gap)}" height="${top + 7 * (cell + gap)}">${months}${days}${svg}</svg>
-    <div class="sp-legend">${legend} <span class="sp-note">· ${Object.keys(per).length} active days, ${km0(vals.reduce((s, x) => s + x, 0))} km</span></div>`;
+    <div class="sp-legend">${legend} <span class="sp-note">· ${Object.keys(per).length} active days, ${km0(vals.reduce((s, x) => s + x, 0))} ${DU()}</span></div>`;
   hookTips(box);
 }
 
@@ -300,14 +305,14 @@ function renderEddington(list, kinds) {
     chart(`sp-edd-${k}`, {
       data: { labels: ns, datasets: [
         { type: 'line', label: 'n days', data: ns, borderColor: getCSSVar('--text2'), borderWidth: 1.5, borderDash: [4, 4], pointRadius: 0, order: 0 },
-        { type: 'bar', label: 'days with at least n km', data: ns.map(n => e.days.filter(d => d >= n).length),
+        { type: 'bar', label: `days with at least n ${DU()}`, data: ns.map(n => e.days.filter(d => d >= n).length),
           backgroundColor: ns.map(n => n === e.e ? getCSSVar('--accent') : color(k)), borderRadius: 2, order: 1 }
       ] },
-      options: { responsive: true, maintainAspectRatio: false, scales: axes('days', { x: { title: { display: true, text: 'km', color: getCSSVar('--chart-tick') },
+      options: { responsive: true, maintainAspectRatio: false, scales: axes('days', { x: { title: { display: true, text: DU(), color: getCSSVar('--chart-tick') },
         ticks: { autoSkip: true, maxTicksLimit: 8 } }, y: { beginAtZero: false, min: Math.max(0, from - 10), max: Math.ceil(upto * 1.6 / 10) * 10 } }),  // taller bars run off the top
-        plugins: { legend: { display: false }, tooltip: { callbacks: { title: i => `${i[0].label} km`, label: c => c.dataset.type === 'line' ? '' : `${c.parsed.y} days with ${c.label}+ km` } } } }
+        plugins: { legend: { display: false }, tooltip: { callbacks: { title: i => `${i[0].label} ${DU()}`, label: c => c.dataset.type === 'line' ? '' : `${c.parsed.y} days with ${c.label}+ ${DU()}` } } } }
     });
-    document.getElementById(`sp-edd-${k}-note`).innerHTML = `<b>E = ${e.e}</b>: ${e.e} days of at least ${e.e} km. For ${e.next}: ${e.missing} more day${e.missing !== 1 ? 's' : ''} of ${e.next}+ km.`;
+    document.getElementById(`sp-edd-${k}-note`).innerHTML = `<b>E = ${e.e}</b>: ${e.e} days of at least ${e.e} ${DU()}. For ${e.next}: ${e.missing} more day${e.missing !== 1 ? 's' : ''} of ${e.next}+ ${DU()}.`;
   });
 }
 
@@ -315,7 +320,7 @@ function renderEddington(list, kinds) {
 function renderTilesGrowth(all) {
   const sorted = [...all].sort((a, b) => a.date.localeCompare(b.date)), tiles = new Set(), months = [], counts = [];
   sorted.forEach(a => {
-    (a.tiles || []).forEach(k => tiles.add(k));
+    actTiles(a).forEach(k => tiles.add(k));
     const m = a.date.slice(0, 7);
     if (months[months.length - 1] === m) counts[counts.length - 1] = tiles.size;
     else { months.push(m); counts.push(tiles.size); }
@@ -342,14 +347,14 @@ function renderHistograms(list, kinds) {
   box.innerHTML = kinds.map(k => `<div><h4>${KINDS[k]}</h4><div class="chart-wrap short"><canvas id="sp-hist-${k}"></canvas></div></div>`).join('');
   kinds.forEach(k => {
     const l = list.filter(a => a.kind === k && a.distance > 0), w = bin[k];
-    const n = Math.min(20, Math.ceil(Math.max(w, ...l.map(a => a.distance)) / w));
+    const n = Math.min(20, Math.ceil(Math.max(w, ...l.map(a => dist(a.distance))) / w));
     const counts = new Array(n).fill(0);
-    l.forEach(a => { counts[Math.min(n - 1, Math.floor(a.distance / w))]++; });
+    l.forEach(a => { counts[Math.min(n - 1, Math.floor(dist(a.distance) / w))]++; });
     chart(`sp-hist-${k}`, {
       type: 'bar', data: { labels: counts.map((_, i) => i === n - 1 ? `${i * w}+` : `${i * w}`), datasets: [{ label: KINDS[k], data: counts,
         backgroundColor: color(k), borderRadius: 3, categoryPercentage: 0.95, barPercentage: 0.95 }] },
-      options: { responsive: true, maintainAspectRatio: false, scales: axes('activities', { x: { title: { display: true, text: 'km', color: getCSSVar('--chart-tick') } } }),
-        plugins: { legend: { display: false }, tooltip: { callbacks: { title: i => `${i[0].label}${i[0].label.endsWith('+') ? '' : '–' + (+i[0].label + w)} km` } } } }
+      options: { responsive: true, maintainAspectRatio: false, scales: axes('activities', { x: { title: { display: true, text: DU(), color: getCSSVar('--chart-tick') } } }),
+        plugins: { legend: { display: false }, tooltip: { callbacks: { title: i => `${i[0].label}${i[0].label.endsWith('+') ? '' : '–' + (+i[0].label + w)} ${DU()}` } } } }
     });
   });
 }
@@ -362,7 +367,7 @@ function biggestPeriod(list, keyOf, label) {
   const sums = {};
   list.forEach(a => { const k = keyOf(a); sums[k] = (sums[k] || 0) + a.distance; });
   const best = Object.entries(sums).sort((a, b) => b[1] - a[1])[0];
-  return best ? `<b>${km0(best[1])} km</b><small>${label(best[0])}</small>` : '–';
+  return best ? `<b>${km0(best[1])} ${DU()}</b><small>${label(best[0])}</small>` : '–';
 }
 
 const weekOf = a => { const d = new Date(dayOf(a) + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() - (d.getUTCDay() + 6) % 7); return d.toISOString().slice(0, 10); };
@@ -370,12 +375,12 @@ const weekOf = a => { const d = new Date(dayOf(a) + 'T12:00:00Z'); d.setUTCDate(
 function renderRecords(list, kinds) {
   const top = (l, f) => l.filter(a => f(a) > 0).sort((a, b) => f(b) - f(a))[0];
   const rows = [
-    ['Longest', l => { const a = top(l, x => x.distance); return a && `<b>${km1(a.distance)} km</b>${linkTo(a)}<small>${fmtDate(a.date)}</small>`; }],
-    ['Most climbing', l => { const a = top(l, x => x.elevation); return a && `<b>${km0(a.elevation)} m</b>${linkTo(a)}<small>${fmtDate(a.date)}</small>`; }],
+    ['Longest', l => { const a = top(l, x => x.distance); return a && `<b>${km1(a.distance)} ${DU()}</b>${linkTo(a)}<small>${fmtDate(a.date)}</small>`; }],
+    ['Most climbing', l => { const a = top(l, x => x.elevation); return a && `<b>${up(a.elevation)} ${HU()}</b>${linkTo(a)}<small>${fmtDate(a.date)}</small>`; }],
     ['Longest moving time', l => { const a = top(l, x => x.moving_time); return a && `<b>${(a.moving_time / 3600).toFixed(1)} h</b>${linkTo(a)}<small>${fmtDate(a.date)}</small>`; }],
     ['Fastest average', (l, k) => {
       const min = { ride: 20, run: 5, walk: 5, sport: 5 }[k], a = top(l.filter(x => x.distance >= min && !x.trainer), x => x.distance / x.moving_time);
-      return a && `<b>${k === 'run' || k === 'walk' ? pace(a) : speed(a)}</b>${linkTo(a)}<small>${km1(a.distance)} km · ${fmtDate(a.date)}</small>`;
+      return a && `<b>${k === 'run' || k === 'walk' ? pace(a) : speed(a)}</b>${linkTo(a)}<small>${km1(a.distance)} ${DU()} · ${fmtDate(a.date)}</small>`;
     }],
     ['Highest heart rate average', l => { const a = top(l, x => x.heartrate || 0); return a && `<b>${a.heartrate} bpm</b>${linkTo(a)}<small>${fmtDate(a.date)}</small>`; }],
     ['Most kudos', l => { const a = top(l, x => x.kudos); return a && `<b>${a.kudos}</b>${linkTo(a)}<small>${fmtDate(a.date)}</small>`; }],
@@ -394,13 +399,15 @@ function renderRecords(list, kinds) {
 function renderBests(list, kinds) {
   const bands = {
     run: [['5 km', 4.8, 5.6], ['10 km', 9.7, 11], ['Half marathon', 20.8, 22.5], ['Marathon', 41.8, 44]],
-    ride: [['50 km', 50, 75], ['100 km', 100, 140], ['160 km', 160, 250], ['200 km+', 200, 1e6]]
+    ride: imperial()
+      ? [['30 mi', 48.3, 72.4], ['60 mi', 96.6, 144.8], ['Century (100 mi)', 160.9, 241.4], ['125 mi+', 201.2, 1e6]]
+      : [['50 km', 50, 75], ['100 km', 100, 140], ['160 km', 160, 250], ['200 km+', 200, 1e6]]
   };
   const ks = kinds.filter(k => bands[k]);
   document.getElementById('sp-bests').innerHTML = ks.length ? '<tbody>' + ks.map(k => bands[k].map(([name, lo, hi]) => {
     const a = list.filter(x => x.kind === k && x.distance >= lo && x.distance <= hi && !x.trainer && x.moving_time)
       .sort((p, q) => q.distance / q.moving_time - p.distance / p.moving_time)[0];
-    return `<tr><th><span class="sp-dot" style="background:${color(k)}"></span>${name}</th><td>${a ? `<b>${k === 'run' ? pace(a) : speed(a)}</b>${linkTo(a)}<small>${km1(a.distance)} km · ${fmtDate(a.date)}</small>` : '–'}</td></tr>`;
+    return `<tr><th><span class="sp-dot" style="background:${color(k)}"></span>${name}</th><td>${a ? `<b>${k === 'run' ? pace(a) : speed(a)}</b>${linkTo(a)}<small>${km1(a.distance)} ${DU()} · ${fmtDate(a.date)}</small>` : '–'}</td></tr>`;
   }).join('')).join('') + '</tbody>' : '<tbody><tr><td class="sp-note">For cycling and running.</td></tr></tbody>';
   hookLinks('sp-bests');
 }
@@ -408,12 +415,12 @@ function renderBests(list, kinds) {
 function renderYearTable(all) {
   const years = [...new Set(all.map(yearOf))].sort().reverse();
   document.getElementById('sp-yeartable').innerHTML =
-    '<thead><tr><th>Year</th><th>Activities</th><th>km</th><th>Hours</th><th>Climbing m</th><th>Longest km</th><th>km a week</th></tr></thead><tbody>' +
+    `<thead><tr><th>Year</th><th>Activities</th><th>${DU()}</th><th>Hours</th><th>Climbing ${HU()}</th><th>Longest ${DU()}</th><th>${DU()} a week</th></tr></thead><tbody>` +
     years.map(y => {
-      const l = all.filter(a => yearOf(a) === y), dist = l.reduce((s, a) => s + a.distance, 0);
+      const l = all.filter(a => yearOf(a) === y), total = l.reduce((s, a) => s + a.distance, 0);
       const weeks = y === String(new Date().getFullYear()) ? Math.max(1, (Date.now() - Date.parse(y + '-01-01')) / 6048e5) : 52.18;
-      return `<tr class="${y === sportPicked.year ? 'sp-hi' : ''}"><th>${y}</th><td>${l.length}</td><td>${km0(dist)}</td><td>${hours(l.reduce((s, a) => s + a.moving_time, 0))}</td>` +
-        `<td>${km0(l.reduce((s, a) => s + a.elevation, 0))}</td><td>${km1(Math.max(0, ...l.map(a => a.distance)))}</td><td>${km0(dist / weeks)}</td></tr>`;
+      return `<tr class="${y === sportPicked.year ? 'sp-hi' : ''}"><th>${y}</th><td>${l.length}</td><td>${km0(total)}</td><td>${hours(l.reduce((s, a) => s + a.moving_time, 0))}</td>` +
+        `<td>${up(l.reduce((s, a) => s + a.elevation, 0))}</td><td>${km1(Math.max(0, ...l.map(a => a.distance)))}</td><td>${km0(total / weeks)}</td></tr>`;
     }).join('') + '</tbody>';
 }
 
@@ -433,10 +440,10 @@ async function renderPlaces(kinds) {
   const towns = merge('towns').slice(0, 12), countries = merge('countries');
   const names = new Intl.DisplayNames(['en'], { type: 'region' });
   const el = (id, html) => { const e = document.getElementById(id); if (e) e.innerHTML = html; };
-  el('sp-towns', towns.length ? '<thead><tr><th></th><th>Town</th><th>Activities</th><th>km</th></tr></thead><tbody>' + towns.map((t, i) =>
+  el('sp-towns', towns.length ? `<thead><tr><th></th><th>Town</th><th>Activities</th><th>${DU()}</th></tr></thead><tbody>` + towns.map((t, i) =>
     `<tr><td class="sp-rank">${i + 1}</td><th>${flagOf(t.country)}${escapeHTML(t.name)}</th><td>${t.count}</td><td>${km0(t.km)}</td></tr>`).join('') + '</tbody>'
     : '<tbody><tr><td class="sp-note">No start places yet (or the town list is missing).</td></tr></tbody>');
-  el('sp-countries', countries.length ? '<thead><tr><th>Country</th><th>Activities</th><th>km</th><th>Since</th></tr></thead><tbody>' + countries.map(c =>
+  el('sp-countries', countries.length ? `<thead><tr><th>Country</th><th>Activities</th><th>${DU()}</th><th>Since</th></tr></thead><tbody>` + countries.map(c =>
     `<tr><th>${flagOf(c.country)}${escapeHTML(names.of(c.country) || c.country)}</th><td>${c.count}</td><td>${km0(c.km)}</td><td>${c.first.slice(0, 4)}</td></tr>`).join('') + '</tbody>'
     : '<tbody><tr><td class="sp-note">–</td></tr></tbody>');
 }

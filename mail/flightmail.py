@@ -5,6 +5,7 @@ Run hourly on mini through ~/.flightmail/flightmail.app (see mail/install.sh), w
   flightmail.py              read new mail and apply it
   flightmail.py --dry-run    read and log what would change; writes nothing, state untouched
   flightmail.py calendars    list the calendars EventKit can see
+  flightmail.py history [--days N] [--dry-run]   past stays, rental cars, trains, buses and ferries into Contrail
 Never exits non-zero: failures are logged and posted to Discord (an applet that fails shows a blocking dialog).
 """
 import argparse
@@ -15,6 +16,7 @@ import imaplib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -27,7 +29,7 @@ from email.utils import parseaddr, parsedate_to_datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from parse import Leg, load_airlines, load_airports, parse_email  # noqa: E402
+from parse import Leg, is_passenger, load_airlines, load_airports, parse_email  # noqa: E402
 import sync  # noqa: E402
 import ground  # noqa: E402
 import plan  # noqa: E402
@@ -103,9 +105,9 @@ def send_discord(text, sec):
 
 # --- Gmail (read only) ---
 
-def fetch_new(cfg, sec, state, since_days=None):
-    """(uid, message) for new messages in All Mail that match the travel query, oldest first; with since_days, all
-    matching messages of that many days instead (a rescan). Never changes the mailbox."""
+def fetch_new(cfg, sec, state, since_days=None, query=None):
+    """(uid, message) for new messages in All Mail that match the travel query (or this one), oldest first; with
+    since_days, all matching messages of that many days instead (a rescan). Never changes the mailbox."""
     imap = imaplib.IMAP4_SSL("imap.gmail.com", 993)
     try:
         imap.login(cfg["gmail_user"], sec["gmail_app_password"])
@@ -121,7 +123,7 @@ def fetch_new(cfg, sec, state, since_days=None):
         else:
             since = (now() - timedelta(days=int(since_days or cfg.get("lookback_days", 365)))).strftime("%d-%b-%Y")
             criteria = ["SINCE", since]
-        query = cfg.get("gmail_query") or GMAIL_QUERY
+        query = query or cfg.get("gmail_query") or GMAIL_QUERY
         _, data = imap.uid("SEARCH", "X-GM-RAW", '"' + query.replace('"', '\\"') + '"', *criteria)
         uids = sorted(int(u) for u in data[0].split() if since_days or int(u) > state.get("last_uid", 0))
         out = []
@@ -690,6 +692,10 @@ def run(args, cfg, sec):
     if docs:
         try:
             docs.run(work, airports, now(), cfg.get("home_airports", ["AMS", "EIN", "RTM"]))
+            if cfg.get("trip_suggestions", True):
+                claude = cfg.get("claude_path") or shutil.which("claude") or str(Path.home() / ".local/bin/claude")
+                model = cfg.get("suggestions_model", "sonnet")
+                docs.suggest(work, now(), lambda prompt: tripdocs.ask_claude(prompt, claude, model))
         finally:
             if not args.dry_run:
                 save_state(work)
@@ -702,9 +708,76 @@ def run(args, cfg, sec):
     return alerts
 
 
+# Senders and words of the stays, rental cars and tickets of the past (flightmail's own query is about flights)
+HISTORY_QUERY = ("from:booking.com OR from:airbnb.com OR from:hostelworld.com OR from:discovercars.com OR from:vipcars.com OR "
+                 "rentalcars OR holidayautos OR stressfreecarrental OR bsp-auto OR goldcar OR arguscarhire OR bookinggroup OR "
+                 "from:hertz.com OR qeeq OR economybookings OR \"car rental\" OR \"car hire\" OR huurauto OR "
+                 "flixbus OR meinfernbus OR from:bahn.de OR from:deutschebahn.com OR nsinternational OR sncf OR trainline OR "
+                 "eurostar OR renfe OR regiojet OR ouibus OR alsa OR getbybus OR busbud OR rnetickets OR from:rne.pt OR "
+                 "redbus OR 12go OR altibus OR blablacar OR directferries OR ferry OR veerboot")
+
+
+def history(args, cfg, sec):
+    """Past hotels, Airbnbs, rental cars, trains, buses and ferries from the mail of the last --days days into Contrail
+    (never the calendar): the hourly run only handles trips still ahead and forgets stays a month after they end.
+    Oldest first, so a later cancellation undoes the booking; safe to run again (Contrail keeps one stay per booking
+    code and one ground trip per departure minute and mode)."""
+    airports, airlines, places = load_reference(cfg)
+    con = ContrailHTTP(cfg.get("contrail_url", "http://127.0.0.1:3000"), airports, airlines)
+    names, home_tz = cfg.get("passenger_names", []), cfg.get("home_timezone", "Europe/Amsterdam")
+    messages = fetch_new(cfg, sec, {}, since_days=args.days, query=HISTORY_QUERY)
+    log(f"{len(messages)} message(s) since {args.days} days ago")
+    found, rides, cancelled = {}, {}, set()
+    for uid, msg in messages:
+        if msg is None:
+            continue
+        try:
+            s = stays.parse_email(msg)
+            if s:
+                if s.kind == "booking":
+                    found[s.code] = s
+                else:
+                    found.pop(s.code, None)
+                    cancelled.add(s.code)
+                continue
+            parsed = parse_email(msg, airports, airlines, places, home_tz)
+        except Exception as e:  # one odd email is not a reason to stop
+            log(f"uid {uid}: {e!r}")
+            continue
+        legs = [l for l in parsed.legs if l.mode != "flight" and l.complete and all(l.tz(airports))]
+        if parsed.kind == "cancel":
+            codes = set(parsed.codes) | {c for l in parsed.legs for c in l.codes}
+            for key in [k for k, l in rides.items() if set(l.codes) & codes]:
+                del rides[key]
+        elif parsed.kind in ("booking", "change") and legs and is_passenger(parsed.passengers, names):
+            for leg in legs:
+                rides[(leg.mode, leg.dep_local.replace(second=0, microsecond=0))] = leg
+    by = lambda items, key: ", ".join(f"{k} {n}" for k, n in sorted(  # noqa: E731
+        {k: sum(1 for i in items if key(i) == k) for k in {key(i) for i in items}}.items(), key=lambda kv: -kv[1]))
+    log(f"stays and rental cars: {len(found)} ({by(found.values(), lambda s: f'{s.provider} {s.what}')}); "
+        f"cancelled: {len(cancelled)}")
+    log(f"trains, buses and ferries: {len(rides)} ({by(rides.values(), lambda l: l.mode)})")
+    if args.dry_run:
+        for s in sorted(found.values(), key=lambda s: str(s.start)):
+            log(f"  would send {s.what} {s.provider} {s.place}, {s.country} {s.start}..{s.end}")
+        for leg in sorted(rides.values(), key=lambda l: l.dep_local):
+            log(f"  would send {leg.mode} {leg.dep_local:%Y-%m-%d %H:%M} {leg.dep} - {leg.arr}")
+        return
+    for s in found.values():
+        con.add_stay({k: (getattr(s, k).isoformat() if hasattr(getattr(s, k), "isoformat") else getattr(s, k) or "")
+                      for k in STAY_FIELDS})
+    for t in con._call("GET", "/api/stays"):
+        if t.get("code") in cancelled and t["code"] not in found:
+            con.delete(f"stays/{t['id']}")
+    for leg in rides.values():
+        con._call("POST", "/api/ground", {**con._ground(leg), "source": "email"})
+    log(f"sent {len(found)} stays and rental cars and {len(rides)} trains, buses and ferries to Contrail")
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("command", nargs="?", choices=["run", "calendars"], default="run")
+    p.add_argument("command", nargs="?", choices=["run", "calendars", "history"], default="run")
+    p.add_argument("--days", type=int, default=6000, metavar="N", help="history: how far back to read (default 6000)")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--rescan-days", type=int, metavar="N", help="read all matching mail of the last N days again")
     args = p.parse_args(argv)
@@ -716,6 +789,8 @@ def main(argv=None):
             store = EventKit.EKEventStore.alloc().init()
             for c in store.calendarsForEntityType_(EventKit.EKEntityTypeEvent):
                 print(f"account: {c.source().title()!r:30} calendar: {c.title()!r}")
+        elif args.command == "history":
+            history(args, cfg, sec)
         else:
             run(args, cfg, sec)
     except Exception as e:
