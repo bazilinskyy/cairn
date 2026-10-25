@@ -256,10 +256,25 @@ function openActivityAt(ll) {
       px = qx; py = qy;
     }
   }
-  if (!best) return;
-  L.popup({ maxWidth: 260 }).setLatLng(ll).setContent(`<b>${sportEmoji[best.kind]} ${escapeHTML(best.name)}</b><br>` +
-    `<small>${escapeHTML(best.sport)} · ${fmtDate(best.date)} · ${best.distance.toLocaleString()} km` +
-    `${best.elevation ? ` · ↑${best.elevation} m` : ''}</small>`).openOn(map);
+  if (best) activityPopup(best, ll);
+}
+
+// The activity's popup, and its route drawn over all the others (with a casing in the text colour) while it is open
+let activityHighlight = null;
+function activityPopup(a, ll) {
+  if (activityHighlight) map.removeLayer(activityHighlight);
+  const pts = [];
+  for (let i = 0; i < a.pts.length; i += 2) pts.push([a.pts[i], a.pts[i + 1]]);
+  activityHighlight = L.layerGroup([
+    L.polyline(pts, { color: getCSSVar('--text'), weight: 7, opacity: 0.9, interactive: false }),
+    L.polyline(pts, { color: getCSSVar('--' + a.kind), weight: 4, opacity: 1, interactive: false })
+  ]).addTo(map);
+  L.popup({ maxWidth: 260 }).setLatLng(ll).setContent(`<b>${sportEmoji[a.kind]} ${escapeHTML(a.name)}</b><br>` +
+    `<small>${escapeHTML(a.sport)} · ${fmtDate(a.date)} · ${a.distance.toLocaleString()} km` +
+    `${a.elevation ? ` · ↑${a.elevation} m` : ''}</small>`).on('remove', () => {
+    if (activityHighlight) map.removeLayer(activityHighlight);
+    activityHighlight = null;
+  }).openOn(map);
 }
 
 function drawActivities() {
@@ -319,6 +334,7 @@ async function loadStrava() {
   drawTiles();
   drawCountries();
   drawLegend();
+  if (document.getElementById('tab-sports')?.classList.contains('active')) renderSports();
 }
 
 // --- most visited cities ---

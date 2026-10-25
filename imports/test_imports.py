@@ -119,6 +119,13 @@ def test_google_takeout_zip_and_folder():
         assert sum(c["count"] for c in photos.cells(photos.from_takeout([folder]))) == 2
 
 
+def test_same_photo_from_two_sources_counts_once():
+    apple = [(51.44161, 5.46972, "2024-06-01", 1717225200), (38.7, -9.14, "2024-06-03", 1717400000), (None, None, "2024-06-04", None)]
+    google = [(51.44162, 5.46971, "2024-06-01", 1717225200),   # the same photo, its place rounded a little otherwise
+              (51.44162, 5.46971, "2024-06-01", 1717225201)]   # a second later: another photo
+    assert sum(c["count"] for c in photos.cells(photos.unique(apple + google))) == 3
+
+
 if __name__ == "__main__":
     tests = [f for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
     for t in tests:

@@ -91,7 +91,8 @@ test('Strava: an activity keeps its route as a 6-decimal polyline, and full list
     start_date_local: '2024-06-01T09:00:00Z', distance: 42195, moving_time: 5400, total_elevation_gain: 312.4,
     map: { summary_polyline: '_p~iF~ps|U_ulLnnqC_mqNvxq`@' } });
   assert.deepStrictEqual({ ...a, path: undefined, tiles: undefined }, { id: 7, name: 'Morning Ride', sport: 'Ride', date: '2024-06-01 09:00:00',
-    start: 1717225200, distance: 42.2, moving_time: 5400, elevation: 312, path: undefined, at: [38.5, -120.2], tiles: undefined });
+    start: 1717225200, distance: 42.2, moving_time: 5400, elevation: 312, elapsed_time: 0, heartrate: null, prs: 0, kudos: 0,
+    commute: false, trainer: false, path: undefined, at: [38.5, -120.2], tiles: undefined });
   assert.ok(a.tiles.length > 100, 'every tile along 600 km of route');
   assert.deepStrictEqual(g.decode(a.path), [[38.5, -120.2], [40.7, -120.95], [43.252, -126.453]]);
   assert.strictEqual(s.toActivity({ id: 8, type: 'Swim', start_date: '2024-06-02T07:00:00Z', map: {} }).path, '');

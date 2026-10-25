@@ -11,8 +11,9 @@ Only the rounded places, counts and days leave the library: no file names, no pi
   - Google Photos, from a Google Takeout export (takeout.google.com, only Google Photos): the zips as they come, or
     their unpacked folder; only the small .json file beside each photo is read, never the photo itself:
       python imports/photos.py --takeout ~/Downloads/takeout-*.zip
-Writes data/photos.json: [{"lat", "lon", "year", "count", "days": ["YYYY-MM-DD", ...]}]; --send HOST:PATH also copies
-it there with scp, for example to the Mac that runs Contrail: --send mini:repos/contrail/data/photos.json
+Sources can be combined in one run (each run replaces the file): a photo in two of them, the same moment and place, counts
+once. Writes data/photos.json: [{"lat", "lon", "year", "count", "days": ["YYYY-MM-DD", ...]}]; --send HOST:PATH also
+copies it there with scp, for example to the Mac that runs Contrail: --send mini:repos/contrail/data/photos.json
 """
 import argparse
 import json
@@ -26,10 +27,23 @@ from pathlib import Path
 CELL = 0.01  # degrees: about 1 km
 
 
+def unique(shots):
+    """The same photo from two sources (the laptop's Apple Photos and a Google Takeout of the same pictures) once: same
+    moment to the second, about the same place. shots: (lat, lon, day, unix time or None)."""
+    seen = set()
+    for lat, lon, day, stamp in shots:
+        if stamp is not None and lat is not None and lon is not None:
+            key = (stamp, round(lat, 3), round(lon, 3))
+            if key in seen:
+                continue
+            seen.add(key)
+        yield lat, lon, day, stamp
+
+
 def cells(shots):
-    """shots: (lat, lon, date) -> one entry per rounded place and year."""
+    """shots: (lat, lon, day[, unix time]) -> one entry per rounded place and year."""
     agg = defaultdict(lambda: [0, set()])
-    for lat, lon, day in shots:
+    for lat, lon, day, *_ in shots:
         if lat is None or lon is None or not day or (lat == 0 and lon == 0):
             continue
         key = (round(round(lat / CELL) * CELL, 4), round(round(lon / CELL) * CELL, 4), int(day[:4]))
@@ -51,7 +65,7 @@ def from_library(path):
         sys.exit("no Photos library found: name it with --library")
     for p in db.photos():
         lat, lon = p.location
-        yield lat, lon, p.date.strftime("%Y-%m-%d") if p.date else ""
+        yield lat, lon, p.date.strftime("%Y-%m-%d") if p.date else "", int(p.date.timestamp()) if p.date else None
 
 
 def from_folder(folder):
@@ -67,7 +81,7 @@ def from_folder(folder):
             datetime.strptime(day, "%Y-%m-%d")
         except ValueError:
             day = ""
-        yield f.get("GPSLatitude"), f.get("GPSLongitude"), day
+        yield f.get("GPSLatitude"), f.get("GPSLongitude"), day, None  # no time zone: cannot be matched to another source
 
 
 def from_takeout(paths):
@@ -98,21 +112,23 @@ def from_takeout(paths):
         if not geo.get("latitude") and not geo.get("longitude"):
             geo = d.get("geoDataExif") or {}
         day = datetime.fromtimestamp(int(taken), timezone.utc).strftime("%Y-%m-%d")
-        yield geo.get("latitude"), geo.get("longitude"), day
+        yield geo.get("latitude"), geo.get("longitude"), day, int(taken)
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    src = ap.add_mutually_exclusive_group()
-    src.add_argument("--library", help="an Apple Photos library (default: ~/Pictures/Photos Library.photoslibrary)")
-    src.add_argument("--folder", help="a folder of photos and videos (needs exiftool)")
-    src.add_argument("--takeout", nargs="+", metavar="ZIP_OR_FOLDER", help="Google Photos from Google Takeout")
+    ap.add_argument("--library", action="append", help="an Apple Photos library (default, with no other source: "
+                    "~/Pictures/Photos Library.photoslibrary); may be given more than once")
+    ap.add_argument("--folder", action="append", help="a folder of photos and videos (needs exiftool)")
+    ap.add_argument("--takeout", nargs="+", metavar="ZIP_OR_FOLDER", help="Google Photos from Google Takeout")
     data = Path(__file__).resolve().parent.parent / "data"  # Contrail's data folder in a checkout, else here
     ap.add_argument("--out", default=str(data / "photos.json" if data.is_dir() else Path("photos.json")))
     ap.add_argument("--send", metavar="HOST:PATH", help="also copy the result there with scp")
     args = ap.parse_args(argv)
-    shots = from_takeout(args.takeout) if args.takeout else from_folder(args.folder) if args.folder else from_library(args.library)
-    result = cells(shots)
+    sources = [from_library(lib) for lib in args.library or []] + [from_folder(f) for f in args.folder or []]
+    if args.takeout:
+        sources.append(from_takeout(args.takeout))
+    result = cells(unique(shot for source in (sources or [from_library(None)]) for shot in source))
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(result, separators=(",", ":")))

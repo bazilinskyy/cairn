@@ -474,6 +474,19 @@ app.get('/api/strava', (req, res) => {
   res.send(json);
 });
 app.get('/api/strava/status', (_req, res) => res.json(strava.status()));
+
+// Where you ride, run and so on: start towns and countries per kind of sport (as the Sports tab groups them)
+const SPORT_KINDS = { ride: /Ride|Velomobile|Handcycle|Wheelchair/, run: /Run/, walk: /Walk|Hike|Snowshoe/ };
+app.get('/api/strava/places', (_req, res) => {
+  if (towns === undefined) towns = cities.load(path.join(DATA_DIR, 'cities1000.txt'));
+  if (!towns) return res.json({});
+  const kindOf = s => Object.keys(SPORT_KINDS).find(k => SPORT_KINDS[k].test(s || '')) || 'sport';
+  const acts = strava.activities().filter(a => a.at && !a.trainer)
+    .map(a => ({ at: a.at, km: a.distance || 0, date: (a.date || '').slice(0, 10), kind: kindOf(a.sport) }));
+  const out = { all: cities.starts(towns, acts) };
+  ['ride', 'run', 'walk', 'sport'].forEach(k => { out[k] = cities.starts(towns, acts.filter(a => a.kind === k)); });
+  res.json(out);
+});
 app.post('/api/strava/sync', (_req, res) => { strava.sync(); res.json({ started: true }); });
 
 app.get('/auth/strava', (_req, res) => {

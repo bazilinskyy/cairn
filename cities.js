@@ -86,4 +86,30 @@ function rank(grid, points, limit = 100) {
   }).sort((a, b) => b.days - a.days || b.visits - a.visits || a.name.localeCompare(b.name)).slice(0, limit);
 }
 
-module.exports = { load, townAt, townNamed, rank };
+// Where activities start, per town and per country: [{ at, km, date }] -> the 25 towns with most activities, and
+// the countries, each with the number of activities, km, first and last day
+function starts(grid, activities) {
+  const cache = new Map(), towns = new Map(), countries = new Map();
+  const tally = (m, key, base, a) => {
+    const v = m.get(key) || { ...base, count: 0, km: 0, first: a.date, last: a.date };
+    v.count++;
+    v.km += a.km;
+    if (a.date < v.first) v.first = a.date;
+    if (a.date > v.last) v.last = a.date;
+    m.set(key, v);
+  };
+  for (const a of activities) {
+    if (!a.at) continue;
+    const key = a.at[0].toFixed(2) + ',' + a.at[1].toFixed(2);
+    if (!cache.has(key)) cache.set(key, townAt(grid, a.at[0], a.at[1]));
+    const t = cache.get(key);
+    if (!t) continue;
+    tally(towns, t, { name: t.name, country: t.cc, lat: t.lat, lon: t.lon }, a);
+    tally(countries, t.cc, { country: t.cc }, a);
+  }
+  const order = (a, b) => b.count - a.count || b.km - a.km;
+  const round = v => ({ ...v, km: Math.round(v.km) });
+  return { towns: [...towns.values()].sort(order).slice(0, 25).map(round), countries: [...countries.values()].sort(order).map(round) };
+}
+
+module.exports = { load, townAt, townNamed, rank, starts };
