@@ -92,9 +92,12 @@ function renderSports() {
   sportCharts.forEach(c => c.destroy());
   sportCharts = [];
   if (!allActivities.length) {
-    root.innerHTML = `<div class="chart-section"><h3>No activities yet</h3><p class="sp-note">${stravaStatus.connected
-      ? 'Contrail is fetching your activities from Strava; this page fills in when they arrive.'
-      : 'Connect Strava (the box at the top left of the map) to see your rides and runs here. The README says how to set it up.'}</p></div>`;
+    const st = stravaStatus || {};
+    root.innerHTML = `<div class="chart-section"><h3>No activities yet</h3><p class="sp-note">${st.garmin?.error
+      ? `The Garmin sync failed: ${escapeHTML(st.garmin.error)}. `
+      : st.strava?.connected ? 'Contrail is fetching your activities from Strava; this page fills in when they arrive. ' : ''}
+      Import your Garmin data export, or sign in to Garmin Connect for the hourly sync, to see your rides and runs here:
+      the README's "Sports activities" says how.</p></div>`;
     return;
   }
   fillPickers();
@@ -416,7 +419,7 @@ function renderYearTable(all) {
 
 // Start towns and countries, from Contrail (cities.js); all years
 async function renderPlaces(kinds) {
-  if (!sportPlaces) sportPlaces = await fetch('/api/strava/places').then(r => r.ok ? r.json() : {}).catch(() => ({}));
+  if (!sportPlaces) sportPlaces = await fetch('/api/activities/places').then(r => r.ok ? r.json() : {}).catch(() => ({}));
   const merge = key => {
     const m = new Map();
     kinds.forEach(k => (sportPlaces[k]?.[key] || []).forEach(t => {
@@ -461,7 +464,7 @@ function showActivityOnMap(id) {
   const a = allActivities.find(x => x.id === id);
   if (!a?.bbox) return toast('This activity has no route', 'error');
   document.querySelector('.tab[data-tab="map"]').click();
-  if (!map.hasLayer(activityLayer)) activityLayer.addTo(map);
+  if (!map.hasLayer(kindLayer[a.kind])) { kindLayer[a.kind].addTo(map); afterToggle(); drawLegend(); }
   setTimeout(() => {
     map.invalidateSize();
     map.fitBounds([[a.bbox[0], a.bbox[1]], [a.bbox[2], a.bbox[3]]], { padding: [40, 40], maxZoom: 14 });

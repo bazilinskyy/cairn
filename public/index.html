@@ -157,6 +157,7 @@
     .map-legend input { accent-color: var(--accent); margin: 0; }
     .map-legend .swatch { width: 18px; height: 0; border-top: 3px solid; display: inline-block; }
     .map-legend .count { color: var(--text2); margin-left: auto; padding-left: 8px; }
+    .map-locate { display: flex !important; align-items: center; justify-content: center; color: #333; }
     .map-legend .all { border-bottom: 1px solid var(--border); margin-bottom: 3px; padding-bottom: 2px; font-weight: 600; }
     .map-period label { gap: 5px; }
     .leaflet-tooltip.city-label {
@@ -700,6 +701,7 @@ function initMap() {
         if (k === 'all') box.querySelectorAll('input[data-layer]:not([data-layer="all"])').forEach(i => show(i.dataset.layer, e.target.checked));
         else show(k, e.target.checked);
         try { localStorage.setItem('hiddenLines', JSON.stringify(hidden)); } catch (_) {}
+        afterToggle();  // activities by type: redrawn when the types shown change
         drawLegend();
       });
       return box;
@@ -1153,7 +1155,7 @@ async function init() {
     fetch('/api/airports').then(r => r.json()),
     optional('/api/ground', []), optional('/api/stays', []), optional('/api/photos', []),
     optional('/api/timeline', { visits: [], paths: [] }), optional('/api/settings', { home_airports: [] }),
-    optional('/api/strava/status', {})
+    optional('/api/activities/status', {})
   ]);
   computeJourneys();
 

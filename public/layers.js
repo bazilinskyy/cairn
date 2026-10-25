@@ -8,6 +8,10 @@ const COUNTRIES_URL = 'https://cdn.jsdelivr.net/npm/world-atlas@2.0.2/countries-
 const stayLayer = L.layerGroup(), carLayer = L.layerGroup(), photoLayer = L.layerGroup();
 const timelineLayer = L.layerGroup(), countryLayer = L.layerGroup(), activityLayer = L.layerGroup(), tileLayer = L.layerGroup();
 const cityLayer = L.layerGroup();
+// Activities by type: a legend row each; the activity layer draws the types whose row is on
+const ACT_KINDS = { ride: '🚴 Cycling', run: '🏃 Running', walk: '🥾 Walks & hikes', sport: '🏅 Other sports' };
+const kindLayer = Object.fromEntries(Object.keys(ACT_KINDS).map(k => [k, L.layerGroup()]));
+const shownKinds = () => Object.keys(ACT_KINDS).filter(k => map.hasLayer(kindLayer[k]));
 const canvasRenderer = L.canvas({ padding: 0.5 });  // photos and Timeline can be many thousands of marks
 
 let allStays = [], allPhotos = [], allTimeline = { visits: [], paths: [] }, settings = { home_airports: [] };
@@ -31,7 +35,8 @@ function extraLayers() {
   return {
     stay: ['🏨 Stays', stayLayer, '--stay'], car: ['🚗 Rental cars', carLayer, '--car'],
     photo: ['📷 Photos', photoLayer, '--photo'], timeline: ['🧭 Timeline', timelineLayer, '--timeline'],
-    activity: ['🚴 Activities', activityLayer, '--ride'], tile: ['🟩 Explored tiles', tileLayer, '--tile'],
+    ...Object.fromEntries(Object.entries(ACT_KINDS).map(([k, label]) => ['act-' + k, [label, kindLayer[k], '--' + k]])),
+    tile: ['🟩 Explored tiles', tileLayer, '--tile'],
     country: ['🌍 Countries', countryLayer, '--country'], city: ['🏙️ Cities', cityLayer, '--city']
   };
 }
@@ -42,7 +47,7 @@ function extraCounts() {
     stay: shown.filter(s => s.what !== 'car').length, car: shown.filter(s => s.what === 'car').length,
     photo: photoCells().reduce((n, c) => n + c.count, 0),
     timeline: allTimeline.visits.filter(v => overlapsWin(v.start, v.end)).length, country: visitedCount,
-    activity: allActivities.filter(a => inWin(a.date)).length,
+    ...Object.fromEntries(Object.keys(ACT_KINDS).map(k => ['act-' + k, allActivities.filter(a => a.kind === k && inWin(a.date)).length])),
     tile: explored?.tiles.size ? `${explored.tiles.size.toLocaleString()} · ▢${explored.square.size}` : 0,
     city: topCities.length
   };
@@ -236,6 +241,7 @@ function initExtraPanes() {
   map.createPane('activities').style.zIndex = 340;
   ['explored', 'activities'].forEach(p => { map.getPane(p).style.pointerEvents = 'none'; });
   map.on('popupopen', () => { lastPopup = Date.now(); });
+  addLocateControl();
   map.on('click', e => setTimeout(() => { if (Date.now() - lastPopup > 150) openActivityAt(e.latlng); }, 0));
 }
 
@@ -277,17 +283,30 @@ function activityPopup(a, ll) {
   }).openOn(map);
 }
 
+let kindsDrawn = '';
 function drawActivities() {
-  actShown = allActivities.filter(a => a.pts && inWin(a.date));
-  actColors = Object.fromEntries(['ride', 'run', 'walk', 'sport'].map(k => [k, getCSSVar('--' + k)]));
+  const kinds = shownKinds();
+  kindsDrawn = kinds.join();
+  actShown = allActivities.filter(a => a.pts && inWin(a.date) && kinds.includes(a.kind));
+  actColors = Object.fromEntries(Object.keys(ACT_KINDS).map(k => [k, getCSSVar('--' + k)]));
+  if (kinds.length) activityLayer.addTo(map);
+  else map.removeLayer(activityLayer);
   activityGrid.redraw();
+}
+
+// After the legend turned layers on or off: the activities and their tiles again when the types shown changed
+function afterToggle() {
+  if (shownKinds().join() === kindsDrawn) return;
+  drawActivities();
+  drawTiles();
 }
 
 // The explored tiles of the period, from each activity's own; the cluster (tiles whose four neighbours are explored
 // too, the biggest connected group of them) and the max square (the biggest square of explored tiles)
 function computeExplored() {
   const tiles = new Set();
-  allActivities.forEach(a => { if (a.tiles && inWin(a.date)) a.tiles.forEach(k => tiles.add(k)); });
+  const kinds = shownKinds();  // the tiles of the types shown: cycling alone, running alone, or together
+  allActivities.forEach(a => { if (a.tiles && inWin(a.date) && kinds.includes(a.kind)) a.tiles.forEach(k => tiles.add(k)); });
   const size = new Map();
   let square = { x: 0, y: 0, size: 0 };
   [...tiles].sort((p, q) => (p % TILES) - (q % TILES) || p - q).forEach(k => {  // row by row, west to east
@@ -325,7 +344,7 @@ function drawTiles() {
 
 // Strava's activities, after the rest of the map is up
 async function loadStrava() {
-  const list = await fetch('/api/strava').then(r => r.ok ? r.json() : []).catch(() => []);
+  const list = await fetch('/api/activities').then(r => r.ok ? r.json() : []).catch(() => []);
   if (!list.length) return;
   allActivities = list;
   prepareActivities(allActivities);
@@ -335,6 +354,46 @@ async function loadStrava() {
   drawCountries();
   drawLegend();
   if (document.getElementById('tab-sports')?.classList.contains('active')) renderSports();
+}
+
+// --- where I am now ---
+
+const LOCATE_ICON = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">' +
+  '<circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>';
+let meLayer = null;
+
+// A button under the zoom buttons: the map centres on where the browser says you are (it asks you the first time)
+function addLocateControl() {
+  const Locate = L.Control.extend({
+    options: { position: 'topleft' },
+    onAdd() {
+      const bar = L.DomUtil.create('div', 'leaflet-bar');
+      const a = L.DomUtil.create('a', 'map-locate', bar);
+      a.href = '#';
+      a.title = 'Centre on my location';
+      a.setAttribute('role', 'button');
+      a.setAttribute('aria-label', 'Centre on my location');
+      a.innerHTML = LOCATE_ICON;
+      L.DomEvent.on(a, 'click', e => { L.DomEvent.preventDefault(e); L.DomEvent.stopPropagation(e); locateMe(); });
+      return bar;
+    }
+  });
+  new Locate().addTo(map);
+}
+
+function locateMe() {
+  if (!navigator.geolocation) return toast('This browser cannot tell where you are', 'error');
+  navigator.geolocation.getCurrentPosition(p => {
+    const ll = [p.coords.latitude, p.coords.longitude], acc = Math.round(p.coords.accuracy), color = getCSSVar('--accent');
+    if (meLayer) map.removeLayer(meLayer);
+    meLayer = L.layerGroup([
+      L.circle(ll, { radius: acc, color, weight: 1, fillOpacity: 0.08, interactive: false }),
+      L.circleMarker(ll, { radius: 7, color: getCSSVar('--surface'), weight: 2, fillColor: color, fillOpacity: 1 })
+        .bindPopup(`<b>You are here</b><br><small>to within ${acc.toLocaleString()} m</small>`)
+    ]).addTo(map);
+    map.setView(ll, Math.max(map.getZoom(), acc > 2000 ? 11 : 14));
+  }, err => toast(err.code === 1 ? 'Location not allowed: allow it for this page in the browser' : 'Could not find where you are', 'error'),
+  { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 });
 }
 
 // --- most visited cities ---
@@ -565,13 +624,18 @@ function addPeriodControl() {
   });
 }
 
-// Strava's state in the period box: connect, or how many activities and a way to fetch new ones now
+// Where the sports activities come from, in the period box: Garmin (its last sync, or why it failed), and Strava
+// when it is set up (connect, or fetch new ones now)
 function stravaRow() {
-  const s = stravaStatus;
-  if (!s.configured) return '';
-  if (!s.connected) return `<div id="p-strava"><a href="/auth/strava">Connect Strava</a></div>`;
-  return `<div id="p-strava" title="${escapeHTML(s.error || 'last fetched ' + (s.last_sync || 'never'))}">Strava: ` +
-    `${s.count.toLocaleString()} activities${s.error ? ' ⚠️' : ''} · <a href="#" data-sync="1">fetch now</a></div>`;
+  const g = stravaStatus.garmin || {}, s = stravaStatus.strava || {};
+  const ago = t => { const h = (Date.now() - Date.parse(t)) / 36e5; return h < 1 ? `${Math.max(1, Math.round(h * 60))} min ago` : h < 48 ? `${Math.round(h)} h ago` : fmtDate(t); };
+  const rows = [];
+  if (g.count || g.error) rows.push(`<span title="${escapeHTML(g.error || '')}">Garmin: ${g.count.toLocaleString()} activities` +
+    `${g.last_sync ? ` · synced ${ago(g.last_sync)}` : ''}${g.error ? ` · ⚠️ sync failed ${ago(g.error_at)}` : ''}</span>`);
+  if (s.configured && !s.connected) rows.push(`<a href="/auth/strava">Connect Strava</a>`);
+  else if (s.connected) rows.push(`<span title="${escapeHTML(s.error || 'last fetched ' + (s.last_sync || 'never'))}">Strava: ` +
+    `${s.count.toLocaleString()} activities${s.error ? ' ⚠️' : ''} · <a href="#" data-sync="1">fetch now</a></span>`);
+  return rows.length ? `<div id="p-strava">${rows.join('<br>')}</div>` : '';
 }
 
 // --- where was I on a day ---
