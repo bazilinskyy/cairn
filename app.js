@@ -8,6 +8,7 @@ const https = require('https');
 const { randomBytes, createHmac } = require('crypto');
 const ground = require('./ground');
 const stravaSync = require('./strava');
+const activitySources = require('./activities');
 const cities = require('./cities');
 
 // --- Config & Secret ---
@@ -41,6 +42,7 @@ const GROUND_FILE   = path.join(__dirname, config.ground_file);
 const STAYS_FILE    = path.join(__dirname, config.stays_file);
 const PHOTOS_FILE   = path.join(__dirname, config.photos_file);
 const TIMELINE_FILE = path.join(__dirname, config.timeline_file);
+const GARMIN_FILE   = path.join(__dirname, config.garmin_file);
 
 // Strava: the keys are read from secret each time, so adding them needs no restart
 const strava = stravaSync.create({
@@ -464,24 +466,30 @@ app.get('/api/timeline', (_req, res) => res.json(readImport(TIMELINE_FILE, { vis
 
 // --- Strava ---
 
+// --- Sports activities: Garmin and Strava (activities.js) ---
+
+const NO_GARMIN = { activities: [] };
+const activities = activitySources.create({ garmin: () => readImport(GARMIN_FILE, NO_GARMIN), strava });
+
 // Thousands of activities: gzipped, and nothing at all when the browser already has this version
-app.get('/api/strava', (req, res) => {
-  const { json, gz, etag } = strava.payload();
+app.get('/api/activities', (req, res) => {
+  const { json, gz, etag } = activities.payload();
   res.set({ ETag: etag, 'Cache-Control': 'no-cache', Vary: 'Accept-Encoding' });
   if (req.headers['if-none-match'] === etag) return res.status(304).end();
   res.type('json');
   if (/\bgzip\b/.test(req.headers['accept-encoding'] || '')) return res.set('Content-Encoding', 'gzip').send(gz);
   res.send(json);
 });
+app.get('/api/activities/status', (_req, res) => res.json(activities.status()));
 app.get('/api/strava/status', (_req, res) => res.json(strava.status()));
 
 // Where you ride, run and so on: start towns and countries per kind of sport (as the Sports tab groups them)
 const SPORT_KINDS = { ride: /Ride|Velomobile|Handcycle|Wheelchair/, run: /Run/, walk: /Walk|Hike|Snowshoe/ };
-app.get('/api/strava/places', (_req, res) => {
+app.get('/api/activities/places', (_req, res) => {
   if (towns === undefined) towns = cities.load(path.join(DATA_DIR, 'cities1000.txt'));
   if (!towns) return res.json({});
   const kindOf = s => Object.keys(SPORT_KINDS).find(k => SPORT_KINDS[k].test(s || '')) || 'sport';
-  const acts = strava.activities().filter(a => a.at && !a.trainer)
+  const acts = activities.list().filter(a => a.at && !a.trainer)
     .map(a => ({ at: a.at, km: a.distance || 0, date: (a.date || '').slice(0, 10), kind: kindOf(a.sport) }));
   const out = { all: cities.starts(towns, acts) };
   ['ride', 'run', 'walk', 'sport'].forEach(k => { out[k] = cities.starts(towns, acts.filter(a => a.kind === k)); });
@@ -533,7 +541,7 @@ function placesAndDays(from, to) {
   });
   readImport(PHOTOS_FILE, []).forEach(c => (c.days || []).forEach(d => add([c.lat, c.lon], d)));
   (readImport(TIMELINE_FILE, {}).visits || []).forEach(v => eachDay(v.start.slice(0, 10), v.end.slice(0, 10), d => add([v.lat, v.lon], d)));
-  strava.activities().forEach(a => add(a.at, (a.date || '').slice(0, 10)));
+  activities.list().forEach(a => add(a.at, (a.date || '').slice(0, 10)));
   return pts;
 }
 

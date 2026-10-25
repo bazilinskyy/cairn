@@ -25,6 +25,7 @@ before(async () => {
   fs.copyFileSync(path.join(ROOT, 'ground.js'), path.join(dir, 'ground.js'));
   fs.copyFileSync(path.join(ROOT, 'strava.js'), path.join(dir, 'strava.js'));
   fs.copyFileSync(path.join(ROOT, 'cities.js'), path.join(dir, 'cities.js'));
+  fs.copyFileSync(path.join(ROOT, 'activities.js'), path.join(dir, 'activities.js'));
   fs.copyFileSync(path.join(ROOT, 'default.config'), path.join(dir, 'default.config'));
   fs.cpSync(path.join(ROOT, 'public'), path.join(dir, 'public'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'data'));
@@ -133,11 +134,20 @@ test('photos and Timeline come from the import files, read again when they chang
   assert.deepStrictEqual(await (await call('GET', '/api/settings')).json(), { home_airports: ['AMS', 'EIN', 'RTM'] });
 });
 
-test('Strava: not configured, not connected, no activities', async () => {
-  assert.deepStrictEqual(await (await call('GET', '/api/strava/status')).json(),
-    { configured: false, connected: false, athlete: '', count: 0, last_sync: '', error: '' });
-  assert.deepStrictEqual(await (await call('GET', '/api/strava')).json(), []);
+test('activities: Strava not set up, then the Garmin file read when it appears, gzipped and cached', async () => {
+  const strava = { configured: false, connected: false, athlete: '', count: 0, last_sync: '', error: '' };
+  assert.deepStrictEqual(await (await call('GET', '/api/strava/status')).json(), strava);
+  assert.deepStrictEqual(await (await call('GET', '/api/activities')).json(), []);
   assert.strictEqual((await fetch(BASE + '/auth/strava', { redirect: 'manual' })).status, 503);
+  const ride = { id: 1, name: 'Ride', sport: 'Ride', date: '2024-06-01 09:00:00', start: 1717225200, distance: 15, moving_time: 2900,
+    elevation: 42, path: '', at: null, tiles: [] };
+  fs.writeFileSync(path.join(dir, 'data', 'garmin.json'), JSON.stringify({ activities: [ride], last_sync: '2024-06-01T10:00:00Z' }));
+  const res = await fetch(BASE + '/api/activities', { headers: { 'Accept-Encoding': 'gzip' } });
+  assert.deepStrictEqual(await res.json(), [ride]);
+  const again = await fetch(BASE + '/api/activities', { headers: { 'If-None-Match': res.headers.get('etag') } });
+  assert.strictEqual(again.status, 304);
+  assert.deepStrictEqual((await (await call('GET', '/api/activities/status')).json()).garmin,
+    { count: 1, last_sync: '2024-06-01T10:00:00Z', error: '', error_at: '' });
 });
 
 test('cities: none without the town list', async () => {

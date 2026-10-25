@@ -1,4 +1,5 @@
 """Tests for the import scripts, on small made-up exports. Run: python imports/test_imports.py (no pytest needed)."""
+import io
 import json
 import sys
 import tempfile
@@ -124,6 +125,51 @@ def test_same_photo_from_two_sources_counts_once():
     google = [(51.44162, 5.46971, "2024-06-01", 1717225200),   # the same photo, its place rounded a little otherwise
               (51.44162, 5.46971, "2024-06-01", 1717225201)]   # a second later: another photo
     assert sum(c["count"] for c in photos.cells(photos.unique(apple + google))) == 3
+
+
+def test_garmin_sports_and_tiles():
+    import garmin
+    assert garmin.sport_of("road_biking") == ("Ride", False) and garmin.sport_of("indoor_cycling") == ("VirtualRide", True)
+    assert garmin.sport_of("trail_running") == ("TrailRun", False) and garmin.sport_of("running", "treadmill") == ("Run", True)
+    virtual = garmin.to_activity(1, "Zwift", "virtual_ride", garmin.datetime(2024, 6, 1, 7), None, 30000, 3000, 3000, 200, 140,
+                                 [(-11.6, 166.9), (-11.7, 167.0)])  # Watopia's coordinates, in the Pacific
+    assert (virtual["trainer"], virtual["path"], virtual["at"], virtual["tiles"], virtual["distance"]) == (True, "", None, [], 30.0)
+    assert garmin.sport_of("hiking") == ("Hike", False) and garmin.sport_of("strength_training") == ("StrengthTraining", False)
+    # the same tiles as Contrail's strava.js: Eindhoven station is 8441/5452, three tiles east to 5.52
+    assert garmin.tiles_of([(51.4433, 5.4797), (51.4433, 5.52)]) == [x * 16384 + 5452 for x in (8441, 8442, 8443)]
+
+
+def test_garmin_export():
+    try:
+        import fitdecode  # noqa: F401
+    except ImportError:
+        print("  (skipped test_garmin_export: run with  uv run --with fitdecode python imports/test_imports.py)")
+        return
+    import zipfile
+    import garmin
+    fit = (HERE / "fixtures" / "garmin_ride.fit").read_bytes()
+    summaries = [{"summarizedActivitiesExport": [  # Garmin's own units: cm and ms
+        {"activityId": 12345678901, "name": "Morning Ride", "activityType": "road_biking", "startTimeGmt": 1717225200000,
+         "startTimeLocal": 1717232400000, "distance": 1500000.0, "duration": 3000000.0, "movingDuration": 2900000.0, "elevationGain": 4200.0},
+        {"activityId": 22222222222, "name": "Treadmill", "activityType": "treadmill_running", "startTimeGmt": 1717311600000,
+         "startTimeLocal": 1717318800000, "distance": 1000000.0, "duration": 3000000.0, "movingDuration": 2900000.0, "avgHr": 150.0}]}]
+    with tempfile.TemporaryDirectory() as d:
+        inner = io.BytesIO()
+        with zipfile.ZipFile(inner, "w") as z:
+            z.writestr("user@example.com_12345678901.fit", fit)
+        export = Path(d) / "export.zip"
+        with zipfile.ZipFile(export, "w") as z:
+            z.writestr("DI_CONNECT/DI-Connect-Fitness/user@example.com_0_summarizedActivities.json", json.dumps(summaries))
+            z.writestr("DI_CONNECT/DI-Connect-Uploaded-Files/UploadedFiles_0-_Part1.zip", inner.getvalue())
+        acts = {a["id"]: a for a in garmin.from_export([export], log=lambda m: None)}
+    ride, run = acts[12345678901], acts[22222222222]
+    assert {k: ride[k] for k in ("name", "sport", "date", "distance", "moving_time", "elapsed_time", "elevation", "heartrate", "trainer", "at")} == {
+        "name": "Morning Ride", "sport": "Ride", "date": "2024-06-01 09:00:00", "distance": 15.0, "moving_time": 2900, "elapsed_time": 3000,
+        "elevation": 42, "heartrate": 141, "trainer": False, "at": [51.44, 5.47]}
+    assert ride["path"] and len(ride["tiles"]) > 5
+    # no file: the summary in its own units, measured against the ride's file
+    assert {k: run[k] for k in ("sport", "date", "distance", "moving_time", "heartrate", "trainer", "path", "at")} == {
+        "sport": "Run", "date": "2024-06-02 09:00:00", "distance": 10.0, "moving_time": 2900, "heartrate": 150, "trainer": True, "path": "", "at": None}
 
 
 if __name__ == "__main__":

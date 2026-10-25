@@ -127,3 +127,10 @@ test('cities: a place goes to the town that pulls hardest, an airport to its own
     ['Eindhoven', 3, 2, '2024-06-01', '2024-06-10'], ['Kyiv', 1, 1, '2024-07-01', '2024-07-01'], ['Veldhoven', 1, 1, '2024-06-02', '2024-06-02']]);
   assert.strictEqual(c.load(file + '.missing'), null);
 });
+
+test('activities: an activity in Garmin and in Strava (started within two minutes, same kind) is kept once, from Garmin', () => {
+  const { merge } = require('../activities');
+  const garmin = [{ id: 1, sport: 'Ride', start: 1000000 }, { id: 2, sport: 'Run', start: 2000000 }];
+  const strava = [{ id: 10, sport: 'Ride', start: 1000090 }, { id: 11, sport: 'Run', start: 1000000 }, { id: 12, sport: 'Ride', start: 3000000 }];
+  assert.deepStrictEqual(merge(garmin, strava).map(a => a.id), [12, 2, 1, 11]);
+});
