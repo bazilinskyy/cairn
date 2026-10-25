@@ -36,6 +36,12 @@
       --photo:    #4dd0e1;
       --timeline: #b0bec5;
       --country:  #7c4dff;
+      --ride:     #ff7043;
+      --run:      #ef5350;
+      --walk:     #bcaaa4;
+      --sport:    #90caf9;
+      --tile:     #66bb6a;
+      --city:     #eceff1;
     }
 
     [data-theme="light"] {
@@ -57,6 +63,12 @@
       --photo:     #00838f;
       --timeline:  #455a64;
       --country:   #5c35cc;
+      --ride:      #e64a19;
+      --run:       #c62828;
+      --walk:      #6d4c41;
+      --sport:     #1565c0;
+      --tile:      #2e7d32;
+      --city:      #37474f;
     }
 
     html, body { height: 100%; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; }
@@ -144,7 +156,15 @@
     .map-legend input { accent-color: var(--accent); margin: 0; }
     .map-legend .swatch { width: 18px; height: 0; border-top: 3px solid; display: inline-block; }
     .map-legend .count { color: var(--text2); margin-left: auto; padding-left: 8px; }
+    .map-legend .all { border-bottom: 1px solid var(--border); margin-bottom: 3px; padding-bottom: 2px; font-weight: 600; }
     .map-period label { gap: 5px; }
+    .leaflet-tooltip.city-label {
+      background: var(--surface); color: var(--text); border: 1px solid var(--border); box-shadow: none;
+      font-size: 11px; padding: 1px 5px; opacity: 0.9;
+    }
+    .leaflet-tooltip.city-label::before { display: none; }
+    .map-period #p-strava { border-top: 1px solid var(--border); margin-top: 3px; padding-top: 2px; }
+    .map-period a { color: var(--accent); }
     .map-period select, .map-period input {
       background: var(--surface2); color: var(--text); border: 1px solid var(--border); border-radius: 4px;
       font: inherit; font-size: 12px; padding: 1px 3px; max-width: 190px;
@@ -172,7 +192,7 @@
     .chart-section h3 { font-size: 13px; font-weight: 600; color: var(--text2); text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 18px; }
     .chart-wrap { height: 240px; position: relative; }
 
-    .top-lists { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .top-lists { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
     .top-list { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 20px; }
     .top-list h3 { font-size: 13px; font-weight: 600; color: var(--text2); text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 14px; }
     .top-list-row { display: flex; align-items: center; justify-content: space-between; padding: 7px 0; border-bottom: 1px solid var(--border); }
@@ -331,6 +351,10 @@
         <div class="top-list">
           <h3>Top Routes</h3>
           <div id="top-routes"></div>
+        </div>
+        <div class="top-list">
+          <h3>Most Visited Cities</h3>
+          <div id="top-cities"></div>
         </div>
       </div>
     </div>
@@ -508,6 +532,11 @@ fetch('/api/tripit/oauth-configured').then(r => r.json()).then(d => {
 });
 
 const _tp = new URLSearchParams(location.search);
+if (_tp.get('strava')) {
+  history.replaceState({}, '', '/');
+  setTimeout(() => toast(_tp.get('strava') === 'ok' ? 'Strava connected: fetching your activities; reload in a minute'
+    : 'Strava was not connected', _tp.get('strava') === 'ok' ? 'success' : 'error'), 400);
+}
 if (_tp.get('tripit') === 'ok') {
   history.replaceState({}, '', '/');
   const n = parseInt(_tp.get('imported') || '0');
@@ -576,6 +605,7 @@ function initMap() {
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
     maxZoom: 19
   }).addTo(map);
+  initExtraPanes();
 
   // Cluster toggle control
   const ClusterToggle = L.Control.extend({
@@ -607,12 +637,18 @@ function initMap() {
       const box = L.DomUtil.create('div', 'map-legend');
       box.id = 'map-legend';
       L.DomEvent.disableClickPropagation(box);
+      const show = (k, on) => {
+        const layer = layers[k][1];
+        on ? layer.addTo(map) : map.removeLayer(layer);
+        if (k === 'flight' && airportLayer) on ? airportLayer.addTo(map) : map.removeLayer(airportLayer);
+        hidden = on ? hidden.filter(h => h !== k) : [...new Set([...hidden, k])];
+      };
       box.addEventListener('change', e => {
-        const k = e.target.dataset.layer, layer = layers[k][1];
-        e.target.checked ? layer.addTo(map) : map.removeLayer(layer);
-        if (k === 'flight' && airportLayer) e.target.checked ? airportLayer.addTo(map) : map.removeLayer(airportLayer);
-        hidden = e.target.checked ? hidden.filter(h => h !== k) : [...new Set([...hidden, k])];
+        const k = e.target.dataset.layer;
+        if (k === 'all') box.querySelectorAll('input[data-layer]:not([data-layer="all"])').forEach(i => show(i.dataset.layer, e.target.checked));
+        else show(k, e.target.checked);
         try { localStorage.setItem('hiddenLines', JSON.stringify(hidden)); } catch (_) {}
+        drawLegend();
       });
       return box;
     }
@@ -621,9 +657,13 @@ function initMap() {
   drawLegend = () => {
     const n = { flight: allFlights.filter(f => inWin(f.date)).length, ...extraCounts() };
     allTrips.forEach(t => { if (inWin(t.date)) n[t.mode] = (n[t.mode] || 0) + 1; });
-    document.getElementById('map-legend').innerHTML = Object.entries(layers).filter(([k]) => k === 'flight' || n[k])
-      .map(([k, [label, layer, color]]) => `<label><input type="checkbox" data-layer="${k}" ${map.hasLayer(layer) ? 'checked' : ''}>` +
+    const rows = Object.entries(layers).filter(([k]) => k === 'flight' || n[k]);
+    const on = rows.filter(([, [, layer]]) => map.hasLayer(layer)).length;
+    const box = document.getElementById('map-legend');
+    box.innerHTML = `<label class="all"><input type="checkbox" data-layer="all" ${on === rows.length ? 'checked' : ''}>All layers</label>` +
+      rows.map(([k, [label, layer, color]]) => `<label><input type="checkbox" data-layer="${k}" ${map.hasLayer(layer) ? 'checked' : ''}>` +
         `<span class="swatch" style="border-color:${getCSSVar(color)}"></span>${label}<span class="count">${n[k] || 0}</span></label>`).join('');
+    box.querySelector('[data-layer="all"]').indeterminate = on > 0 && on < rows.length;
   };
 
   addPeriodControl();
@@ -872,6 +912,17 @@ function renderStats() {
     </div>`).join('');
 }
 
+// Days in each town, all time: flights, trains and buses, stays, photos, Timeline and Strava (cities.js)
+async function renderTopCities() {
+  const list = await fetch('/api/cities').then(r => r.ok ? r.json() : []).catch(() => []);
+  document.getElementById('top-cities').innerHTML = list.slice(0, 10).map((c, i) => `
+    <div class="top-list-row">
+      <span class="rank">${i + 1}</span>
+      <span class="name">${flagOf(c.country)}${escapeHTML(c.name)}</span>
+      <span class="count" title="${c.visits} visits">${c.days} d</span>
+    </div>`).join('') || '<small>Nothing yet</small>';
+}
+
 // --- Flights table ---
 
 let filteredFlights = [];
@@ -1045,16 +1096,19 @@ window.showAirportFlights = function(iata) {
 
 async function init() {
   const optional = (url, empty) => fetch(url).then(r => r.ok ? r.json() : empty).catch(() => empty);
-  [allFlights, allAirports, allTrips, allStays, allPhotos, allTimeline, settings] = await Promise.all([
+  [allFlights, allAirports, allTrips, allStays, allPhotos, allTimeline, settings, stravaStatus] = await Promise.all([
     fetch('/api/flights').then(r => r.json()),
     fetch('/api/airports').then(r => r.json()),
     optional('/api/ground', []), optional('/api/stays', []), optional('/api/photos', []),
-    optional('/api/timeline', { visits: [], paths: [] }), optional('/api/settings', { home_airports: [] })
+    optional('/api/timeline', { visits: [], paths: [] }), optional('/api/settings', { home_airports: [] }),
+    optional('/api/strava/status', {})
   ]);
   computeJourneys();
 
   initMap();
+  loadStrava();  // thousands of activities: after the rest of the map is up
   renderStats();
+  renderTopCities();
   renderTable();
 
   // Default table sort header indicator

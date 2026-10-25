@@ -30,6 +30,8 @@ Contrail:
 - **World map** of all your routes with great-circle arcs and airport markers (clustered when zoomed out)
 - **Trains, buses and ferries** on the same map, each mode in its own colour, along the real track where one is found (see [Ground trips](#ground-trips))
 - **Hotels, Airbnbs and rental cars** from your booking emails, **photos** from your photo library and **Google Maps Timeline**, and the **countries** you have been to (see [The map](#the-map))
+- **Strava activities** and the **map tiles** they explored, with the max square and cluster, as statshunters counts them; quick with thousands of activities
+- Your **most visited cities**, on the map and in the stats
 - **Trips**, a **period** of years, and **where you were** on any day
 - **Stats dashboard**: total distance, flight hours, airports, countries, airlines, top routes and flights per year
 - **Flight list** with search and sortable columns
@@ -54,8 +56,10 @@ flightmail:
 |---|---|
 | `app.js` | Contrail server (Express): REST API, AeroDataBox lookup, imports |
 | `ground.js` | places and tracks of trains, buses and ferries (Photon, Transitous, OSRM) |
+| `strava.js` | Strava sign-in, the activity list and each activity's explored tiles |
+| `cities.js` | most visited cities: places and days put in their towns (GeoNames) |
 | `public/index.html` | Contrail web page (map, stats, list) |
-| `public/layers.js` | the map's stays, rental cars, photos, Timeline, countries, trips, period and "where on" |
+| `public/layers.js` | the map's stays, rental cars, photos, Timeline, Strava activities and tiles, countries, trips, period and "where on" |
 | `imports/photos.py`, `imports/timeline.py` | photo places and Google Timeline into Contrail (see [The map](#the-map)); `imports/test_imports.py` tests them |
 | `default.config`, `default.secret` | committed templates for `config` and `secret` (see [Setup](#setup)) |
 | `test/api.test.js`, `test/ground.test.js` | tests of the Contrail API and of `ground.js` |
@@ -103,6 +107,8 @@ cp default.secret secret
 | `flights_file` | `data/flights.json` | the flight list |
 | `airports_file` | `data/airports.dat` | OpenFlights airport database, downloaded on first run |
 | `csv_backup` | `""` | openflights.org CSV export to import on first run (see [Importing](#importing-from-openflightsorg)) |
+| `ground_file`, `stays_file`, `photos_file`, `timeline_file`, `strava_file`, `strava_token_file` | `data/…` | where the map's other data is kept (see [Data](#data)) |
+| `ground_lookups` | `true` | look up places and tracks of trains, buses, ferries and stays (see [Ground trips](#ground-trips)) |
 | `flightmail` | | flightmail settings (see [flightmail settings](#settings)) |
 
 `secret`:
@@ -111,6 +117,7 @@ cp default.secret secret
 |---|---|
 | `rapidapi_key` | RapidAPI key for AeroDataBox flight lookup (optional, see below) |
 | `tripit_client_key`, `tripit_client_secret` | TripIt OAuth app (optional) |
+| `strava_client_id`, `strava_client_secret` | Strava API app, for your activities on the map (optional, see [The map](#the-map)) |
 | `flightmail` | flightmail's Gmail app password and Discord webhook (see [flightmail settings](#settings)) |
 
 ### 3. AeroDataBox key (optional, recommended)
@@ -309,11 +316,15 @@ The legend at the top right shows or hides each layer, with how many it holds in
 - **Stays** (pink, bigger for more nights) and **rental cars** (yellow, at the pick-up place). flightmail sends every Booking.com, Airbnb, DiscoverCars and VIPCars booking it reads to Contrail, which finds the place with Photon and keeps it.
 - **Photos**: where your photos were taken, about 1 km per dot, bigger for more photos. From `imports/photos.py` (below).
 - **Timeline**: the places and daily paths of Google Maps Timeline. From `imports/timeline.py` (below).
-- **Countries** you have been to, shaded, with the day of your first visit in each. A country counts when you landed there (not only to change planes), took a train, bus or ferry there, stayed, rented a car, took a photo or Timeline saw you there. The country shapes come from [world-atlas](https://github.com/topojson/world-atlas) (Natural Earth).
+- **Activities**: your Strava activities, rides orange, runs red, walks and hikes brown, other sports blue. Activities without a route (indoor, swims without GPS) are counted but not drawn.
+- **Explored tiles**: the map squares at zoom 14 (about 1.5 km in the Netherlands) your activities passed through, as [statshunters](https://www.statshunters.com) and VeloViewer count them. Darker: your **max cluster**, the biggest group of tiles whose four neighbours are explored too. Dashed: your **max square**, the biggest square of explored tiles; click it for the numbers. The legend shows the tile count and the square's size, for the period shown.
+- **Countries** you have been to, shaded, with the day of your first visit in each. A country counts when you landed there (not only to change planes), took a train, bus or ferry there, stayed, rented a car, took a photo, started a Strava activity or Timeline saw you there. The country shapes come from [world-atlas](https://github.com/topojson/world-atlas) (Natural Earth).
+- **Cities**: your most visited towns, by the days you were there, the top ten labelled; click one for its days, separate visits (a gap of more than a day starts a new one), and first and last day. A day counts in a town when, that day, you landed there or left from its airport (not when only changing planes), took a train, bus or ferry from or to it, slept there, picked up a rental car, took photos, started a Strava activity or Timeline saw you there. Each place goes to the town that pulls hardest, its population over the distance squared, within 25 km (GeoNames' towns over 1,000 people, `data/cities1000.txt`, which flightmail downloads); an airport goes to the city it is named for (Boryspil airport counts for Kyiv). The **Stats** tab lists the top ten of all time.
 
 The box at the top left sets the period:
 - **Years**: only what happened from one year to another.
 - **Trip**: one trip, from leaving a home airport (`home_airports` in the `"flightmail"` section of `config`) until landing at one again, named after the countries flown to. The map zooms to it. Trips by train or bus only are not found.
+- **Strava**, once set up (below): how many activities Contrail has, and **fetch now**; else **Connect Strava**.
 - **Where on**: a day. A marker shows where you were: your stay that night, else the end of that day's last flight or ride, else a Timeline place or photos. With nothing that day, the last place known before it.
 
 **Photos.** On the Mac that has your Photos library, from a checkout of this repository (or just the script), with [uv](https://docs.astral.sh/uv/) so nothing gets installed:
@@ -324,6 +335,14 @@ uv run --with osxphotos python imports/photos.py --send mini:repos/contrail/data
 
 It reads the library at `~/Pictures/Photos Library.photoslibrary` (another with `--library`; a folder of files with `--folder`, which needs exiftool) and keeps only the places rounded to about 1 km, the number of photos and the days, per year: no file names, pictures or exact positions. `--send` copies the result to the Mac that runs Contrail; run it again after new photos.
 
+**Google Photos** cannot be read through Google's API for this (since March 2025 it only gives apps the photos they uploaded themselves, and it never gave their places). Export it with [Google Takeout](https://takeout.google.com) instead: only Google Photos, as zip files. Then, with the zips as they came (no need to unpack them, or give the unpacked folder):
+
+```
+python imports/photos.py --takeout ~/Downloads/takeout-*.zip --send mini:repos/contrail/data/photos.json
+```
+
+Only the small `.json` file Google puts beside each photo is read (when it was taken and where, from the camera or a place you set in Google Photos), never the photo itself; a photo that is also in an album counts once. A new export replaces the last one, so export everything each time.
+
 **Google Maps Timeline.** Export it on your phone (Android: Settings > Location > Location services > Timeline > Export Timeline data; iPhone: Google Maps > Settings > Personal content > Export Timeline data), or use an older Takeout of Location History, then:
 
 ```
@@ -333,6 +352,17 @@ python imports/timeline.py ~/Downloads/Timeline.json --send mini:repos/contrail/
 Every layout Google has used works: the phone's `Timeline.json` (Android and iOS), Takeout's "Semantic Location History" folder and `Records.json`. It keeps the places you stayed at, with their times and names, and each day's paths, simplified to about 50 m and cut where you flew.
 
 Contrail reads both files again whenever they change; no restart is needed.
+
+The **All layers** box at the top of the legend turns every layer on or off at once.
+
+**Strava.** Contrail reads your activities through Strava's API, read only:
+1. On [strava.com/settings/api](https://www.strava.com/settings/api), create an API application: any name and website, **Authorization Callback Domain** `localhost`.
+2. Put its Client ID and Client Secret in `secret` as `strava_client_id` and `strava_client_secret` (no restart needed).
+3. Open Contrail in a browser on the Mac that runs it, at `http://localhost:3000`, or from another machine through an SSH tunnel (`ssh -L 3000:127.0.0.1:3000 mini`, then `http://localhost:3000` there), and click **Connect Strava** in the box at the top left. Allow "View data about your activities", including private ones.
+
+Contrail then fetches the list of all your activities (200 per request, each with its route as Strava draws it on the activity page) and stays in step every hour: new activities hourly, the whole list once a day so renamed, made private or deleted activities follow. A Garmin, Wahoo or other device that uploads to Strava ends up here the same way. The sign-in token is kept in `data/strava_token.json` (readable by you only) and renewed by itself; to disconnect, revoke Contrail under Strava's Settings > My Apps and delete that file.
+
+Made for thousands of activities (sites like statshunters can stall on the first load with 5,000): Contrail works out the explored tiles of each activity once, when it fetches it, not in the browser; the list reaches the browser gzipped, and not at all when it has not changed; the map is usable before the activities arrive; and routes and tiles are painted on canvas map tiles, only where the map is in view, not as one map object each. With 5,000 made-up activities (800,000 route points, 77,000 tiles) on mini: the list is 3.3 MB gzipped, everything is on the map 1.5 s after the page opens, a change of period takes under half a second, and a screenful of map tiles about 0.4 s at the most crowded zoom.
 
 ### Adding a flight
 
@@ -414,6 +444,7 @@ At most one request a second goes to each service; a service that is down is tri
 - `data/stays.json` (`stays_file`): hotels, Airbnbs and rental cars, one per booking code: `code`, `what` (`stay` or `car`), `provider`, `place`, `country`, `start`, `end`, `type`, `price`, and `lat`, `lon` once found (`unplaced` when not).
 - `data/photos.json` (`photos_file`): `[{"lat", "lon", "year", "count", "days"}]`, written by `imports/photos.py`.
 - `data/timeline.json` (`timeline_file`): `{"visits": [{"lat", "lon", "start", "end", "name"}], "paths": [{"date", "path"}]}`, written by `imports/timeline.py`.
+- `data/strava.json` (`strava_file`): `{"activities": [{"id", "name", "sport", "date", "start", "distance", "moving_time", "elevation", "path"}], "last_sync", "last_full"}`, `date` in the activity's local time, `distance` in km, `path` an encoded polyline with 6 decimals, `at` its first point, `tiles` the zoom-14 tiles it passes through (x × 16384 + y). `data/strava_token.json` (`strava_token_file`): the sign-in token.
 
 Moving to MongoDB later only needs the data layer in `app.js` (the `flights` array, `saveFlights()` and `init()`) replaced by a Mongoose model; the API routes stay the same.
 
@@ -436,6 +467,10 @@ Moving to MongoDB later only needs the data layer in `app.js` (the `flights` arr
 | `PUT`, `DELETE` | `/api/stays/:id` | change or delete one; a new `place` or `country` is looked up again |
 | `GET` | `/api/photos`, `/api/timeline` | the files the import scripts wrote (empty when there are none) |
 | `GET` | `/api/settings` | `home_airports`, for the trips on the map |
+| `GET` | `/api/strava`, `/api/strava/status` | the Strava activities (gzipped when asked, `304` when the browser has them); whether Strava is set up and connected, how many activities, the last fetch and error |
+| `GET` | `/api/cities?from=&to=` | the 100 most visited towns in the period (dates `YYYY-MM-DD`, both optional): `name`, `country`, `lat`, `lon`, `days`, `visits`, `first`, `last` |
+| `POST` | `/api/strava/sync` | fetch new activities from Strava now |
+| `GET` | `/auth/strava` | sign in to Strava (redirects back to `/auth/strava/callback`) |
 
 ## Tests
 
@@ -448,7 +483,7 @@ python mail/test_plan.py       # check-in to-dos, busy blocks, trip banners
 python mail/test_stays.py      # hotel, Airbnb and rental car emails
 python mail/test_tripdocs.py   # trip docs, against a fake Google Docs
 python mail/test_flightmail.py # entry point, Contrail client, stays sent to Contrail, alerts
-python imports/test_imports.py # photo places and Google Timeline, on made-up exports
+python imports/test_imports.py # photo places (Apple Photos rounding, Google Takeout) and Google Timeline, on made-up exports
 ```
 
 The Python tests need no network, Gmail or calendar, and no pytest: each file runs on its own and prints `OK n tests`.
@@ -459,6 +494,7 @@ This repository is public, so nothing personal is committed:
 - `config`, `secret` and `data/` are gitignored, along with flightmail's files in `~/.flightmail/`.
 - The test emails in `mail/fixtures/` are anonymised copies of real layouts. Names, booking codes, agency numbers, flight numbers, routes, dates, prices and links are replaced with fake ones (`Jan Testers`, `ABC123`, `example.com`).
 - flightmail reads the mailbox read only and keeps no copy of any email.
+- Strava activities are read with your own API application and kept in `data/` on your Mac, like the rest; nothing is sent back to Strava or elsewhere.
 - Photos and Timeline stay on your own Macs: the photo script sends only places rounded to about 1 km with counts and days, and both files live in `data/` (gitignored). Your Timeline's places and paths are as personal as data gets; keep `data/` out of any shared folder.
 - For the lines of trains, buses and ferries and the places of stays, Contrail sends their place names to Photon (photon.komoot.io) and their positions and departure times (of the coming week, for past trips) to Transitous (api.transitous.org) and OSRM (router.project-osrm.org), once per trip. `"ground_lookups": false` stops that.
 

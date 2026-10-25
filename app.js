@@ -7,6 +7,8 @@ const path = require('path');
 const https = require('https');
 const { randomBytes, createHmac } = require('crypto');
 const ground = require('./ground');
+const stravaSync = require('./strava');
+const cities = require('./cities');
 
 // --- Config & Secret ---
 
@@ -39,6 +41,17 @@ const GROUND_FILE   = path.join(__dirname, config.ground_file);
 const STAYS_FILE    = path.join(__dirname, config.stays_file);
 const PHOTOS_FILE   = path.join(__dirname, config.photos_file);
 const TIMELINE_FILE = path.join(__dirname, config.timeline_file);
+
+// Strava: the keys are read from secret each time, so adding them needs no restart
+const strava = stravaSync.create({
+  tokenFile: path.join(__dirname, config.strava_token_file), dataFile: path.join(__dirname, config.strava_file),
+  redirectUri: `http://localhost:${config.port}/auth/strava/callback`,
+  keys() {
+    let s = secret;  // what was read at startup, while the file is being edited
+    try { s = JSON.parse(fs.readFileSync(path.join(__dirname, 'secret'), 'utf8')); } catch (_) {}
+    return { id: String(s.strava_client_id || ''), secret: s.strava_client_secret || '' };
+  }
+});
 const AIRPORTS_URL  = 'https://raw.githubusercontent.com/jpatokal/openflights/master/data/airports.dat';
 
 // --- In-memory stores ---
@@ -449,6 +462,74 @@ app.delete('/api/stays/:id', (req, res) => {
 app.get('/api/photos', (_req, res) => res.json(readImport(PHOTOS_FILE, [])));
 app.get('/api/timeline', (_req, res) => res.json(readImport(TIMELINE_FILE, { visits: [], paths: [] })));
 
+// --- Strava ---
+
+// Thousands of activities: gzipped, and nothing at all when the browser already has this version
+app.get('/api/strava', (req, res) => {
+  const { json, gz, etag } = strava.payload();
+  res.set({ ETag: etag, 'Cache-Control': 'no-cache', Vary: 'Accept-Encoding' });
+  if (req.headers['if-none-match'] === etag) return res.status(304).end();
+  res.type('json');
+  if (/\bgzip\b/.test(req.headers['accept-encoding'] || '')) return res.set('Content-Encoding', 'gzip').send(gz);
+  res.send(json);
+});
+app.get('/api/strava/status', (_req, res) => res.json(strava.status()));
+app.post('/api/strava/sync', (_req, res) => { strava.sync(); res.json({ started: true }); });
+
+app.get('/auth/strava', (_req, res) => {
+  if (!strava.status().configured) return res.status(503).send('Strava is not configured: put strava_client_id and strava_client_secret in secret.');
+  res.redirect(strava.authorizeUrl());
+});
+
+app.get('/auth/strava/callback', async (req, res) => {
+  if (req.query.error) return res.redirect('/?strava=denied');
+  try {
+    await strava.connect(req.query.code, req.query.scope);
+    res.redirect('/?strava=ok');
+  } catch (e) {
+    res.status(502).send(e.message);
+  }
+});
+
+// --- Most visited cities ---
+
+let towns;  // GeoNames towns, read on first use (flightmail downloads data/cities1000.txt)
+
+// Each day and place you were somewhere, in the period ?from=YYYY-MM-DD&to=YYYY-MM-DD (both optional)
+function placesAndDays(from, to) {
+  const pts = [], inPeriod = d => d && (!from || d >= from) && (!to || d <= to);
+  const add = (at, d, city) => { if (at && inPeriod(d)) pts.push({ at, day: d, city }); };
+  const eachDay = (a, b, fn) => {  // a stay or Timeline visit: every day from the first to the last, at most 90
+    for (let t = Date.parse(a), n = 0; t <= Date.parse(b || a) && n < 90; t += 864e5, n++) fn(new Date(t).toISOString().slice(0, 10));
+  };
+  const at = code => airports[code] && [airports[code].lat, airports[code].lon];
+  const fl = flights.filter(f => f.date && at(f.from) && at(f.to)).sort((a, b) => a.date.localeCompare(b.date));
+  const change = (a, b) => a && b && a.to === b.from && Math.abs(Date.parse(b.date.replace(' ', 'T')) - Date.parse(a.date.replace(' ', 'T'))) < 864e5;
+  fl.forEach((f, i) => {  // airports where you only changed planes do not count
+    if (!change(fl[i - 1], f)) add(at(f.from), f.date.slice(0, 10), airports[f.from].city);
+    if (!change(f, fl[i + 1])) add(at(f.to), f.date.slice(0, 10), airports[f.to].city);
+  });
+  trips.forEach(t => {
+    if (t.from_lat != null) add([t.from_lat, t.from_lon], (t.date || '').slice(0, 10));
+    if (t.to_lat != null) add([t.to_lat, t.to_lon], (t.date || '').slice(0, 10));
+  });
+  stays.forEach(s => {
+    if (s.lat == null) return;
+    if (s.what === 'car') add([s.lat, s.lon], s.start);
+    else eachDay(s.start, s.end, d => add([s.lat, s.lon], d));
+  });
+  readImport(PHOTOS_FILE, []).forEach(c => (c.days || []).forEach(d => add([c.lat, c.lon], d)));
+  (readImport(TIMELINE_FILE, {}).visits || []).forEach(v => eachDay(v.start.slice(0, 10), v.end.slice(0, 10), d => add([v.lat, v.lon], d)));
+  strava.activities().forEach(a => add(a.at, (a.date || '').slice(0, 10)));
+  return pts;
+}
+
+app.get('/api/cities', (req, res) => {
+  if (towns === undefined) towns = cities.load(path.join(DATA_DIR, 'cities1000.txt'));
+  if (!towns) return res.json([]);
+  res.json(cities.rank(towns, placesAndDays(req.query.from || '', req.query.to || '')));
+});
+
 // What the map needs from config: the airports trips start from and return to
 app.get('/api/settings', (_req, res) => {
   res.json({ home_airports: config.flightmail?.home_airports || ['AMS', 'EIN', 'RTM'] });
@@ -629,6 +710,8 @@ init().then(() => {
     console.log(`Contrail running at http://${config.host}:${config.port}`);
     lookUpTrips();
     setInterval(lookUpTrips, 3600e3).unref();  // retries what a service that was down left over
+    if (strava.connected()) strava.sync();
+    setInterval(() => { if (strava.connected()) strava.sync(); }, 3600e3).unref();
   });
   server.on('error', e => {
     if (e.code === 'EADDRINUSE') {
