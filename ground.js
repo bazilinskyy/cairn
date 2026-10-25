@@ -1,8 +1,8 @@
 'use strict';
-// Ground trips (trains, buses, ferries) for the map: where their stations are and the track between them.
-// Places come from Photon (OpenStreetMap), biased towards where the traveller was just before; tracks from
-// Transitous (timetabled trains and coaches) or OSRM (roads, for buses), else a straight line. Each trip is looked
-// up once, in the background, and the result is kept in the trip itself.
+// Ground trips (trains, buses, ferries) for the map: where their stations are and the track between them; and where
+// stays and rental cars are. Places come from Photon (OpenStreetMap), biased towards where the traveller was just
+// before; tracks from Transitous (timetabled trains and coaches) or OSRM (roads, for buses), else a straight line.
+// Each trip or stay is looked up once, in the background, and the result is kept in it.
 
 const UA = 'contrail (personal travel log; https://github.com/bazilinskyy/contrail)';
 const PHOTON = 'https://photon.komoot.io/api/';
@@ -267,8 +267,17 @@ async function route(trip) {
   trip.path_source = source;
 }
 
-// Look up every trip that still needs it, oldest first (so earlier trips give later ones their starting point).
-// A service that is down stops the pass; the next pass tries again.
+// Where a hotel, Airbnb or rental car pick-up is: "Gradsko, North Macedonia", near the traveller's last arrival
+async function placeStay(stay, flights, trips, airports) {
+  const near = startNear({ date: `${stay.start} 12:00:00` }, flights, trips, airports);
+  const name = stay.country ? `${stay.place}, ${stay.country}` : stay.place;
+  const p = await geocode(name, near, near ? START_KM : null) || (near && await geocode(name, null, null));
+  if (p) [stay.lat, stay.lon] = p;
+  else stay.unplaced = true;
+}
+
+// Look up every trip that still needs it, oldest first (so earlier trips give later ones their starting point),
+// then every stay. A service that is down stops the pass; the next pass tries again.
 async function enrich(store, log = console.log) {
   const todo = [...store.trips].sort((x, y) => (x.date || '').localeCompare(y.date || ''));
   for (const trip of todo) {
@@ -288,6 +297,24 @@ async function enrich(store, log = console.log) {
       return;
     }
   }
+  for (const stay of [...(store.stays || [])]) {
+    if (stay.lat != null || stay.unplaced || !store.stays.includes(stay)) continue;
+    try {
+      await placeStay(stay, store.flights(), store.trips, store.airports());
+      if (stay.unplaced) log(`[ground] could not place stay ${stay.start} ${stay.place}`);
+      store.saveStays();
+    } catch (e) {
+      log(`[ground] lookups paused: ${e.message}`);
+      return;
+    }
+  }
+}
+
+// A stay whose place changes is looked up again
+function forgetStay(stay, changes) {
+  if (['place', 'country'].some(k => k in changes && changes[k] !== stay[k]) && !('lat' in changes)) {
+    delete stay.lat, delete stay.lon, delete stay.unplaced;
+  }
 }
 
 // Fields a change of station (or of its coordinates) makes stale
@@ -301,4 +328,4 @@ function forget(trip, changes) {
   if (moved) delete trip.unplaced, delete trip.path, delete trip.path_source;
 }
 
-module.exports = { km, decode, encode, simplify, plausible, planTime, startNear, forget, enrich, pick, similar, geocode };
+module.exports = { km, decode, encode, simplify, plausible, planTime, startNear, forget, forgetStay, enrich, pick, similar, geocode };

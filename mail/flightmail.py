@@ -440,6 +440,30 @@ def note_stay(state, s, now):
         del reg[code]
 
 
+STAY_FIELDS = ("code", "what", "provider", "place", "country", "start", "end", "type", "price")
+
+
+def sync_stays(state, con, dry=False):
+    """Contrail's copy of each hotel, Airbnb and rental car in state["stays"], for its map; Contrail keeps them after
+    flightmail forgets them. New and changed ones are posted, cancelled ones deleted; each remembers what was sent."""
+    for s in state.get("stays", {}).values():
+        sent = s.get("contrail")
+        if s.get("cancelled"):
+            if sent:
+                log(f"{'would delete' if dry else 'delete'} contrail stay {s['place']} {s['start']} (cancelled)")
+                if not dry:
+                    con.delete(f"stays/{sent[0]}")
+                    s["contrail"] = None
+            continue
+        body = {k: s.get(k) or "" for k in STAY_FIELDS}
+        signature = json.dumps(body, sort_keys=True)
+        if sent and sent[1] == signature:
+            continue
+        log(f"{'would send' if dry else 'send'} contrail stay {s['what']} {s['place']} {s['start']}..{s['end']}")
+        if not dry:
+            s["contrail"] = [con.add_stay(body)["id"], signature]
+
+
 def _ahead(kind, spec, now):
     if kind == "todos":
         return spec["when"] >= now.date().isoformat()
@@ -525,8 +549,8 @@ class ContrailHTTP:
 
     @staticmethod
     def _path(cid):
-        """Contrail ids of ground trips are kept as "ground/12", of flights as plain numbers."""
-        return f"/api/{cid}" if str(cid).startswith("ground/") else f"/api/flights/{cid}"
+        """Contrail ids of ground trips and stays are kept as "ground/12" and "stays/3", of flights as plain numbers."""
+        return f"/api/{cid}" if "/" in str(cid) else f"/api/flights/{cid}"
 
     def add(self, leg, event_id=None):
         if leg.mode != "flight":  # Contrail keeps one trip per departure minute and mode: posting it again updates it
@@ -547,6 +571,10 @@ class ContrailHTTP:
             if e.code != 404:  # already deleted by hand
                 raise
         self._flights = None
+
+    def add_stay(self, stay):
+        """Contrail adds the stay, or updates the one with the same booking code."""
+        return self._call("POST", "/api/stays", stay)
 
 
 def open_stores(cfg, airports, airlines):
@@ -635,6 +663,13 @@ def run(args, cfg, sec):
         work["last_uid"] = max(uid, work.get("last_uid", 0))  # a rescan never moves it back
         if not args.dry_run:
             save_state(work)
+    try:
+        sync_stays(work, con, args.dry_run)
+        if not args.dry_run:
+            save_state(work)
+    except Exception as e:  # never in the way of the rest of the run
+        log(f"stays not sent to Contrail: {e!r}")
+        alerts.append(f"Hotels and rental cars not updated in Contrail: {e!r}")
     if extras:
         todos, blocks, banners = (Logged(x, name, args.dry_run) for x, name in zip(extras, ("things", "work calendar", "banner")))
         run_extras(work, todos, blocks, banners, airports, now(), cfg.get("home_airports", ["AMS", "EIN", "RTM"]),

@@ -29,6 +29,8 @@ A personal flight tracker that runs on your own machine: a modern replacement fo
 Contrail:
 - **World map** of all your routes with great-circle arcs and airport markers (clustered when zoomed out)
 - **Trains, buses and ferries** on the same map, each mode in its own colour, along the real track where one is found (see [Ground trips](#ground-trips))
+- **Hotels, Airbnbs and rental cars** from your booking emails, **photos** from your photo library and **Google Maps Timeline**, and the **countries** you have been to (see [The map](#the-map))
+- **Trips**, a **period** of years, and **where you were** on any day
 - **Stats dashboard**: total distance, flight hours, airports, countries, airlines, top routes and flights per year
 - **Flight list** with search and sortable columns
 - **Add a flight by flight number and date**: airports, airline, aircraft and duration are looked up via AeroDataBox
@@ -53,6 +55,8 @@ flightmail:
 | `app.js` | Contrail server (Express): REST API, AeroDataBox lookup, imports |
 | `ground.js` | places and tracks of trains, buses and ferries (Photon, Transitous, OSRM) |
 | `public/index.html` | Contrail web page (map, stats, list) |
+| `public/layers.js` | the map's stays, rental cars, photos, Timeline, countries, trips, period and "where on" |
+| `imports/photos.py`, `imports/timeline.py` | photo places and Google Timeline into Contrail (see [The map](#the-map)); `imports/test_imports.py` tests them |
 | `default.config`, `default.secret` | committed templates for `config` and `secret` (see [Setup](#setup)) |
 | `test/api.test.js`, `test/ground.test.js` | tests of the Contrail API and of `ground.js` |
 | `mail/flightmail.py` | flightmail entry point: Gmail, calendar, Contrail and Discord |
@@ -162,7 +166,7 @@ Every hour flightmail reads the Gmail messages that arrived since its last run. 
 | **Rebooking** | The old flight is deleted from both places and the new one created with a `Rebooked from KL1234 on 2026-11-16` note. |
 | **Cancellation** | The event and the Contrail flight are deleted. |
 | **Train, bus or ferry ticket** | One calendar event per journey and the same trip in Contrail, for the map. Cancellations delete both, also when the email gives only the booking number. |
-| **Hotel, Airbnb or rental car** | Booking.com, Airbnb, DiscoverCars and VIPCars confirmations go into the trip docs (below), not the calendar. Their cancellations undo that. |
+| **Hotel, Airbnb or rental car** | Booking.com, Airbnb, DiscoverCars and VIPCars confirmations go into the trip docs (below) and to Contrail's map, not the calendar. Their cancellations undo that. |
 | **Anything else** | Ignored: check-in reminders, boarding passes, price alerts, surveys, newsletters, "choose an option" emails, replies and forwards. |
 
 Each event:
@@ -298,6 +302,38 @@ launchctl bootout gui/$(id -u)/nl.tue.flightmail; rm ~/Library/LaunchAgents/nl.t
 
 ## Using Contrail
 
+### The map
+
+The legend at the top right shows or hides each layer, with how many it holds in the period shown:
+- **Flights** (with their airports), **trains**, **buses** and **ferries**.
+- **Stays** (pink, bigger for more nights) and **rental cars** (yellow, at the pick-up place). flightmail sends every Booking.com, Airbnb, DiscoverCars and VIPCars booking it reads to Contrail, which finds the place with Photon and keeps it.
+- **Photos**: where your photos were taken, about 1 km per dot, bigger for more photos. From `imports/photos.py` (below).
+- **Timeline**: the places and daily paths of Google Maps Timeline. From `imports/timeline.py` (below).
+- **Countries** you have been to, shaded, with the day of your first visit in each. A country counts when you landed there (not only to change planes), took a train, bus or ferry there, stayed, rented a car, took a photo or Timeline saw you there. The country shapes come from [world-atlas](https://github.com/topojson/world-atlas) (Natural Earth).
+
+The box at the top left sets the period:
+- **Years**: only what happened from one year to another.
+- **Trip**: one trip, from leaving a home airport (`home_airports` in the `"flightmail"` section of `config`) until landing at one again, named after the countries flown to. The map zooms to it. Trips by train or bus only are not found.
+- **Where on**: a day. A marker shows where you were: your stay that night, else the end of that day's last flight or ride, else a Timeline place or photos. With nothing that day, the last place known before it.
+
+**Photos.** On the Mac that has your Photos library, from a checkout of this repository (or just the script), with [uv](https://docs.astral.sh/uv/) so nothing gets installed:
+
+```
+uv run --with osxphotos python imports/photos.py --send mini:repos/contrail/data/photos.json
+```
+
+It reads the library at `~/Pictures/Photos Library.photoslibrary` (another with `--library`; a folder of files with `--folder`, which needs exiftool) and keeps only the places rounded to about 1 km, the number of photos and the days, per year: no file names, pictures or exact positions. `--send` copies the result to the Mac that runs Contrail; run it again after new photos.
+
+**Google Maps Timeline.** Export it on your phone (Android: Settings > Location > Location services > Timeline > Export Timeline data; iPhone: Google Maps > Settings > Personal content > Export Timeline data), or use an older Takeout of Location History, then:
+
+```
+python imports/timeline.py ~/Downloads/Timeline.json --send mini:repos/contrail/data/timeline.json
+```
+
+Every layout Google has used works: the phone's `Timeline.json` (Android and iOS), Takeout's "Semantic Location History" folder and `Records.json`. It keeps the places you stayed at, with their times and names, and each day's paths, simplified to about 50 m and cut where you flew.
+
+Contrail reads both files again whenever they change; no restart is needed.
+
 ### Adding a flight
 
 1. Click **+ Add Flight** in the navigation bar
@@ -373,6 +409,12 @@ At most one request a second goes to each service; a service that is down is tri
 | `distance` | km along the track |
 | `unplaced` | `true` when a place was not found |
 
+### Stays, photos and Timeline
+
+- `data/stays.json` (`stays_file`): hotels, Airbnbs and rental cars, one per booking code: `code`, `what` (`stay` or `car`), `provider`, `place`, `country`, `start`, `end`, `type`, `price`, and `lat`, `lon` once found (`unplaced` when not).
+- `data/photos.json` (`photos_file`): `[{"lat", "lon", "year", "count", "days"}]`, written by `imports/photos.py`.
+- `data/timeline.json` (`timeline_file`): `{"visits": [{"lat", "lon", "start", "end", "name"}], "paths": [{"date", "path"}]}`, written by `imports/timeline.py`.
+
 Moving to MongoDB later only needs the data layer in `app.js` (the `flights` array, `saveFlights()` and `init()`) replaced by a Mongoose model; the API routes stay the same.
 
 ## API
@@ -389,6 +431,11 @@ Moving to MongoDB later only needs the data layer in `app.js` (the `flights` arr
 | `POST` | `/api/ground` | add a trip (at least `mode`, `from`, `to` and `date`); a trip with the same `event_id`, or the same departure minute and mode, is updated instead |
 | `PUT` | `/api/ground/:id` | change fields of a trip; a new place name or position is looked up again |
 | `DELETE` | `/api/ground/:id` | delete a trip |
+| `GET` | `/api/stays` | all hotels, Airbnbs and rental cars |
+| `POST` | `/api/stays` | add a stay or rental car (at least `code`, `place` and `start`); one with the same `code` is updated instead |
+| `PUT`, `DELETE` | `/api/stays/:id` | change or delete one; a new `place` or `country` is looked up again |
+| `GET` | `/api/photos`, `/api/timeline` | the files the import scripts wrote (empty when there are none) |
+| `GET` | `/api/settings` | `home_airports`, for the trips on the map |
 
 ## Tests
 
@@ -400,7 +447,8 @@ python mail/test_sync.py       # the change, rebooking, cancellation and duplica
 python mail/test_plan.py       # check-in to-dos, busy blocks, trip banners
 python mail/test_stays.py      # hotel, Airbnb and rental car emails
 python mail/test_tripdocs.py   # trip docs, against a fake Google Docs
-python mail/test_flightmail.py # entry point, Contrail client, alerts
+python mail/test_flightmail.py # entry point, Contrail client, stays sent to Contrail, alerts
+python imports/test_imports.py # photo places and Google Timeline, on made-up exports
 ```
 
 The Python tests need no network, Gmail or calendar, and no pytest: each file runs on its own and prints `OK n tests`.
@@ -411,7 +459,8 @@ This repository is public, so nothing personal is committed:
 - `config`, `secret` and `data/` are gitignored, along with flightmail's files in `~/.flightmail/`.
 - The test emails in `mail/fixtures/` are anonymised copies of real layouts. Names, booking codes, agency numbers, flight numbers, routes, dates, prices and links are replaced with fake ones (`Jan Testers`, `ABC123`, `example.com`).
 - flightmail reads the mailbox read only and keeps no copy of any email.
-- For the lines of trains, buses and ferries, Contrail sends their place names to Photon (photon.komoot.io) and their positions and departure times (of the coming week, for past trips) to Transitous (api.transitous.org) and OSRM (router.project-osrm.org), once per trip. `"ground_lookups": false` stops that.
+- Photos and Timeline stay on your own Macs: the photo script sends only places rounded to about 1 km with counts and days, and both files live in `data/` (gitignored). Your Timeline's places and paths are as personal as data gets; keep `data/` out of any shared folder.
+- For the lines of trains, buses and ferries and the places of stays, Contrail sends their place names to Photon (photon.komoot.io) and their positions and departure times (of the coming week, for past trips) to Transitous (api.transitous.org) and OSRM (router.project-osrm.org), once per trip. `"ground_lookups": false` stops that.
 
 ## Troubleshooting
 

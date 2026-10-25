@@ -140,6 +140,39 @@ def test_contrail_ground_ids_and_payload():
     assert [c[:2] for c in con.sent[1:]] == [("PUT", "/api/ground/12"), ("DELETE", "/api/ground/12"), ("DELETE", "/api/flights/7")]
 
 
+class StayContrail:
+    def __init__(self):
+        self.posted, self.deleted = [], []
+
+    def add_stay(self, stay):
+        self.posted.append(stay)
+        return {"id": len(self.posted)}
+
+    def delete(self, cid):
+        self.deleted.append(cid)
+
+
+def test_stays_sent_once_and_cancellations_deleted():
+    state = {"stays": {
+        "B1": {"what": "stay", "provider": "Booking.com", "code": "B1", "place": "Faro", "country": "Portugal",
+               "start": "2026-10-22", "end": "2026-10-23", "type": "Hostel", "price": "14.83€", "link": "https://x"},
+        "C1": {"what": "car", "provider": "DiscoverCars", "code": "C1", "place": "Skopje", "country": "North Macedonia",
+               "start": "2026-09-26", "end": "2026-09-30", "type": "Rental car", "price": "89.85€"}}}
+    con = StayContrail()
+    flightmail.sync_stays(state, con, dry=True)
+    assert con.posted == [] and "contrail" not in state["stays"]["B1"]
+    flightmail.sync_stays(state, con)
+    assert [s["code"] for s in con.posted] == ["B1", "C1"] and "link" not in con.posted[0]
+    assert con.posted[0]["place"] == "Faro" and con.posted[1]["what"] == "car"
+    flightmail.sync_stays(state, con)
+    assert len(con.posted) == 2  # nothing changed: nothing sent again
+    state["stays"]["B1"]["end"] = "2026-10-24"
+    state["stays"]["C1"]["cancelled"] = True
+    flightmail.sync_stays(state, con)
+    assert [s["code"] for s in con.posted] == ["B1", "C1", "B1"] and con.deleted == ["stays/2"]
+    assert state["stays"]["C1"]["contrail"] is None
+
+
 def test_contrail_lookup():
     con = StubContrail({("POST", "/api/flights/lookup"): {"from": "MAD", "to": "AMS", "airline": "KLM",
                         "departure_time": "2026-11-16 16:10+01:00", "arrival_time": "2026-11-16 18:45+01:00"}})
