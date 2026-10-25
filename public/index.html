@@ -26,6 +26,9 @@
       --nav-h:    52px;
       --chart-tick: #8888aa;
       --chart-grid: rgba(255,255,255,0.04);
+      --train:    #ffb74d;
+      --bus:      #81c784;
+      --ferry:    #b39ddb;
     }
 
     [data-theme="light"] {
@@ -39,6 +42,9 @@
       --text2:     #556688;
       --chart-tick: #556688;
       --chart-grid: rgba(0,0,0,0.06);
+      --train:     #c77700;
+      --bus:       #1e8449;
+      --ferry:     #8e44ad;
     }
 
     html, body { height: 100%; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; }
@@ -117,6 +123,15 @@
       color: var(--accent) !important; padding: 5px 10px; border-radius: 6px;
       font-size: 12px; font-weight: 600; cursor: pointer; font-family: inherit;
     }
+    /* Which lines the map shows (not inverted in dark mode, so its colours match the lines) */
+    .leaflet-control.map-legend {
+      filter: none; background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+      padding: 6px 10px; color: var(--text); font-size: 12px; line-height: 1.9;
+    }
+    .map-legend label { display: flex; align-items: center; gap: 7px; cursor: pointer; white-space: nowrap; }
+    .map-legend input { accent-color: var(--accent); margin: 0; }
+    .map-legend .swatch { width: 18px; height: 0; border-top: 3px solid; display: inline-block; }
+    .map-legend .count { color: var(--text2); margin-left: auto; padding-left: 8px; }
     .popup-flights-btn {
       margin-top: 10px; display: inline-block; padding: 6px 12px;
       background: rgba(79,195,247,0.15); border: 1px solid rgba(79,195,247,0.4);
@@ -431,7 +446,7 @@ function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
   document.getElementById('theme-toggle').textContent = theme === 'dark' ? '☀️' : '🌙';
   if (document.getElementById('tab-stats').classList.contains('active')) renderStats();
-  if (typeof drawAirports === 'function' && airportLayer) { drawRoutes(); drawAirports(); }
+  if (typeof drawAirports === 'function' && airportLayer) { drawRoutes(); drawGround(); drawAirports(); }
 }
 
 function toggleTheme() {
@@ -442,11 +457,15 @@ function toggleTheme() {
 
 let airportLayer = null;
 let clusterMode  = false;
+const routeLayer  = L.layerGroup();  // flights
+const groundModes = { train: '🚆 Trains', bus: '🚌 Buses', ferry: '⛴️ Ferries' };
+const groundLayer = Object.fromEntries(Object.keys(groundModes).map(m => [m, L.layerGroup()]));
 
 applyTheme(localStorage.getItem('theme') || 'dark');
 
 let allFlights  = [];
 let allAirports = {};
+let allTrips    = []; // trains, buses and ferries
 let map, chartYear;
 let sortCol = 'date', sortDir = -1; // -1 = desc
 
@@ -558,9 +577,43 @@ function initMap() {
   });
   new ClusterToggle().addTo(map);
 
+  // Which lines to show; remembered in this browser
+  let hidden = [];
+  try { hidden = JSON.parse(localStorage.getItem('hiddenLines') || '[]'); } catch (_) {}
+  const layers = { flight: ['✈️ Flights', routeLayer, '--accent'],
+    ...Object.fromEntries(Object.entries(groundModes).map(([m, label]) => [m, [label, groundLayer[m], '--' + m]])) };
+  Object.entries(layers).forEach(([k, [, layer]]) => { if (!hidden.includes(k)) layer.addTo(map); });
+  const Legend = L.Control.extend({
+    options: { position: 'topright' },
+    onAdd() {
+      const box = L.DomUtil.create('div', 'map-legend');
+      box.id = 'map-legend';
+      L.DomEvent.disableClickPropagation(box);
+      box.addEventListener('change', e => {
+        const k = e.target.dataset.layer, layer = layers[k][1];
+        e.target.checked ? layer.addTo(map) : map.removeLayer(layer);
+        if (k === 'flight' && airportLayer) e.target.checked ? airportLayer.addTo(map) : map.removeLayer(airportLayer);
+        hidden = e.target.checked ? hidden.filter(h => h !== k) : [...new Set([...hidden, k])];
+        try { localStorage.setItem('hiddenLines', JSON.stringify(hidden)); } catch (_) {}
+      });
+      return box;
+    }
+  });
+  new Legend().addTo(map);
+  drawLegend = () => {
+    const n = { flight: allFlights.length };
+    allTrips.forEach(t => { n[t.mode] = (n[t.mode] || 0) + 1; });
+    document.getElementById('map-legend').innerHTML = Object.entries(layers).filter(([k]) => k === 'flight' || n[k])
+      .map(([k, [label, layer, color]]) => `<label><input type="checkbox" data-layer="${k}" ${map.hasLayer(layer) ? 'checked' : ''}>` +
+        `<span class="swatch" style="border-color:${getCSSVar(color)}"></span>${label}<span class="count">${n[k] || 0}</span></label>`).join('');
+  };
+
   drawRoutes();
+  drawGround();
   drawAirports();
 }
+
+let drawLegend = () => {};
 
 function greatCircle(lat1, lon1, lat2, lon2, n = 60) {
   const toRad = x => x * Math.PI / 180;
@@ -590,6 +643,7 @@ function greatCircle(lat1, lon1, lat2, lon2, n = 60) {
 }
 
 function drawRoutes() {
+  routeLayer.clearLayers();
   const routeCount = {};
   allFlights.forEach(f => {
     if (!f.from || !f.to || !allAirports[f.from] || !allAirports[f.to]) return;
@@ -608,8 +662,55 @@ function drawRoutes() {
     const weight = Math.min(0.8 + Math.log2(count) * 0.4, 3);
     L.polyline(greatCircle(a.lat, a.lon, b.lat, b.lon), {
       color: getCSSVar('--accent'), weight, opacity: 0.35, smoothFactor: 1
-    }).addTo(map);
+    }).addTo(routeLayer);
   });
+}
+
+// Encoded polyline, 6 decimals (as Contrail keeps the tracks of ground trips)
+function decodePath(str) {
+  const pts = [];
+  let i = 0, lat = 0, lon = 0;
+  while (i < str.length) {
+    for (const k of [0, 1]) {
+      let shift = 0, result = 0, b;
+      do { b = str.charCodeAt(i++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+      const d = result & 1 ? ~(result >> 1) : result >> 1;
+      if (k === 0) lat += d; else lon += d;
+    }
+    pts.push([lat / 1e6, lon / 1e6]);
+  }
+  return pts;
+}
+
+const escapeHTML = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+
+// Trains, buses and ferries: one line per route and mode, along the track Contrail found (dashed when it is a
+// straight line between the two places)
+function drawGround() {
+  Object.values(groundLayer).forEach(l => l.clearLayers());
+  const routes = {};
+  allTrips.forEach(t => {
+    if (t.from_lat == null || t.to_lat == null || !groundLayer[t.mode]) return;
+    const ends = [[t.from_lat, t.from_lon], [t.to_lat, t.to_lon]].map(p => p.map(x => x.toFixed(2)).join(',')).sort();
+    const key = t.mode + '|' + ends.join('|');
+    const r = routes[key] = routes[key] || { trips: [] };
+    r.trips.push(t);
+    if (!r.best || (!r.best.path && t.path)) r.best = t;
+  });
+  const how = { transitous: 'timetable track (Transitous)', osrm: 'road route (OSRM)', straight: 'straight line: no track found' };
+  Object.values(routes).forEach(({ trips, best }) => {
+    const pts = best.path ? decodePath(best.path) : [[best.from_lat, best.from_lon], [best.to_lat, best.to_lon]];
+    const dates = trips.map(t => (t.date || '').slice(0, 10)).sort().reverse();
+    const popup = `<b>${groundModes[best.mode].split(' ')[0]} ${escapeHTML(best.from)} → ${escapeHTML(best.to)}</b><br>` +
+      `<small>${trips.length} trip${trips.length !== 1 ? 's' : ''} · ${(best.distance || 0).toLocaleString()} km · ` +
+      `${how[best.path_source] || 'looking up the track…'}</small><br>` +
+      `<small>${dates.slice(0, 6).join(', ')}${dates.length > 6 ? ', …' : ''}</small>`;
+    L.polyline(pts, {
+      color: getCSSVar('--' + best.mode), weight: Math.min(2.4 + Math.log2(trips.length) * 0.5, 4), opacity: 0.85,
+      dashArray: best.path ? null : '4 6', smoothFactor: 1
+    }).bindPopup(popup, { maxWidth: 280 }).addTo(groundLayer[best.mode]);
+  });
+  drawLegend();
 }
 
 function drawAirports() {
@@ -655,7 +756,7 @@ function drawAirports() {
       airportLayer.addLayer(L.circleMarker([ap.lat, ap.lon], { radius, color: getCSSVar('--accent'), fillColor: getCSSVar('--accent'), fillOpacity: 0.8, weight: 0.5 }).bindPopup(makePopup(iata, ap, count), { maxWidth: 240 }));
     });
   }
-  map.addLayer(airportLayer);
+  if (map.hasLayer(routeLayer)) map.addLayer(airportLayer);  // airports go with the flights' checkbox
 }
 
 function toggleCluster() {
@@ -916,9 +1017,10 @@ window.showAirportFlights = function(iata) {
 // --- Init ---
 
 async function init() {
-  [allFlights, allAirports] = await Promise.all([
+  [allFlights, allAirports, allTrips] = await Promise.all([
     fetch('/api/flights').then(r => r.json()),
-    fetch('/api/airports').then(r => r.json())
+    fetch('/api/airports').then(r => r.json()),
+    fetch('/api/ground').then(r => r.ok ? r.json() : []).catch(() => [])
   ]);
 
   initMap();

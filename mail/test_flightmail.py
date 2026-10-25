@@ -125,6 +125,21 @@ def test_contrail_duplicate_by_route_or_number():
     assert not con.has_flight("KL1234", "AMS", "LIS", d(2026, 11, 17).date())
 
 
+def test_contrail_ground_ids_and_payload():
+    con = StubContrail({("POST", "/api/ground"): {"id": 12}, ("PUT", "/api/ground/12"): {}, ("DELETE", "/api/ground/12"): {},
+                        ("DELETE", "/api/flights/7"): {}})
+    bus = flightmail.Leg("", "Lisboa (Oriente)", "Porto (Campanhã)", flightmail.datetime(2026, 11, 21, 9, 30),
+                         flightmail.datetime(2026, 11, 21, 13, 0), ("3000000001",), "", None, "bus", "Europe/Lisbon", "Europe/Lisbon")
+    assert con.add(bus, "EV1") == "ground/12"
+    assert con.sent[0] == ("POST", "/api/ground", {"date": "2026-11-21 09:30:00", "arrival": "2026-11-21 13:00:00", "mode": "bus",
+                           "service": "", "from": "Lisboa (Oriente)", "to": "Porto (Campanhã)", "duration": "03:30",
+                           "source": "flightmail", "event_id": "EV1"})
+    con.update("ground/12", bus)
+    con.delete("ground/12")
+    con.delete(7)
+    assert [c[:2] for c in con.sent[1:]] == [("PUT", "/api/ground/12"), ("DELETE", "/api/ground/12"), ("DELETE", "/api/flights/7")]
+
+
 def test_contrail_lookup():
     con = StubContrail({("POST", "/api/flights/lookup"): {"from": "MAD", "to": "AMS", "airline": "KLM",
                         "departure_time": "2026-11-16 16:10+01:00", "arrival_time": "2026-11-16 18:45+01:00"}})

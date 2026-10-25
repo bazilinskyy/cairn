@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const https = require('https');
 const { randomBytes, createHmac } = require('crypto');
+const ground = require('./ground');
 
 // --- Config & Secret ---
 
@@ -34,12 +35,14 @@ const secret = loadJSON(path.join(__dirname, 'secret'), 'secret');
 const DATA_DIR      = path.join(__dirname, config.data_dir);
 const AIRPORTS_FILE = path.join(__dirname, config.airports_file);
 const FLIGHTS_FILE  = path.join(__dirname, config.flights_file);
+const GROUND_FILE   = path.join(__dirname, config.ground_file);
 const AIRPORTS_URL  = 'https://raw.githubusercontent.com/jpatokal/openflights/master/data/airports.dat';
 
 // --- In-memory stores ---
 
 let airports = {}; // IATA -> {name, city, country, lat, lon}
 let flights  = [];
+let trips    = []; // trains, buses and ferries (ground.js)
 
 // --- Helpers ---
 
@@ -134,8 +137,25 @@ function saveFlights() {
   fs.writeFileSync(FLIGHTS_FILE, JSON.stringify(flights, null, 2));
 }
 
-function nextId() {
-  return flights.reduce((max, f) => Math.max(max, f.id || 0), 0) + 1;
+function nextId(list = flights) {
+  return list.reduce((max, f) => Math.max(max, f.id || 0), 0) + 1;
+}
+
+function saveTrips() {
+  fs.writeFileSync(GROUND_FILE, JSON.stringify(trips, null, 2));
+}
+
+// Places and tracks of new ground trips, one pass at a time, when ground_lookups is on
+let lookingUp = false, lookAgain = false;
+function lookUpTrips() {
+  if (!config.ground_lookups) return;
+  if (lookingUp) { lookAgain = true; return; }
+  lookingUp = true;
+  const store = { trips, flights: () => flights, airports: () => airports, save: saveTrips };
+  ground.enrich(store).catch(e => console.warn('[ground]', e.message)).finally(() => {
+    lookingUp = false;
+    if (lookAgain) { lookAgain = false; lookUpTrips(); }
+  });
 }
 
 // --- AeroDataBox lookup ---
@@ -242,6 +262,11 @@ async function init() {
       console.log('[init] No CSV backup found — starting with empty flight list');
     }
   }
+
+  if (fs.existsSync(GROUND_FILE)) {
+    trips = JSON.parse(fs.readFileSync(GROUND_FILE, 'utf8'));
+    console.log(`[init] Loaded ${trips.length} ground trips from ${config.ground_file}`);
+  }
 }
 
 // --- Express ---
@@ -306,6 +331,52 @@ app.delete('/api/flights/:id', (req, res) => {
   const [f] = flights.splice(i, 1);
   saveFlights();
   res.json({ deleted: f.id });
+});
+
+// --- Ground trips (trains, buses, ferries) ---
+
+app.get('/api/ground', (_req, res) => {
+  res.json(trips);
+});
+
+// One trip per calendar event, and one per departure minute and mode: posting the same trip again updates it
+app.post('/api/ground', (req, res) => {
+  const t = req.body;
+  if (!t.mode || !t.from || !t.to || !t.date) return res.status(400).json({ error: 'mode, from, to and date are required' });
+  const same = trips.find(x => (t.event_id && x.event_id === t.event_id)
+    || (x.mode === t.mode && (x.date || '').slice(0, 16) === t.date.slice(0, 16)));
+  if (same) {
+    const { id, ...changes } = t;
+    ground.forget(same, changes);
+    Object.assign(same, changes);
+    saveTrips();
+    lookUpTrips();
+    return res.json(same);
+  }
+  t.id = nextId(trips);
+  trips.push(t);
+  saveTrips();
+  lookUpTrips();
+  res.json(t);
+});
+
+app.put('/api/ground/:id', (req, res) => {
+  const t = trips.find(x => x.id === Number(req.params.id));
+  if (!t) return res.status(404).json({ error: 'no such trip' });
+  const { id, ...changes } = req.body;
+  ground.forget(t, changes);
+  Object.assign(t, changes);
+  saveTrips();
+  lookUpTrips();
+  res.json(t);
+});
+
+app.delete('/api/ground/:id', (req, res) => {
+  const i = trips.findIndex(x => x.id === Number(req.params.id));
+  if (i < 0) return res.status(404).json({ error: 'no such trip' });
+  const [t] = trips.splice(i, 1);
+  saveTrips();
+  res.json({ deleted: t.id });
 });
 
 // --- TripIt iCal import ---
@@ -481,6 +552,8 @@ app.get('/auth/tripit/callback', async (req, res) => {
 init().then(() => {
   const server = app.listen(config.port, config.host, () => {
     console.log(`Contrail running at http://${config.host}:${config.port}`);
+    lookUpTrips();
+    setInterval(lookUpTrips, 3600e3).unref();  // retries what a service that was down left over
   });
   server.on('error', e => {
     if (e.code === 'EADDRINUSE') {

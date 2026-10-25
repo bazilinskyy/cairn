@@ -39,15 +39,16 @@ class FakeCalendar:
 
 class FakeContrail:
     def __init__(self, foreign=()):
-        self.flights, self.foreign, self.n = {}, set(foreign), 0
+        self.flights, self.events, self.foreign, self.n = {}, {}, set(foreign), 0
 
     def has_flight(self, flight, dep, arr, day):
         return (flight, dep, arr, day) in self.foreign or any(
             (l.flight, l.dep, l.arr, l.dep_local.date()) == (flight, dep, arr, day) for l in self.flights.values())
 
-    def add(self, leg):
+    def add(self, leg, event_id=None):
         self.n += 1
         self.flights[self.n] = leg
+        self.events[self.n] = event_id
         return self.n
 
     def update(self, cid, leg):
@@ -237,25 +238,26 @@ def bus(dep_local=D(2026, 11, 21, 9, 30), codes=("3000000001",)):
                "bus", "Europe/Lisbon", "Europe/Lisbon")
 
 
-def test_ground_leg_goes_to_calendar_only():
+def test_ground_leg_goes_to_calendar_and_contrail_with_its_event():
     cal, con, state = FakeCalendar(), FakeContrail(), {}
     assert run(booking(bus()), state, cal, con) == []
-    assert len(cal.events) == 1 and con.flights == {}
-    assert state["legs"][0]["flight"] == "bus:Lisboa (Oriente)>Porto (Campanhã)" and state["legs"][0]["contrail_id"] is None
+    assert len(cal.events) == 1 and list(con.flights.values()) == [bus()] and con.events == {1: "ev1"}
+    assert state["legs"][0]["flight"] == "bus:Lisboa (Oriente)>Porto (Campanhã)" and state["legs"][0]["contrail_id"] == 1
 
 
 def test_ground_duplicate_is_an_event_at_the_same_moment():
     start = bus().instants(AIRPORTS)[0]
     cal, con, state = FakeCalendar(foreign_at={start}), FakeContrail(), {}
     run(booking(bus()), state, cal, con)
-    assert cal.events == {} and state.get("legs") == []
+    assert cal.events == {} and con.events == {1: None}  # Contrail merges it with the calendar's trip at that minute
+    assert state["legs"][0]["event_id"] is None and state["legs"][0]["contrail_id"] == 1
 
 
 def test_ground_cancel_by_booking_code_only():
     cal, con, state = FakeCalendar(), FakeContrail(), {}
     run(booking(bus()), state, cal, con)
     assert run(Parsed("cancel", [], [], False, [], date(2026, 11, 1), ("3000000001",)), state, cal, con) == []
-    assert cal.events == {} and state["legs"] == []
+    assert cal.events == {} and con.flights == {} and state["legs"] == []
 
 
 def test_enrich_skips_ground_legs():

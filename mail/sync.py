@@ -1,7 +1,8 @@
 """Decide what one parsed email changes in the Travel calendar and in Contrail.
 
 The calendar and Contrail are passed in as objects with has_flight / create|add / update / delete, so the rules
-can be tested without EventKit or a server. state["legs"] remembers the legs flightmail created.
+can be tested without EventKit or a server. state["legs"] remembers the legs flightmail created. Trains, buses and
+ferries go to Contrail too (for the lines on its map), with the id of their calendar event.
 """
 from dataclasses import replace
 from datetime import datetime
@@ -164,13 +165,13 @@ def apply(parsed, sender, subject, received, state, cal, con, names, now, airpor
         day = leg.dep_local.date()
         if leg.mode == "flight":
             in_cal, in_con = cal.has_flight(leg.flight, day), con.has_flight(leg.flight, leg.dep, leg.arr, day)
-        else:  # trains, buses, ferries: calendar only; any event starting at the same moment is this one
-            in_cal, in_con = cal.has_event_at(leg.instants(airports)[0]), True
-        if parsed.kind == "change" and not notes and (in_cal or in_con):
+        else:  # trains, buses, ferries: any event starting at the same moment is this one; Contrail keeps one
+            in_cal, in_con = cal.has_event_at(leg.instants(airports)[0]), False  # trip per minute and mode itself
+        if parsed.kind == "change" and not notes and (in_cal or in_con or leg.mode != "flight"):
             alerts.append(f"Change for {leg.key} on {day} not applied, its event was not made by flightmail: {where}")
             continue
         event_id = None if in_cal else cal.create(leg, notes)
-        contrail_id = None if in_con else con.add(leg)
+        contrail_id = None if in_con else con.add(leg, event_id)
         if event_id or contrail_id:
             legs.append({**_row(leg), "codes": list(leg.codes), "event_id": event_id, "contrail_id": contrail_id})
     return alerts
