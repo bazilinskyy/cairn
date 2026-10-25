@@ -5,6 +5,28 @@
 // Loaded before the page's own script; uses its globals (map, allFlights, allAirports, allTrips, ...) when called.
 
 const COUNTRIES_URL = 'https://cdn.jsdelivr.net/npm/world-atlas@2.0.2/countries-50m.json';
+
+// --- settings (kept in this browser): units, and the exploration tiles ---
+
+const PREFS_KEY = 'contrail-settings';
+let prefs = { units: 'km', tileZoom: 14, grid: true };
+try { prefs = { ...prefs, ...JSON.parse(localStorage.getItem(PREFS_KEY) || '{}') }; } catch (_) {}
+function savePrefs(p) {
+  prefs = { ...prefs, ...p };
+  try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch (_) {}
+  TILE_Z = prefs.tileZoom;
+  TILES = 2 ** TILE_Z;
+}
+
+// Distances and heights as chosen; everything is kept in km and m
+const MILE = 1.609344, FOOT = 0.3048;
+const imperial = () => prefs.units === 'mi';
+const dist = km => (imperial() ? km / MILE : km);
+const DU = () => (imperial() ? 'mi' : 'km');
+const fmtDist = (km, digits = 0) => `${(Math.round(dist(km) * 10 ** digits) / 10 ** digits).toLocaleString()} ${DU()}`;
+const height = m => (imperial() ? m / FOOT : m);
+const HU = () => (imperial() ? 'ft' : 'm');
+const fmtHeight = m => `${Math.round(height(m)).toLocaleString()} ${HU()}`;
 const stayLayer = L.layerGroup(), carLayer = L.layerGroup(), photoLayer = L.layerGroup();
 const timelineLayer = L.layerGroup(), countryLayer = L.layerGroup(), activityLayer = L.layerGroup(), tileLayer = L.layerGroup();
 const cityLayer = L.layerGroup();
@@ -134,7 +156,28 @@ const SPORTS = {
 };
 const sportOf = s => Object.keys(SPORTS).find(k => SPORTS[k].test(s || '')) || 'sport';
 const sportEmoji = { ride: '🚴', run: '🏃', walk: '🥾', sport: '🏅' };
-const TILE_Z = 14, TILES = 2 ** TILE_Z;  // explored tiles are zoom-14 map tiles, packed as x * TILES + y
+// Explored tiles are map tiles at zoom 14 (statshunters' tiles, ~1.5 km in the Netherlands) or 17 (squadratinhos,
+// ~200 m), as chosen in the settings; packed as x * TILES + y
+let TILE_Z = prefs.tileZoom, TILES = 2 ** TILE_Z;
+
+// An activity's tiles at the chosen zoom: Contrail's (zoom 14), else from its route, once (a point every quarter tile)
+function actTiles(a) {
+  if (TILE_Z === 14 || !a.pts) return a.tiles || [];
+  const key = 'tiles' + TILE_Z;
+  if (!a[key]) {
+    const out = new Set(), step = 360 / TILES / 4;
+    for (let i = 0; i < a.pts.length; i += 2) {
+      const j = Math.max(0, i - 2), la = a.pts[j], lo = a.pts[j + 1], lb = a.pts[i], ob = a.pts[i + 1];
+      const steps = Math.max(1, Math.ceil(Math.hypot(lb - la, (ob - lo) * Math.cos(la * Math.PI / 180)) / step));
+      for (let k = 1; k <= steps; k++) {
+        const lat = la + (lb - la) * k / steps, lon = lo + (ob - lo) * k / steps;
+        out.add(Math.floor(pxX(lon, TILE_Z) / 256) * TILES + Math.floor(pxY(lat, TILE_Z) / 256));
+      }
+    }
+    a[key] = [...out];
+  }
+  return a[key];
+}
 const tileLat = y => Math.atan(Math.sinh(Math.PI * (1 - 2 * y / TILES))) * 180 / Math.PI;
 const tileLon = x => x / TILES * 360 - 180;
 // Web Mercator pixels at zoom z, and back
@@ -203,10 +246,33 @@ function bucketsAt(z) {
   return tileBuckets.get(z);
 }
 
+// The grid of all tiles, as on statshunters, so the unexplored ones show: once the tiles are 6 pixels or more
+function drawTileGrid(ctx, coords, size) {
+  const z = coords.z;
+  ctx.strokeStyle = getCSSVar('--tile');
+  ctx.globalAlpha = 0.35;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  if (z >= TILE_Z) {  // inside one tile: its west and north edges, when they run through this map tile
+    const shift = z - TILE_Z;
+    if (coords.x % 2 ** shift === 0) { ctx.moveTo(0.5, 0); ctx.lineTo(0.5, size.y); }
+    if (coords.y % 2 ** shift === 0) { ctx.moveTo(0, 0.5); ctx.lineTo(size.x, 0.5); }
+  } else {
+    const n = 2 ** (TILE_Z - z), px = size.x / n;
+    if (px < 6) return;
+    for (let i = 0; i < n; i++) {
+      ctx.moveTo(i * px + 0.5, 0); ctx.lineTo(i * px + 0.5, size.y);
+      ctx.moveTo(0, i * px + 0.5); ctx.lineTo(size.x, i * px + 0.5);
+    }
+  }
+  ctx.stroke();
+}
+
 const ExploredCanvas = L.GridLayer.extend({
   createTile(coords) {
     const c = L.DomUtil.create('canvas'), size = this.getTileSize(), z = coords.z;
     c.width = size.x; c.height = size.y;
+    if (prefs.grid) drawTileGrid(c.getContext('2d'), coords, size);
     if (!explored?.tiles.size) return c;
     const ctx = c.getContext('2d'), color = getCSSVar('--tile');
     ctx.fillStyle = color;
@@ -276,8 +342,8 @@ function activityPopup(a, ll) {
     L.polyline(pts, { color: getCSSVar('--' + a.kind), weight: 4, opacity: 1, interactive: false })
   ]).addTo(map);
   L.popup({ maxWidth: 260 }).setLatLng(ll).setContent(`<b>${sportEmoji[a.kind]} ${escapeHTML(a.name)}</b><br>` +
-    `<small>${escapeHTML(a.sport)} · ${fmtDate(a.date)} · ${a.distance.toLocaleString()} km` +
-    `${a.elevation ? ` · ↑${a.elevation} m` : ''}</small>`).on('remove', () => {
+    `<small>${escapeHTML(a.sport)} · ${fmtDate(a.date)} · ${fmtDist(a.distance, 1)}` +
+    `${a.elevation ? ` · ↑${fmtHeight(a.elevation)}` : ''}</small>`).on('remove', () => {
     if (activityHighlight) map.removeLayer(activityHighlight);
     activityHighlight = null;
   }).openOn(map);
@@ -306,7 +372,7 @@ function afterToggle() {
 function computeExplored() {
   const tiles = new Set();
   const kinds = shownKinds();  // the tiles of the types shown: cycling alone, running alone, or together
-  allActivities.forEach(a => { if (a.tiles && inWin(a.date) && kinds.includes(a.kind)) a.tiles.forEach(k => tiles.add(k)); });
+  allActivities.forEach(a => { if (inWin(a.date) && kinds.includes(a.kind)) actTiles(a).forEach(k => tiles.add(k)); });
   const size = new Map();
   let square = { x: 0, y: 0, size: 0 };
   [...tiles].sort((p, q) => (p % TILES) - (q % TILES) || p - q).forEach(k => {  // row by row, west to east
@@ -338,8 +404,8 @@ function drawTiles() {
   if (!explored.tiles.size) return;
   const { x, y, size } = explored.square;
   L.rectangle([[tileLat(y + size), tileLon(x)], [tileLat(y), tileLon(x + size)]], { color: getCSSVar('--text'), weight: 2, fill: false, dashArray: '6 4' })
-    .bindPopup(`<b>🟩 Explored tiles</b><br><small>${explored.tiles.size.toLocaleString()} tiles · max square ${size}×${size} · ` +
-      `max cluster ${explored.cluster.size.toLocaleString()} tiles</small>`).addTo(squareLayer);
+    .bindPopup(`<b>🟩 Explored ${TILE_Z === 14 ? 'tiles' : 'squadratinhos'}</b><br><small>${explored.tiles.size.toLocaleString()} · max square ${size}×${size} · ` +
+      `max cluster ${explored.cluster.size.toLocaleString()}</small>`).addTo(squareLayer);
 }
 
 // Strava's activities, after the rest of the map is up
@@ -362,10 +428,10 @@ const LOCATE_ICON = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none"
   '<circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>';
 let meLayer = null;
 
-// A button under the zoom buttons: the map centres on where the browser says you are (it asks you the first time)
+// A button above the zoom buttons (bottom right): the map centres on where the browser says you are (it asks the first time)
 function addLocateControl() {
   const Locate = L.Control.extend({
-    options: { position: 'topleft' },
+    options: { position: 'bottomright' },
     onAdd() {
       const bar = L.DomUtil.create('div', 'leaflet-bar');
       const a = L.DomUtil.create('a', 'map-locate', bar);
@@ -662,7 +728,7 @@ function whereOn(d) {
     spots.push([v.lat, v.lon]);
   });
   allActivities.filter(a => day(a.date) === d).forEach(a => {
-    lines.push(`${sportEmoji[a.kind]} ${escapeHTML(a.name)}, ${a.distance.toLocaleString()} km`);
+    lines.push(`${sportEmoji[a.kind]} ${escapeHTML(a.name)}, ${fmtDist(a.distance, 1)}`);
     if (a.at) spots.push(a.at);
   });
   const shots = allPhotos.filter(c => (c.days || []).includes(d));

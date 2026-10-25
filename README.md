@@ -3,7 +3,7 @@
 A personal flight tracker that runs on your own machine: a modern replacement for [openflights.org](https://openflights.org/), plus **flightmail**, which reads your booking emails and keeps both Contrail and your travel calendar up to date by itself.
 
 - **Contrail** (`app.js`, `public/`): a small Node/Express web app with a world map of your routes, statistics and a searchable flight list. Flights are stored in `data/flights.json`.
-- **flightmail** (`mail/`): a Python job that checks Gmail every hour. It turns flight bookings, schedule changes and cancellations into calendar events and Contrail flights, and train, bus and ferry tickets into calendar events. It uses no LLM and no paid service.
+- **flightmail** (`mail/`): a Python job that checks Gmail every hour. It turns flight bookings, schedule changes and cancellations into calendar events and Contrail flights, and train, bus and ferry tickets into calendar events. It also keeps a Google Doc per trip in a Drive folder up to date with your hotels, rental cars and transport, and adds suggested things to do and a day-by-day itinerary to the docs of coming trips. Reading the email uses no LLM and no paid service; only the suggestions ask Claude (through Claude Code, optional).
 
 ![Map — light mode, individual markers](docs/map-screenshot.jpg)
 
@@ -47,6 +47,9 @@ flightmail:
 - Adds the same flight to **Contrail**
 - Also adds **trains, buses and ferries** to the calendar, for example `🚆 EC9236: Breda - Bruxelles Midi` or `🚌 Lisboa (Oriente) - Porto (Campanhã)`, and to Contrail's map
 - Follows **schedule changes, rebookings and cancellations**
+- Reads **hotel, Airbnb and rental car** bookings (Booking.com, Airbnb, DiscoverCars, VIPCars, Rentalcars.com, Holiday Autos, Hertz and other brokers) for the trip docs and Contrail's map
+- Keeps **one Google Doc per trip** in a Drive folder: the Plan table gets each stay and rental car, the Transport table each flight, train, bus and ferry, without changing what you wrote (see [Trip docs](#trip-docs))
+- **Suggests things to do and an itinerary** in the doc of each coming trip, by Claude, written again whenever the doc changes
 - For every flight: a **check-in to-do in Things**, scheduled the day before, with the airline's check-in link; a **busy block in your work calendar** from 2 hours before departure to 1 hour after landing; and an all-day **trip banner** ("Tenerife", "Portugal") over each trip
 - **Never duplicates** a flight that is already in the calendar or in Contrail, and never touches events it did not create
 - Posts what it **could not read** to Discord, so a missed booking is not silent
@@ -74,7 +77,7 @@ flightmail:
 | `mail/sync.py` | decides what an email changes; AeroDataBox enrichment (no network) |
 | `mail/plan.py` | check-in to-dos, busy blocks and trip banners from the flights you are on (no network) |
 | `mail/stays.py` | hotel, Airbnb and rental car bookings out of an email (no network) |
-| `mail/tripdocs.py` | trip docs in Google Drive: Google client, the docs' tables, what goes where; `auth` signs in once |
+| `mail/tripdocs.py` | trip docs in Google Drive: Google client, the docs' tables, what goes where, the suggestions by Claude; `auth` signs in once |
 | `mail/test_*.py`, `mail/fixtures/` | flightmail tests and anonymised test emails |
 | `mail/install.sh`, `mail/contrail.plist.template` | install flightmail and the Contrail service on a Mac (launchd) |
 | `docs/superpowers/` | design and implementation plan of flightmail |
@@ -178,7 +181,7 @@ Every hour flightmail reads the Gmail messages that arrived since its last run. 
 | **Rebooking** | The old flight is deleted from both places and the new one created with a `Rebooked from KL1234 on 2026-11-16` note. |
 | **Cancellation** | The event and the Contrail flight are deleted. |
 | **Train, bus or ferry ticket** | One calendar event per journey and the same trip in Contrail, for the map. Cancellations delete both, also when the email gives only the booking number. |
-| **Hotel, Airbnb or rental car** | Booking.com, Airbnb, DiscoverCars and VIPCars confirmations go into the trip docs (below) and to Contrail's map, not the calendar. Their cancellations undo that. |
+| **Hotel, Airbnb or rental car** | Booking.com, Airbnb, DiscoverCars and VIPCars confirmations, and those of other car rental brokers and companies (Rentalcars.com, Holiday Autos, Argus Car Hire, Stressfree Car Rental, BSP Auto, EconomyBookings, QEEQ, Hertz, Thrifty, Goldcar), go into the trip docs (below) and to Contrail's map, not the calendar. Their cancellations undo that. |
 | **Anything else** | Ignored: check-in reminders, boarding passes, price alerts, surveys, newsletters, "choose an option" emails, replies and forwards. |
 
 Each event:
@@ -196,13 +199,22 @@ A Contrail flight gets the date, route, flight number, airline and duration; the
 - **Busy block** in your work calendar (`work_calendar_account` / `work_calendar_title`) for each flight, train, bus or ferry that falls in working hours: `🛑 Vibe-busy`, from 2 hours before departure to 1 hour after arrival, made only when that time overlaps Monday to Friday 09:00–17:00 in `home_timezone`. Shown as busy, no alerts, with `[auto-split]` in its notes so [calsplit](https://github.com/bazilinskyy/vibe-work)'s nightly cleanup deletes it once past.
 - **Trip banner**: an all-day event in the travel calendar from the day you leave a home airport (`home_airports`) to the day you are back, named after the place you stay ("Tenerife"), the country when you stay in several places ("Portugal"), or the countries ("Spain · France"). It is shown as free, with alerts at 15:00 the day before and 09:00 on the day. When an all-day event of yours already covers the trip, no banner is made. A trip without a known return gets no banner yet.
 
-**Trip docs.** When `trip_docs_folder` is set and flightmail is signed in to Google (see Install), it keeps one Google Doc per trip in that Drive folder. Each doc has an Information heading, a Plan table (Place | Dates | Accommodation | Price | Comments) and a Transport table (Transport | Date | Price | Comments).
+#### Trip docs
+
+When `trip_docs_folder` is set and flightmail is signed in to Google (see [Install](#install)), it keeps one Google Doc per trip in that Drive folder, the docs you already keep there included. It reads and edits them through the Google Drive and Docs APIs on every run, with your own Google sign-in. Each doc has an Information heading, a Plan table (Place | Dates | Accommodation | Price | Comments) and a Transport table (Transport | Date | Price | Comments).
 - **Which doc:** the doc whose Plan or Transport dates overlap the booking or trip (a day of slack). With none, flightmail creates one with that layout, named after the trip and year: "Faro 2027", the country when it has several places ("Portugal 2026"), with " 2" added if the name is taken.
 - **Hotel or Airbnb:** the Plan row with that place and overlapping dates gets the Accommodation (the type, "Hotel", "Hostel", "Flat", "Room" or "House", linked to the booking) and the Price, but only cells that are empty. With no such row, a new row goes in date order with the place, the dates written `22–23.10.26`, the accommodation and the price.
 - **Cancelled hotel or Airbnb:** its Accommodation and Price cells are emptied; place and dates stay.
 - **Rental car:** `Rental car 26–30.09`, linked to the booking, is added to the Comments (or a Car column) of the row whose stay holds the pick-up day, else to a Transport row.
 - **Flights, trains, buses and ferries:** one Transport row each, titled like the calendar event (`✈️ KL1234: Amsterdam - Lisbon`, `🚌 Faro - Albufeira`), with the departure (`07.12.26 16:10`) and the booking code in Comments, in time order: an empty row in that place is filled, else a row is inserted. A cancelled or rebooked trip empties its row. A train, bus or ferry only joins a doc that covers its day; it never creates one, and waits until a flight or stay brings one.
 - **Your text is never changed**: flightmail only writes into empty cells, adds rows, and empties the cells it wrote. Bookings that are over are left alone.
+- **Remembered:** `state.json` keeps which booking went into which doc, so a booking is written once, and a cancellation or change finds its row again.
+
+**Suggestions.** When the doc of a trip that is not over yet changes, by your edits or by flightmail's, flightmail asks Claude for things to do and an itinerary and writes them into a **Suggestions** section of the doc:
+- **When:** on each hourly run, for each doc in the folder whose Drive "modified" time moved since the last run, whose Plan or Transport dates reach today or later, and that was last changed more than 30 minutes ago (you may still be typing; flightmail's own edits of that run wait for the next one too). The doc's text without the Suggestions section is compared with the last time; when only the suggestions or the formatting changed, Claude is not asked again. At most three docs per run; the others follow an hour later. A coming trip's doc that has no Suggestions section yet gets one on the first run.
+- **What Claude gets:** the doc as text (Information notes, the Plan and Transport tables; links reduced to their text and booking codes left out), today's date, and the request: 3 to 6 specific things to do in or near each place of the Plan (where the flights go when the Plan is empty), following your notes and comments, and one line or two per day from today (or the first day) to the last, following the stays' dates and transport times.
+- **What goes in the doc:** a Suggestions heading, an italic line with the date, a **Things to do** heading with a bulleted list per place, and an **Itinerary** heading with a bullet per day (`Thu 12.11, Faro: ...`). The section runs from its heading to the next top-level heading, or to the end of the doc, and is flightmail's own: it is replaced as a whole each time, so move what you want to keep above it. Delete the section and it comes back on the next change of the doc.
+- **How:** with the [Claude Code](https://claude.com/claude-code) command line (`claude -p`, model `suggestions_model`, default Sonnet, no tools), signed in on the Mac, so it uses that account's plan; about a minute per doc. When Claude fails (not signed in, a usage limit), the run logs it and tries again an hour later. `"trip_suggestions": false` turns it off.
 
 **Never twice.** A train, bus or ferry is already in the calendar when any event starts within five minutes of it, whatever its title. A flight that is already in the calendar is not added again. That means an event on the same day whose title holds the same flight number with any airline prefix: `EJU7883`, `U27883` and `U2 7883` are the same flight. In Contrail, a flight on the same day with the same route or the same flight number counts as already there. flightmail never changes or deletes events or flights it did not create.
 
@@ -228,6 +240,7 @@ The mailbox is only read (IMAP `EXAMINE`, `BODY.PEEK`): nothing is marked, moved
 4. **Deciding** (`sync.apply`): the rules above, against a state file that remembers which events and Contrail flights flightmail created.
 5. **Trains, buses and ferries** (`ground.py`): recognised by the sender (NS International, SNCF Connect, Deutsche Bahn, Eurostar, Trainline, FlixBus, redBus, Rede Expressos, 12Go, ferry operators and more) or by schema.org `BusReservation` / `TrainReservation` / `BoatReservation` markup, which is read first. NS International, SNCF Connect, redBus and Rede Expressos have their own text rules. A station's time zone comes from the [GeoNames](https://www.geonames.org/) list of towns over 1,000 people (`data/cities1000.txt`, downloaded once, CC BY 4.0): the biggest town whose name starts the station name ("Bruxelles Midi" → Brussels), else `home_timezone`.
 6. **Writing:** calendar events go through macOS Calendar (EventKit), so any calendar macOS sees works, for example a Google calendar added in System Settings. Contrail flights go through its REST API.
+7. **Trip docs** (`tripdocs.py`): the Drive API lists the docs in the folder; the Docs API reads each one's tables (found by their header rows, `Place` and `Transport`) and writes cells and rows with `batchUpdate`. What should be in the docs (every stay, rental car, flight, train, bus and ferry not over yet) is compared with what was written last time (`state.json`), and only the difference is written. Then the suggestions: Drive's Markdown export of each changed doc of a coming trip goes to `claude -p`, whose JSON answer is written as the Suggestions section.
 
 Time zones come from the airport database: every local time is placed in its airport's zone, including across daylight-saving changes and for flights that land after midnight.
 
@@ -249,6 +262,9 @@ In the `"flightmail"` sections of `config` and `secret`:
 | `home_airports` | config | airports a trip starts from and returns to (default `AMS`, `EIN`, `RTM`) |
 | `trip_docs_skip` | config | booking codes that never go into a trip doc (for example a work trip) |
 | `trip_docs_folder` | config | id of the Google Drive folder for trip docs (the part after `folders/` in its link); empty: no trip docs |
+| `trip_suggestions` | config | things to do and an itinerary by Claude in the docs of coming trips (default `true`) |
+| `suggestions_model` | config | the Claude model for them, as `claude --model` takes it (default `sonnet`) |
+| `claude_path` | config | the `claude` command (default: found in `PATH`, else `~/.local/bin/claude`) |
 | `gmail_query` | config | optional Gmail search that preselects mail; empty uses the built-in one |
 | `gmail_app_password` | secret | a Gmail [app password](https://myaccount.google.com/apppasswords) (needs 2-Step Verification) |
 | `discord_webhook` | secret | Discord webhook for alerts; empty sends nothing |
@@ -286,17 +302,19 @@ The first run reads a year of matching mail and takes about ten minutes; later r
 
 The sign-in asks for full Drive access, because the trip docs you made yourself must be editable too.
 
+**Suggestions (optional).** Install [Claude Code](https://claude.com/claude-code) on the Mac and sign in once (`claude`, then `/login`). flightmail runs it from the app started by launchd, which can read the login in the keychain (cron could not). Check with `echo 'Say hi' | ~/.local/bin/claude -p --model sonnet --tools ""`.
+
 ### Files
 
 | File | What it is |
 |---|---|
 | `~/.flightmail/run.log` | log: each email acted on, each change, alerts and failures |
-| `~/.flightmail/state.json` | last message read, and the events and Contrail flights flightmail created |
+| `~/.flightmail/state.json` | last message read, the events and Contrail flights flightmail created, the stays, which booking went into which trip doc, and each doc's last suggestions (Drive modified time and a hash of its text) |
 | `~/.flightmail/lookups.json` | AeroDataBox answers and this month's lookup count |
 | `~/.flightmail/flightmail.app` | the app that holds the Calendar permission |
 | `~/.flightmail/google_client.json`, `google_token.json` | the Google OAuth client and refresh token for the trip docs; never in the repo |
 
-Other commands: `mail/flightmail.py calendars` lists the calendars EventKit sees. `--rescan-days N` reads all matching mail of the last N days again, for example after new rules were added (`open -W --env FLIGHTMAIL_ARGS="--rescan-days 365" ~/.flightmail/flightmail.app`); nothing is added twice.
+Other commands: `mail/flightmail.py calendars` lists the calendars EventKit sees. `mail/flightmail.py history [--days N] [--dry-run]` sends the stays, rental cars, trains, buses and ferries of past years (default 6000 days) from the mail into Contrail's map, never into the calendar or the trip docs; the hourly run only handles trips still ahead. It is safe to run again. `--rescan-days N` reads all matching mail of the last N days again, for example after new rules were added (`open -W --env FLIGHTMAIL_ARGS="--rescan-days 365" ~/.flightmail/flightmail.app`); nothing is added twice.
 
 To remove the hourly job:
 
@@ -308,8 +326,9 @@ launchctl bootout gui/$(id -u)/nl.tue.flightmail; rm ~/Library/LaunchAgents/nl.t
 
 - **Languages:** English and Dutch text rules. Other languages (for example French Transavia emails) are read only through schema.org markup or AeroDataBox.
 - **Attachments:** PDF e-tickets and attachments are not read.
-- **Not read:** trains, buses and ferries from operators without a rule or markup; add a rule in `ground.py` with a fixture and a test. Hotels and cars other than Booking.com, Airbnb, DiscoverCars and VIPCars; add a rule in `stays.py`.
+- **Not read:** trains, buses and ferries from operators without a rule or markup; add a rule in `ground.py` with a fixture and a test. Hotels and cars from other senders than those listed above; add a rule in `stays.py`.
 - **Trip docs:** a cancelled rental car is only logged; remove it from the doc by hand. A changed booking is treated as cancelled and booked again.
+- **Suggestions:** Claude answers from what it knows, without searching the web, so opening hours, prices and seasonal closures should be checked. An edit made while flightmail writes the suggestions waits for the doc's next change.
 - **New layouts:** a layout none of the rules handle shows up as a "could not read" alert. To support it, add an anonymised copy to `mail/fixtures/`, a test in `mail/test_parse.py`, then a rule in `parse.py`.
 
 ## Using Contrail
@@ -321,10 +340,10 @@ The legend at the top right shows or hides each layer, with how many it holds in
 - **Stays** (pink, bigger for more nights) and **rental cars** (yellow, at the pick-up place). flightmail sends every Booking.com, Airbnb, DiscoverCars and VIPCars booking it reads to Contrail, which finds the place with Photon and keeps it.
 - **Photos**: where your photos were taken, about 1 km per dot, bigger for more photos. From `imports/photos.py` (below).
 - **Timeline**: the places and daily paths of Google Maps Timeline. From `imports/timeline.py` (below).
-- **Cycling**, **Running**, **Walks & hikes** and **Other sports**: your sports activities (see [Sports activities](#sports-activities)), a legend row each (orange, violet, magenta, yellow), so one type can be shown alone. Activities without a route (indoor, virtual, swims without GPS) are counted but not drawn.
-- **Explored tiles**: the map squares at zoom 14 (about 1.5 km in the Netherlands) your activities passed through, as [statshunters](https://www.statshunters.com) and VeloViewer count them. Darker: your **max cluster**, the biggest group of tiles whose four neighbours are explored too. Dashed: your **max square**, the biggest square of explored tiles; click it for the numbers. The legend shows the tile count and the square's size, for the period and the activity types shown.
+- **Activities**: your sports activities (see [Sports activities](#sports-activities)), a group in the legend with a row per type, **Cycling**, **Running**, **Walks & hikes** and **Other sports** (orange, violet, magenta, yellow), and **Explored tiles**; the group's box turns them all on or off, a type's box shows it alone. Activities without a route (indoor, virtual, swims without GPS) are counted but not drawn.
+- **Explored tiles**: the map squares your activities passed through, as [statshunters](https://www.statshunters.com) and VeloViewer count them: tiles at zoom 14 (about 1.5 km in the Netherlands), or squadratinhos at zoom 17 (about 200 m), as chosen in the settings. Zoomed in far enough, the grid of all tiles shows (can be turned off), so the unexplored ones you could ride or run to stand out. Darker: your **max cluster**, the biggest group of tiles whose four neighbours are explored too. Dashed: your **max square**, the biggest square of explored tiles; click it for the numbers. The legend shows the tile count and the square's size, for the period and the activity types shown.
 - **Countries** you have been to, shaded, with the day of your first visit in each. A country counts when you landed there (not only to change planes), took a train, bus or ferry there, stayed, rented a car, took a photo, started a Strava activity or Timeline saw you there. The country shapes come from [world-atlas](https://github.com/topojson/world-atlas) (Natural Earth).
-- **Cities**: your most visited towns, by the days you were there, the top ten labelled; click one for its days, separate visits (a gap of more than a day starts a new one), and first and last day. A day counts in a town when, that day, you landed there or left from its airport (not when only changing planes), took a train, bus or ferry from or to it, slept there, picked up a rental car, took photos, started a Strava activity or Timeline saw you there. Each place goes to the town that pulls hardest, its population over the distance squared, within 25 km (GeoNames' towns over 1,000 people, `data/cities1000.txt`, which flightmail downloads); an airport goes to the city it is named for (Boryspil airport counts for Kyiv). The **Stats** tab lists the top ten of all time.
+- **Cities**: every town you have been to, sized by the days you were there, the ten most visited labelled; click one for its days, separate visits (a gap of more than a day starts a new one), and first and last day. A day counts in a town when, that day, you landed there or left from its airport (not when only changing planes), took a train, bus or ferry from or to it, slept there, picked up a rental car, took photos, started a Strava activity or Timeline saw you there. Each place goes to the town that pulls hardest, its population over the distance squared, within 25 km (GeoNames' towns over 1,000 people, `data/cities1000.txt`, which flightmail downloads); an airport goes to the city it is named for (Boryspil airport counts for Kyiv). The **Stats** tab lists the top ten of all time.
 
 The box at the top left sets the period:
 - **Years**: only what happened from one year to another.
@@ -360,7 +379,9 @@ Every layout Google has used works: the phone's `Timeline.json` (Android and iOS
 
 Contrail reads both files again whenever they change; no restart is needed.
 
-The **All layers** box at the top of the legend turns every layer on or off at once. The button under the zoom buttons centres the map on where you are (the browser asks you to allow it the first time; it works on `localhost`, also through the tunnel, and on https).
+The **All layers** box at the top of the legend turns every layer on or off at once.
+
+**Settings** (⚙️ in the top bar, kept in this browser): kilometres and metres or miles and feet, everywhere (flight statistics and list, popups, the Sports tab: speeds in mph, paces per mile, the Eddington number in miles, ride best efforts at 30, 60, 100 and 125+ miles); tiles at zoom 14 or squadratinhos at zoom 17 (worked out in the browser from each route the first time, then kept); and whether to show the tile grid. The button above the zoom buttons (bottom right) centres the map on where you are (the browser asks you to allow it the first time; it works on `localhost`, also through the tunnel, and on https).
 
 ### Sports activities
 
@@ -517,7 +538,7 @@ Moving to MongoDB later only needs the data layer in `app.js` (the `flights` arr
 | `GET` | `/api/activities` | all sports activities, Garmin's and Strava's, each once (gzipped when asked, `304` when the browser has them) |
 | `GET` | `/api/activities/status` | how many activities; Garmin's count, last sync and error; Strava's state |
 | `GET` | `/api/strava/status` | whether Strava is set up and connected, how many activities, the last fetch and error |
-| `GET` | `/api/cities?from=&to=` | the 100 most visited towns in the period (dates `YYYY-MM-DD`, both optional): `name`, `country`, `lat`, `lon`, `days`, `visits`, `first`, `last` |
+| `GET` | `/api/cities?from=&to=` | every town visited in the period, most visited first (dates `YYYY-MM-DD`, both optional): `name`, `country`, `lat`, `lon`, `days`, `visits`, `first`, `last` |
 | `GET` | `/api/activities/places` | where activities start: the towns and countries per kind of sport (`ride`, `run`, `walk`, `sport`, `all`) |
 | `POST` | `/api/strava/sync` | fetch new activities from Strava now |
 | `GET` | `/auth/strava` | sign in to Strava (redirects back to `/auth/strava/callback`) |
@@ -544,6 +565,7 @@ This repository is public, so nothing personal is committed:
 - `config`, `secret` and `data/` are gitignored, along with flightmail's files in `~/.flightmail/`.
 - The test emails in `mail/fixtures/` are anonymised copies of real layouts. Names, booking codes, agency numbers, flight numbers, routes, dates, prices and links are replaced with fake ones (`Jan Testers`, `ABC123`, `example.com`).
 - flightmail reads the mailbox read only and keeps no copy of any email.
+- For the suggestions, the text of a coming trip's doc (places, dates, accommodation types, prices, your notes and comments, flight numbers; no links or booking codes) goes to Anthropic through Claude Code. `"trip_suggestions": false` stops that.
 - Garmin and Strava activities are kept in `data/` on your Mac, like the rest; nothing is sent back to Garmin, Strava or elsewhere. The Garmin token in `~/.garminconnect` and the Strava token in `data/` are readable by you only.
 - Photos and Timeline stay on your own Macs: the photo script sends only places rounded to about 1 km with counts and days, and both files live in `data/` (gitignored). Your Timeline's places and paths are as personal as data gets; keep `data/` out of any shared folder.
 - For the lines of trains, buses and ferries and the places of stays, Contrail sends their place names to Photon (photon.komoot.io) and their positions and departure times (of the coming week, for past trips) to Transitous (api.transitous.org) and OSRM (router.project-osrm.org), once per trip. `"ground_lookups": false` stops that.

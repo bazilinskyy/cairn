@@ -6,11 +6,17 @@ flightmail fills them from the bookings it reads: a hotel or Airbnb goes into th
 flight into a Transport row. A cancelled stay empties the Accommodation and Price cells. A trip without a doc gets
 a new one, named like "Portugal 2026". Text the user wrote is never changed.
 
+Suggestions: when the doc of a trip that is not over yet changes (the user's edits or flightmail's), Claude (`claude
+-p`) is asked for things to do in each place and a day-by-day itinerary, written into a "Suggestions" section that is
+flightmail's own and replaced every time.
+
 Google access: OAuth "Desktop app" client (google_client.json) and a refresh token (google_token.json) in
 ~/.flightmail, made once with `python mail/tripdocs.py auth`. Standard library only.
 """
+import hashlib
 import json
 import re
+import subprocess
 import sys
 import time
 import unicodedata
@@ -57,8 +63,18 @@ class Google:
 
     def docs_in(self, folder):
         q = f"'{folder}' in parents and mimeType='application/vnd.google-apps.document' and trashed=false"
-        url = DRIVE + "?" + urllib.parse.urlencode({"q": q, "fields": "files(id,name)", "pageSize": 1000})
+        url = DRIVE + "?" + urllib.parse.urlencode({"q": q, "fields": "files(id,name,modifiedTime)", "pageSize": 1000})
         return self.call("GET", url)["files"]
+
+    def modified(self, doc_id):
+        return self.call("GET", f"{DRIVE}/{doc_id}?fields=modifiedTime")["modifiedTime"]
+
+    def export(self, doc_id):
+        """The doc as Markdown (Drive's export), tables included."""
+        req = urllib.request.Request(f"{DRIVE}/{doc_id}/export?mimeType=text/markdown",
+                                     headers={"Authorization": "Bearer " + self._token()})
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return r.read().decode()
 
     def get(self, doc_id):
         return self.call("GET", DOCS + doc_id)
@@ -502,6 +518,189 @@ class TripDocs:
             f["start"], f["end"] = min(f["start"] or spec["start"], spec["start"]), max(f["end"] or spec["end"], spec["end"])
             self.add(doc_id, spec)
             done[i] = {"doc": doc_id, "spec": spec}
+
+    def suggest(self, state, now, ask, limit=3):
+        """Suggestions in the docs of trips not over yet that changed since the last look, but not in the last half
+        hour (the user may still be typing; flightmail's own edits of this run wait an hour too). At most limit
+        questions to Claude per run; the rest wait for the next."""
+        reg = state.setdefault("docs", {}).setdefault("suggested", {})
+        today, asked = now.date(), 0
+        for f in self.g.docs_in(self.folder):
+            self.names[f["id"]] = f["name"]
+            seen, modified = reg.get(f["id"]), f.get("modifiedTime", "")
+            if seen and seen["modified"] == modified or modified and now - _local(modified) < QUIET:
+                continue
+            doc = self.g.get(f["id"])
+            days = span(doc)
+            if not days or days[1] < today:
+                reg[f["id"]] = {"modified": modified}
+                continue
+            text = without_suggestions(self.g.export(f["id"]))
+            digest = hashlib.sha256(text.encode()).hexdigest()[:16]
+            if seen and seen.get("hash") == digest or not seen and section(doc):  # only the suggestions changed
+                reg[f["id"]] = {"modified": modified, "hash": digest}
+                continue
+            if asked >= limit:
+                continue
+            asked += 1
+            if self.dry:
+                self.log(f"would ask Claude for suggestions for doc {f['name']!r}")
+                continue
+            try:
+                data = parse_reply(ask(PROMPT.format(today=f"{today:%d.%m.%y}", first=f"{max(today, days[0]):%d.%m.%y}",
+                                                     doc=_plain(text))))
+                self.g.batch(f["id"], suggestion_requests(self.g.get(f["id"]), suggestion_lines(data, today)))
+            except Exception as e:  # tried again next run
+                self.log(f"no suggestions for doc {f['name']!r}: {e!r}")
+                continue
+            self.log(f"suggestions written in doc {f['name']!r}: things to do in {len(data['things_to_do'])} place(s), "
+                     f"{len(data['itinerary'])} day(s)")
+            reg[f["id"]] = {"modified": self.g.modified(f["id"]), "hash": digest}
+
+
+# --- suggestions: things to do and an itinerary by Claude, in a section of the doc that is flightmail's own ---
+
+SUGGESTIONS, MARK = "Suggestions", "By flightmail"
+QUIET = timedelta(minutes=30)
+PROMPT = """You help plan a trip. Today is {today}. Below is the trip's document: notes under Information, the Plan
+table (places, dates, where we sleep, comments) and the Transport table (flights, trains, buses, rental cars, with
+their departure times). Dates are written day.month.year, like 24–26.09.26.
+
+Reply with JSON only, no other text:
+{{"things_to_do": [{{"place": "...", "items": ["...", "..."]}}],
+ "itinerary": [{{"date": "YYYY-MM-DD", "place": "...", "plan": "..."}}]}}
+
+- things_to_do: for each place in the Plan (when the Plan is empty, where the flights go), 3 to 6 specific things
+  worth doing there or nearby: named sights, walks and hikes, viewpoints, beaches, food to try, each in one short
+  sentence that says why. Follow what the notes and comments ask for, and leave out what they already plan.
+- itinerary: one entry per day from {first} to the trip's last day, following the stays' dates and the transport
+  times (the arrival day, travel between places, the departure day), with that day's transport in it. One or two
+  sentences a day.
+- Plain text in the strings: no Markdown, no links.
+
+{doc}"""
+
+
+def _local(stamp):
+    """Drive's '2026-10-24T23:02:30.441Z' as a naive local datetime, like flightmail's now()."""
+    return datetime.fromisoformat(stamp.replace("Z", "+00:00")).astimezone().replace(tzinfo=None)
+
+
+def _ptext(el):
+    return "".join(e.get("textRun", {}).get("content", "") for e in el["paragraph"].get("elements", [])).strip()
+
+
+def _pstyle(el):
+    return el["paragraph"].get("paragraphStyle", {}).get("namedStyleType", "")
+
+
+def section(doc):
+    """(start, end, at_end) of flightmail's Suggestions section: its heading (followed by the "By flightmail" line) up
+    to the next top-level heading, or to the end of the doc (at_end); None when the doc has none."""
+    body = doc["body"]["content"]
+    for k, el in enumerate(body):
+        if "paragraph" not in el or _ptext(el) != SUGGESTIONS or not _pstyle(el).startswith("HEADING"):
+            continue
+        nxt = next((e for e in body[k + 1:] if "paragraph" in e and _ptext(e)), None)
+        if not nxt or not _ptext(nxt).startswith(MARK):
+            continue
+        for e in body[k + 1:]:
+            if "paragraph" in e and _pstyle(e) == "HEADING_1":
+                return el["startIndex"], e["startIndex"], False
+        return el["startIndex"], body[-1]["endIndex"] - 1, True
+    return None
+
+
+def without_suggestions(md):
+    """The doc's Markdown without flightmail's Suggestions section."""
+    lines = md.splitlines()
+    for i, line in enumerate(lines):
+        if re.fullmatch(r"#\s*\**Suggestions\**", line.strip()) and any(MARK in x for x in lines[i + 1:i + 4]):
+            end = next((j for j in range(i + 1, len(lines)) if re.match(r"#\s", lines[j])), len(lines))
+            return "\n".join(lines[:i] + lines[end:]).strip()
+    return md.strip()
+
+
+def _plain(md):
+    """Markdown with links reduced to their text and without booking codes: long, private, and nothing about the trip."""
+    return re.sub(r"Booking code: [^|\n]*", "", re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", md))
+
+
+def ask_claude(prompt, claude="claude", model="sonnet", timeout=600):
+    """Claude's answer to prompt, from the Claude Code CLI signed in on this Mac, with no tools."""
+    r = subprocess.run([claude, "-p", "--model", model, "--tools", "", "--no-session-persistence"], input=prompt,
+                       capture_output=True, text=True, timeout=timeout)
+    if r.returncode or not r.stdout.strip():
+        raise RuntimeError(f"claude failed ({r.returncode}): {(r.stdout or r.stderr).strip()[-300:]}")
+    return r.stdout
+
+
+def parse_reply(text):
+    """{"things_to_do": [{place, items}], "itinerary": [{date, place, plan}]} out of Claude's answer (a code fence or
+    a line around the JSON is fine)."""
+    data = json.loads(text[text.index("{"):text.rindex("}") + 1])
+    one = lambda s: " ".join(str(s).split())  # noqa: E731
+    todo = [{"place": one(p["place"]), "items": [one(i) for i in p["items"] if one(i)]} for p in data.get("things_to_do", [])]
+    days = [{"date": date.fromisoformat(d["date"]), "place": one(d.get("place", "")), "plan": one(d["plan"])}
+            for d in data.get("itinerary", [])]
+    if not any(p["items"] for p in todo) and not days:
+        raise ValueError("no suggestions in the answer")
+    return {"things_to_do": [p for p in todo if p["items"]], "itinerary": sorted(days, key=lambda d: d["date"])}
+
+
+def suggestion_lines(data, today):
+    """[(text, kind)], kind one of h1, note, h2, place, item (a bullet) or day (a bullet led by its date and place)."""
+    out = [(SUGGESTIONS, "h1"), (f"{MARK} on {today:%d.%m.%y}, from the plan above, and written again whenever the doc "
+                                 "changes: move what you want to keep above this heading.", "note")]
+    if data["things_to_do"]:
+        out.append(("Things to do", "h2"))
+        for p in data["things_to_do"]:
+            out += [(p["place"], "place")] + [(i, "item") for i in p["items"]]
+    if data["itinerary"]:
+        out.append(("Itinerary", "h2"))
+        out += [(f"{d['date']:%a %d.%m}{', ' + d['place'] if d['place'] else ''}: {d['plan']}", "day") for d in data["itinerary"]]
+    return out
+
+
+def suggestion_requests(doc, lines):
+    """Requests that replace flightmail's Suggestions section with lines, or add one at the end of the doc."""
+    out, sec, body = [], section(doc), doc["body"]["content"]
+    if sec:
+        at, end, at_end = sec
+        if end > at:
+            out.append({"deleteContentRange": {"range": {"startIndex": at, "endIndex": end}}})
+        lead, tail = "", "" if at_end else "\n"  # at the end the doc's last newline closes the last line
+    else:
+        last = body[-1]
+        at, tail = last["endIndex"] - 1, ""
+        lead = "\n" if "paragraph" in last and _ptext(last) else ""
+    text = lead + "\n".join(t for t, _ in lines) + tail
+    out.append({"insertText": {"location": {"index": at}, "text": text}})
+    base = at + _len(lead)
+    stop = base + _len("\n".join(t for t, _ in lines))
+    out.append({"updateTextStyle": {"range": {"startIndex": base, "endIndex": stop}, "textStyle": {}, "fields": "bold,italic,link"}})
+    out.append({"deleteParagraphBullets": {"range": {"startIndex": base, "endIndex": stop + 1}}})
+    named = {"h1": "HEADING_1", "h2": "HEADING_2"}
+    i, bullets = base, []
+    for t, kind in lines:
+        end = i + _len(t)
+        out.append({"updateParagraphStyle": {"range": {"startIndex": i, "endIndex": end + 1},
+                                             "paragraphStyle": {"namedStyleType": named.get(kind, "NORMAL_TEXT")}, "fields": "namedStyleType"}})
+        bold = end if kind in ("h1", "h2", "place") else i + _len(t.split(": ", 1)[0] + ":") if kind == "day" else i
+        if bold > i:
+            out.append({"updateTextStyle": {"range": {"startIndex": i, "endIndex": bold}, "textStyle": {"bold": True}, "fields": "bold"}})
+        if kind == "note":
+            out.append({"updateTextStyle": {"range": {"startIndex": i, "endIndex": end}, "textStyle": {"italic": True}, "fields": "italic"}})
+        if kind in ("item", "day"):
+            if bullets and bullets[-1][1] == i:
+                bullets[-1][1] = end + 1
+            else:
+                bullets.append([i, end + 1])
+        i = end + 1
+    out += [{"createParagraphBullets": {"range": {"startIndex": a, "endIndex": b}, "bulletPreset": "BULLET_DISC_CIRCLE_SQUARE"}}
+            for a, b in bullets]
+    return out
+
 
 if __name__ == "__main__":
     if sys.argv[1:] == ["auth"]:

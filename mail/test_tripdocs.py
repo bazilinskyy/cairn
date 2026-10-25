@@ -244,6 +244,144 @@ def test_past_items_are_left_alone():
     assert tripdocs.wanted(state, AIRPORTS, NOW, ["AMS"]) == {}
 
 
+class ParaGoogle(FakeGoogle):
+    """A doc with a Plan table and then paragraphs, kept as one string with a style and a bullet flag per paragraph;
+    applies the requests suggestion_requests makes, and exports Markdown like Drive."""
+
+    def __init__(self, plan, paras, modified="2026-10-01T10:00:00Z"):
+        super().__init__({"d1": {"name": "Faro 2026", "tables": [plan]}})
+        self.text = "".join(t + "\n" for t, _ in paras)
+        self.styles, self.bullets, self.bold = [s for _, s in paras], [False] * len(paras), []
+        self.modified_at, self.calls = modified, 0
+
+    def docs_in(self, folder):
+        return [{"id": "d1", "name": "Faro 2026", "modifiedTime": self.modified_at}]
+
+    def modified(self, doc_id):
+        return self.modified_at
+
+    def _start(self):
+        return self._build("d1")[0]["body"]["content"][-1]["endIndex"]
+
+    def paras(self):
+        return list(zip(self.text.split("\n")[:-1], self.styles, self.bullets))
+
+    def get(self, doc_id):
+        doc, i = self._build(doc_id)[0], self._start()
+        for t, style, _ in self.paras():
+            doc["body"]["content"].append({"startIndex": i, "endIndex": i + len(t) + 1, "paragraph": {
+                "elements": [{"textRun": {"content": t + "\n"}}], "paragraphStyle": {"namedStyleType": style}}})
+            i += len(t) + 1
+        return doc
+
+    def export(self, doc_id):
+        table = "\n".join("| " + " | ".join(c["text"] for c in row) + " |" for row in self.docs["d1"]["tables"][0])
+        lines = [f"# **{t}**" if s == "HEADING_1" else f"## **{t}**" if s == "HEADING_2" else f"* {t}" if b else t
+                 for t, s, b in self.paras()]
+        return table + "\n\n" + "\n\n".join(lines)
+
+    def _para(self, k):
+        return self.text[:k].count("\n")
+
+    def batch(self, doc_id, requests):
+        self.calls += 1
+        t0 = self._start()
+        for q in requests:
+            (kind, body), = q.items()
+            rng = body.get("range") or {}
+            a, b = rng.get("startIndex", 0) - t0, rng.get("endIndex", 0) - t0
+            if kind == "insertText":
+                k, ins = body["location"]["index"] - t0, body["text"]
+                p, n = self._para(k), ins.count("\n")
+                self.styles[p:p] = [self.styles[p]] * n
+                self.bullets[p:p] = [self.bullets[p]] * n
+                self.text = self.text[:k] + ins + self.text[k:]
+            elif kind == "deleteContentRange":
+                p, n = self._para(a), self.text[a:b].count("\n")
+                del self.styles[p:p + n], self.bullets[p:p + n]
+                self.text = self.text[:a] + self.text[b:]
+            elif kind == "updateParagraphStyle":
+                for p in range(self._para(a), self._para(b - 1) + 1):
+                    self.styles[p] = body["paragraphStyle"]["namedStyleType"]
+            elif kind in ("createParagraphBullets", "deleteParagraphBullets"):
+                for p in range(self._para(a), self._para(b - 1) + 1):
+                    self.bullets[p] = kind == "createParagraphBullets"
+            elif kind == "updateTextStyle" and body["textStyle"].get("bold"):
+                self.bold.append(self.text[a:b])
+
+
+REPLY = """```json
+{"things_to_do": [{"place": "Faro", "items": ["Walk the old town walls.", "Take the boat to Ilha Deserta."]}],
+ "itinerary": [{"date": "2026-11-13", "place": "Faro", "plan": "Fly home at 16:10."},
+               {"date": "2026-11-12", "place": "Faro", "plan": "Arrive, walk the old town."}]}
+```"""
+FARO = rows(PLAN, ["Faro", "12–13.11.26", "Hostel", "", ""])
+
+
+def suggest(g, now=NOW, dry=False, state=None):
+    asked, log = [], []
+    state = {} if state is None else state
+    tripdocs.TripDocs(g, "folder", log.append, dry=dry).suggest(state, now, lambda p: asked.append(p) or REPLY)
+    return state, asked, log
+
+
+def test_suggestions_are_written_then_replaced_when_the_doc_changes():
+    g = ParaGoogle(FARO, [("Information", "HEADING_1"), ("Bring a towel", "NORMAL_TEXT"), ("", "NORMAL_TEXT")])
+    state, asked, log = suggest(g)
+    assert len(asked) == 1 and "Bring a towel" in asked[0] and "from 12.11.26" in asked[0], asked
+    assert "https://" not in asked[0]
+    got = [(t, s, b) for t, s, b in g.paras()]
+    assert got[:2] == [("Information", "HEADING_1", False), ("Bring a towel", "NORMAL_TEXT", False)], got
+    assert got[2] == ("Suggestions", "HEADING_1", False) and got[3][0].startswith("By flightmail on 01.11.26"), got
+    assert got[4:] == [("Things to do", "HEADING_2", False), ("Faro", "NORMAL_TEXT", False),
+                       ("Walk the old town walls.", "NORMAL_TEXT", True), ("Take the boat to Ilha Deserta.", "NORMAL_TEXT", True),
+                       ("Itinerary", "HEADING_2", False), ("Thu 12.11, Faro: Arrive, walk the old town.", "NORMAL_TEXT", True),
+                       ("Fri 13.11, Faro: Fly home at 16:10.", "NORMAL_TEXT", True)], got
+    assert "Thu 12.11, Faro:" in g.bold and "Faro" in g.bold
+    assert suggest(g, state=state)[1] == []  # unchanged
+    g.modified_at = "2026-10-02T10:00:00Z"
+    assert suggest(g, state=state)[1] == []  # touched, but the same text: no new question
+    g.text = g.text.replace("Bring a towel", "Bring a towel and a surfboard")
+    g.modified_at = "2026-11-01T11:50:00Z"
+    assert suggest(g, state=state)[1] == []  # changed ten minutes ago: maybe still typing
+    g.modified_at = "2026-11-01T09:00:00Z"
+    state, asked, _ = suggest(g, state=state)
+    assert len(asked) == 1 and "surfboard" in asked[0] and "Ilha Deserta" not in asked[0]
+    assert [t for t, _, _ in g.paras()].count("Suggestions") == 1
+    assert g.paras()[1][0] == "Bring a towel and a surfboard" and g.paras()[-1][0].startswith("Fri 13.11")
+
+
+def test_suggestions_before_a_later_heading_keep_it():
+    g = ParaGoogle(FARO, [("Information", "HEADING_1"), ("Suggestions", "HEADING_1"), ("By flightmail on 01.10.26", "NORMAL_TEXT"),
+                          ("old idea", "NORMAL_TEXT"), ("Notes", "HEADING_1"), ("mine", "NORMAL_TEXT"), ("", "NORMAL_TEXT")])
+    state = {"docs": {"suggested": {"d1": {"modified": "old", "hash": "old"}}}}
+    _, asked, _ = suggest(g, state=state)
+    texts_ = [t for t, _, _ in g.paras()]
+    assert len(asked) == 1 and "old idea" not in texts_ and "old idea" not in asked[0], texts_
+    assert texts_[-3:] == ["Notes", "mine", ""] and texts_[texts_.index("Notes") - 1].startswith("Fri 13.11"), texts_
+
+
+def test_no_suggestions_for_past_trips_dry_runs_or_docs_that_have_them():
+    g = ParaGoogle(rows(PLAN, ["Faro", "12–13.10.26", "", "", ""]), [("", "NORMAL_TEXT")])
+    state, asked, _ = suggest(g)
+    assert asked == [] and g.calls == 0 and state["docs"]["suggested"]["d1"] == {"modified": "2026-10-01T10:00:00Z"}
+    g = ParaGoogle(FARO, [("", "NORMAL_TEXT")])
+    _, asked, log = suggest(g, dry=True)
+    assert asked == [] and g.calls == 0 and log == ["would ask Claude for suggestions for doc 'Faro 2026'"], log
+    g = ParaGoogle(FARO, [("Suggestions", "HEADING_1"), ("By flightmail on 01.10.26", "NORMAL_TEXT"), ("", "NORMAL_TEXT")])
+    state, asked, _ = suggest(g)  # state lost: the section is kept until the doc changes
+    assert asked == [] and state["docs"]["suggested"]["d1"]["hash"]
+
+
+def test_reply_and_markdown_helpers():
+    data = tripdocs.parse_reply("Here you go:\n" + REPLY)
+    assert [d["date"] for d in data["itinerary"]] == [date(2026, 11, 12), date(2026, 11, 13)]
+    md = "# **Plan**\n\n| Faro |\n\n# **Suggestions**\n\n*By flightmail on 01.11.26*\n\n## **Itinerary**\n\n# **Notes**\n\nmine"
+    assert tripdocs.without_suggestions(md) == "# **Plan**\n\n| Faro |\n\n# **Notes**\n\nmine"
+    assert tripdocs._plain("[Hostel](https://x.example/?a=1) 20€") == "Hostel 20€"
+    assert tripdocs._plain("| ✈️ U27883 | 03.02.27 07:00 |  | Booking code: ABC123, 26002 |") == "| ✈️ U27883 | 03.02.27 07:00 |  | |"
+
+
 if __name__ == "__main__":
     tests = [f for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
     for t in tests:

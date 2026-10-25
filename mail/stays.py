@@ -193,7 +193,70 @@ def _vipcars(subject, lines, html, received):
                 link=_link(html, r"Voucher", r"vipcars\.com/voucher"), **common)
 
 
-PROVIDERS = {"booking.com": _booking, "airbnb.": _airbnb, "discovercars.com": _discovercars, "vipcars.com": _vipcars}
+# Other rental car brokers and companies: (name, confirmation subject, cancellation subject); their confirmations are
+# read by one rule (_rental) that looks for the labelled pick-up and drop-off details most of them have
+RENTALS = {
+    "rentalcars.com": ("Rentalcars.com", r"^(?:uw|your) rentalcars\.com (?:boeking|booking)\b", r"annulering|cancell?ation"),
+    "holidayautos": ("Holiday Autos", r"boekingsbevestiging|booking confirmation", r"annulering|annuleringsverzoek|cancell?"),
+    "arguscarhire": ("Argus Car Hire", r"boekingsbevestiging|booking confirmation", r"annulering|annuleringsverzoek|cancell?"),
+    "stressfreecarrental": ("Stressfree Car Rental", r"reservation confirmation", r"reservation cancell?ation"),
+    "bsp-auto": ("BSP Auto", r"voucher", r"annulering|cancell?"),
+    "bookinggroup.com": ("EconomyBookings", r"is confirmed|confirmation of your car rental", r"cancell?"),
+    "economybookings": ("EconomyBookings", r"is confirmed|confirmation of your car rental", r"cancell?"),
+    "qeeq.com": ("QEEQ", r"reservation confirm|reservering bevestigd", r"cancell?ed|geannuleerd"),
+    "hertz.com": ("Hertz", r"my hertz reservation", r"cancell?"),
+    "thrifty.com": ("Thrifty", r"my thrifty reservation", r"cancell?"),
+    "goldcar": ("Goldcar", r"^check-out", r"^$"),
+}
+PICK_UP = r"pick[- ]?up(?: details| location| date)?|pickup(?: details)?|ophalen|afhalen|ophaallocatie|vertrek|recogida|levantamento|prise en charge|abholung|ritiro"
+DROP_OFF = r"drop[- ]?off(?: details| location| date)?|return(?: details| location| date)?|inleveren|terugkeer|terugbrengen|devoluci[oó]n|devolu[cç][aã]o|restitution|r[uü]ckgabe|riconsegna"
+NOT_A_PLACE = r"(?i)instructions|instructies|time|tijd|hora|date|datum|fecha|policy|voorwaarden|cancel|annul|deposit|borg|^\W*$|@|https?:|\d{1,2}:\d{2}"
+
+
+def _block(lines, label, received):
+    """(place, date) after the first line that starts with this label: within the next few lines, the first date and the
+    first line that reads as a place."""
+    for i, line in enumerate(lines):
+        m = re.match(rf"(?i)^(?:{label})\b[^:]*?[:|]?\s*(.*)$", line)
+        if not m or len(line) > 60 and not m.group(1):
+            continue
+        near = [m.group(1)] + lines[i + 1:i + 6]
+        when = next((d for d in (_date(x, received) for x in near if x) if d), None)
+        where = next((re.sub(r"(?i)^(?:location|locatie|lugar|adres|address)\s*:\s*", "", x) for x in near
+                      if x and not _date(x, received) and not re.search(NOT_A_PLACE, x) and re.search(r"[^\W\d_]{3}", x)
+                      and len(x) <= 80 and not re.match(rf"(?i)^(?:{PICK_UP}|{DROP_OFF})\b", x)), "")
+        if when:
+            return where, when
+    return "", None
+
+
+def _rental(provider, confirm, cancel):
+    def rule(subject, lines, html, received):
+        code = re.search(r"(?i)(?:ref\.?:?|reference|referentie|verwijzing|voucher|reservation|reservering|contrat[oa]|contratto|"
+                         r"booking|boeking|RA#)\s*#?\s*([A-Z0-9][A-Z0-9-]{4,})|#\s*([A-Z0-9]{5,})|\b([A-Z]{0,3}\d{6,})\b", subject)
+        code = code and next(g for g in code.groups() if g)
+        if not code:
+            return None
+        common = dict(provider=provider, code=code, type="Rental car")
+        if re.search(rf"(?i){cancel}", subject):
+            return Stay("cancel", "car", **common)
+        if not re.search(rf"(?i){confirm}", subject):
+            return None
+        if provider == "Goldcar":  # a contract at the counter: the airport's code in the subject, the email's day
+            airport = re.search(r"\(([A-Z]{3})\)", subject)
+            return Stay("booking", "car", place=airport.group(1), start=received.date(), end=received.date(), **common) if airport else None
+        place, start = _block(lines, PICK_UP, received)
+        _, end = _block(lines, DROP_OFF, received)
+        if not start:
+            return None
+        where, _, country = place.rpartition(", ")
+        return Stay("booking", "car", place=where or country, country=country if where else "", start=start, end=end or start,
+                    price=price(_after(lines, r"Totaal(?:bedrag|prijs)?|Total(?: price| amount| cost)?|Prijs|Price")), **common)
+    return rule
+
+
+PROVIDERS = {"booking.com": _booking, "airbnb.": _airbnb, "discovercars.com": _discovercars, "vipcars.com": _vipcars,
+             **{k: _rental(*v) for k, v in RENTALS.items()}}
 
 
 def parse_email(msg):

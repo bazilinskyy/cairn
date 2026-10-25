@@ -8,7 +8,7 @@ const vm = require('node:vm');
 
 const TILES = 16384;
 const sports = vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'public', 'sports.js'), 'utf8') +
-  ';({ eddington, streaks, exploredOf })', { TILES });
+  ';({ eddington, streaks, exploredOf })', { TILES, dist: km => km, actTiles: a => a.tiles || [] });
 const on = (date, km) => ({ date: date + ' 09:00:00', distance: km });
 
 test('Eddington: E days of at least E km, and how many more days the next one needs', () => {

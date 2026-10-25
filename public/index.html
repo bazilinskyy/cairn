@@ -117,6 +117,11 @@
     .modal input::placeholder { color: var(--text2); opacity: 0.6; }
     .modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
 
+    .settings-group { border: none; margin: 0 0 16px; padding: 0; }
+    .settings-group legend { font-size: 12px; font-weight: 600; color: var(--text2); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+    .settings-group label { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 13px; cursor: pointer; }
+    .modal .settings-group input { accent-color: var(--accent); width: auto; margin: 0; padding: 0; flex: none; }
+
     /* --- Content --- */
     main { padding-top: var(--nav-h); height: 100vh; }
     .tab-content { display: none; height: calc(100vh - var(--nav-h)); overflow-y: auto; }
@@ -158,6 +163,8 @@
     .map-legend .swatch { width: 18px; height: 0; border-top: 3px solid; display: inline-block; }
     .map-legend .count { color: var(--text2); margin-left: auto; padding-left: 8px; }
     .map-locate { display: flex !important; align-items: center; justify-content: center; color: #333; }
+    .map-legend .group { font-weight: 600; margin-top: 2px; }
+    .map-legend .child { padding-left: 18px; }
     .map-legend .all { border-bottom: 1px solid var(--border); margin-bottom: 3px; padding-bottom: 2px; font-weight: 600; }
     .map-period label { gap: 5px; }
     .leaflet-tooltip.city-label {
@@ -324,6 +331,7 @@
     <button class="tab tab-add" data-tab="add">+ Add Flight</button>
   </div>
   <div class="nav-right">
+    <button class="theme-btn" onclick="openSettings()" title="Settings" aria-label="Settings">⚙️</button>
     <button class="theme-btn" id="theme-toggle" onclick="toggleTheme()" title="Toggle light/dark mode">☀️</button>
     <button class="tab tab-tripit" id="tripit-btn" onclick="openTripItModal()" title="Import all flights from TripIt">↓ TripIt</button>
   </div>
@@ -507,6 +515,28 @@
 
 <div class="toast" id="toast"></div>
 
+<div class="modal-backdrop" id="settings-modal" onclick="if(event.target===this)closeSettings()">
+  <div class="modal">
+    <h3>⚙️ Settings</h3>
+    <p>Kept in this browser.</p>
+    <fieldset class="settings-group">
+      <legend>Distances</legend>
+      <label><input type="radio" name="set-units" value="km"> Kilometres and metres</label>
+      <label><input type="radio" name="set-units" value="mi"> Miles and feet</label>
+    </fieldset>
+    <fieldset class="settings-group">
+      <legend>Exploration tiles</legend>
+      <label><input type="radio" name="set-tiles" value="14"> Tiles: zoom 14, about 1.5 km (statshunters, VeloViewer)</label>
+      <label><input type="radio" name="set-tiles" value="17"> Squadratinhos: zoom 17, about 200 m</label>
+      <label><input type="checkbox" id="set-grid"> Show the grid of all tiles when zoomed in</label>
+    </fieldset>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeSettings()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveSettings()">Save</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-backdrop" id="tripit-modal" onclick="if(event.target===this)closeTripItModal()">
   <div class="modal">
     <h3>↓ Import from TripIt</h3>
@@ -623,6 +653,30 @@ async function doTripItImport() {
   }
 }
 
+// --- Settings (layers.js keeps them) ---
+
+function openSettings() {
+  document.querySelector(`input[name="set-units"][value="${prefs.units}"]`).checked = true;
+  document.querySelector(`input[name="set-tiles"][value="${prefs.tileZoom}"]`).checked = true;
+  document.getElementById('set-grid').checked = prefs.grid;
+  document.getElementById('settings-modal').classList.add('open');
+}
+function closeSettings() {
+  document.getElementById('settings-modal').classList.remove('open');
+}
+function saveSettings() {
+  savePrefs({
+    units: document.querySelector('input[name="set-units"]:checked').value,
+    tileZoom: +document.querySelector('input[name="set-tiles"]:checked').value,
+    grid: document.getElementById('set-grid').checked
+  });
+  closeSettings();
+  if (map) redrawMap();
+  renderStats();
+  renderTable(document.getElementById('search').value);
+  if (document.getElementById('tab-sports').classList.contains('active')) renderSports();
+}
+
 // --- Country flag ---
 
 const countryToCode = (() => {
@@ -652,7 +706,8 @@ function toast(msg, type = 'success') {
 // --- Map ---
 
 function initMap() {
-  map = L.map('map', { center: [30, 15], zoom: 2, zoomControl: true });
+  map = L.map('map', { center: [30, 15], zoom: 2, zoomControl: false });
+  L.control.zoom({ position: 'bottomright' }).addTo(map);  // the filters box has the top left corner
 
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
@@ -698,7 +753,8 @@ function initMap() {
       };
       box.addEventListener('change', e => {
         const k = e.target.dataset.layer;
-        if (k === 'all') box.querySelectorAll('input[data-layer]:not([data-layer="all"])').forEach(i => show(i.dataset.layer, e.target.checked));
+        if (k === 'all') box.querySelectorAll('input[data-layer]:not([data-layer="all"]):not([data-layer="act-group"])').forEach(i => show(i.dataset.layer, e.target.checked));
+        else if (k === 'act-group') box.querySelectorAll('label.child input').forEach(i => show(i.dataset.layer, e.target.checked));
         else show(k, e.target.checked);
         try { localStorage.setItem('hiddenLines', JSON.stringify(hidden)); } catch (_) {}
         afterToggle();  // activities by type: redrawn when the types shown change
@@ -711,13 +767,23 @@ function initMap() {
   drawLegend = () => {
     const n = { flight: allFlights.filter(f => inWin(f.date)).length, ...extraCounts() };
     allTrips.forEach(t => { if (inWin(t.date)) n[t.mode] = (n[t.mode] || 0) + 1; });
-    const rows = Object.entries(layers).filter(([k]) => k === 'flight' || n[k]);
+    // the tiles row stays while there are activities: hiding every type empties it, and the group must reach it again
+    const rows = Object.entries(layers).filter(([k]) => k === 'flight' || n[k] || (k === 'tile' && allActivities.length));
     const on = rows.filter(([, [, layer]]) => map.hasLayer(layer)).length;
+    const inGroup = k => k.startsWith('act-') || k === 'tile';
+    const group = rows.filter(([k]) => inGroup(k)), groupOn = group.filter(([, [, layer]]) => map.hasLayer(layer)).length;
+    const row = ([k, [label, layer, color]]) => `<label class="${inGroup(k) ? 'child' : ''}"><input type="checkbox" data-layer="${k}" ${map.hasLayer(layer) ? 'checked' : ''}>` +
+      `<span class="swatch" style="border-color:${getCSSVar(color)}"></span>${label}<span class="count">${n[k] || 0}</span></label>`;
+    const activities = allActivities.filter(a => inWin(a.date)).length;
     const box = document.getElementById('map-legend');
     box.innerHTML = `<label class="all"><input type="checkbox" data-layer="all" ${on === rows.length ? 'checked' : ''}>All layers</label>` +
-      rows.map(([k, [label, layer, color]]) => `<label><input type="checkbox" data-layer="${k}" ${map.hasLayer(layer) ? 'checked' : ''}>` +
-        `<span class="swatch" style="border-color:${getCSSVar(color)}"></span>${label}<span class="count">${n[k] || 0}</span></label>`).join('');
+      rows.map(r => r[0] === group[0]?.[0]
+        ? `<label class="group"><input type="checkbox" data-layer="act-group" ${groupOn === group.length ? 'checked' : ''}>Activities` +
+          `<span class="count">${activities.toLocaleString()}</span></label>` + row(r)
+        : row(r)).join('');
     box.querySelector('[data-layer="all"]').indeterminate = on > 0 && on < rows.length;
+    const g = box.querySelector('[data-layer="act-group"]');
+    if (g) g.indeterminate = groupOn > 0 && groupOn < group.length;
   };
 
   addPeriodControl();
@@ -822,7 +888,7 @@ function drawGround() {
     const pts = best.path ? decodePath(best.path) : [[best.from_lat, best.from_lon], [best.to_lat, best.to_lon]];
     const dates = trips.map(t => (t.date || '').slice(0, 10)).sort().reverse();
     const popup = `<b>${groundModes[best.mode].split(' ')[0]} ${escapeHTML(best.from)} → ${escapeHTML(best.to)}</b><br>` +
-      `<small>${trips.length} trip${trips.length !== 1 ? 's' : ''} · ${(best.distance || 0).toLocaleString()} km · ` +
+      `<small>${trips.length} trip${trips.length !== 1 ? 's' : ''} · ${fmtDist(best.distance || 0)} · ` +
       `${how[best.path_source] || 'looking up the track…'}</small><br>` +
       `<small>${dates.slice(0, 6).join(', ')}${dates.length > 6 ? ', …' : ''}</small>`;
     L.polyline(pts, {
@@ -906,9 +972,10 @@ function renderStats() {
   const airlines  = new Set(allFlights.map(f => f.airline).filter(Boolean));
 
   document.getElementById('s-flights').textContent   = allFlights.length.toLocaleString();
-  document.getElementById('s-distance').textContent  = totalKm >= 1e6
-    ? (totalKm / 1e6).toFixed(1) + 'M km'
-    : Math.round(totalKm / 1000).toLocaleString() + 'k km';
+  const totalDist = dist(totalKm);
+  document.getElementById('s-distance').textContent  = totalDist >= 1e6
+    ? (totalDist / 1e6).toFixed(1) + 'M ' + DU()
+    : Math.round(totalDist / 1000).toLocaleString() + 'k ' + DU();
   document.getElementById('s-earth').textContent     = `${(totalKm / 40075).toFixed(1)}× around Earth`;
   document.getElementById('s-hours').textContent     = totalHrs.toLocaleString() + ' h';
   document.getElementById('s-days').textContent      = `${Math.round(totalMin / 1440)} days`;
@@ -1016,7 +1083,7 @@ function renderTable(filter = '') {
       </td>
       <td class="dim">${f.flight_number || '—'}</td>
       <td>${f.airline || '—'}</td>
-      <td class="dim">${f.distance ? f.distance.toLocaleString() + ' km' : '—'}</td>
+      <td class="dim">${f.distance ? fmtDist(f.distance) : '—'}</td>
       <td class="dim">${f.duration || '—'}</td>
       <td class="dim">${f.plane || '—'}</td>
     </tr>
