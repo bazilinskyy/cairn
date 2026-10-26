@@ -10,6 +10,8 @@ const ground = require('./ground');
 const stravaSync = require('./strava');
 const activitySources = require('./activities');
 const cities = require('./cities');
+const regionLists = require('./regions');
+const zlib = require('zlib');
 
 // --- Config & Secret ---
 
@@ -168,6 +170,17 @@ function saveStays() {
   fs.writeFileSync(STAYS_FILE, JSON.stringify(stays, null, 2));
 }
 
+// Booking codes of stays you deleted (a cancelled booking, a plan that did not happen): a mail sending one again, such as
+// the history import, does not bring it back. Next to the stays file, as <name>.removed.json.
+const REMOVED_FILE = STAYS_FILE.replace(/(\.json)?$/, '.removed.json');
+let removedStays = new Set();
+try { removedStays = new Set(JSON.parse(fs.readFileSync(REMOVED_FILE, 'utf8'))); } catch (_) {}
+function removeStayCode(code) {
+  if (!code) return;
+  removedStays.add(code);
+  fs.writeFileSync(REMOVED_FILE, JSON.stringify([...removedStays], null, 2));
+}
+
 // A file an import script wrote (photos, Timeline), read again when it changes; [] or {} when there is none
 const imported = {};
 function readImport(file, empty) {
@@ -186,7 +199,9 @@ function lookUpTrips() {
   if (!config.ground_lookups) return;
   if (lookingUp) { lookAgain = true; return; }
   lookingUp = true;
-  const store = { trips, stays, flights: () => flights, airports: () => airports, save: saveTrips, saveStays };
+  // seen: where everything but the stays puts you on those days, to place a stay by
+  const seen = (from, to) => placesAndDays(from, to, { stays: false }).map(p => p.at);
+  const store = { trips, stays, flights: () => flights, airports: () => airports, save: saveTrips, saveStays, seen };
   ground.enrich(store).catch(e => console.warn('[ground]', e.message)).finally(() => {
     lookingUp = false;
     if (lookAgain) { lookAgain = false; lookUpTrips(); }
@@ -428,9 +443,19 @@ app.get('/api/stays', (_req, res) => {
 app.post('/api/stays', (req, res) => {
   const s = req.body;
   if (!s.code || !s.place || !s.start) return res.status(400).json({ error: 'code, place and start are required' });
+  if (removedStays.has(s.code)) return res.json({ ignored: 'deleted before', code: s.code });
   const same = stays.find(x => x.code === s.code);
+  // the same stay from Booking.com's data export (other numbers, same dates): it takes the mail's code and keeps its
+  // hotel's position, which a mail does not give
+  const exported = !same && stays.find(x => x.source === 'booking' && x.what === s.what && x.start === s.start && (x.end || '') === (s.end || ''));
+  if (exported) {
+    Object.assign(exported, { code: s.code, price: s.price || exported.price, type: s.type || exported.type });
+    saveStays();
+    return res.json(exported);
+  }
   if (same) {
     const { id, ...changes } = s;
+    if (same.source === 'booking') delete changes.place, delete changes.country;  // the hotel's place beats the mail's town
     ground.forgetStay(same, changes);
     Object.assign(same, changes);
   } else {
@@ -458,6 +483,7 @@ app.delete('/api/stays/:id', (req, res) => {
   if (i < 0) return res.status(404).json({ error: 'no such stay' });
   const [s] = stays.splice(i, 1);
   saveStays();
+  removeStayCode(s.code);
   res.json({ deleted: s.id });
 });
 
@@ -481,6 +507,19 @@ app.get('/api/activities', (req, res) => {
   res.send(json);
 });
 app.get('/api/activities/status', (_req, res) => res.json(activities.status()));
+
+// Famous cycling climbs and which your rides went over (climbs.js); [] when there are no rides
+const climbs = require('./climbs').create({
+  activities: () => activities.list(), key: () => activities.payload().etag, file: path.join(DATA_DIR, 'climb_ascents.json'),
+  profile: () => readImport(GARMIN_FILE, NO_GARMIN).profile, trackDir: path.join(DATA_DIR, 'tracks'),
+  towns: () => (towns === undefined ? (towns = cities.load(path.join(DATA_DIR, 'cities1000.txt'))) : towns)
+});
+app.get('/api/climbs', (_req, res) => res.json(climbs.list()));
+// one effort up a climb, point by point: /api/climbs/Q209064/efforts/<activity id>?from=Bédoin
+app.get('/api/climbs/:id/efforts/:ride', (req, res) => {
+  const e = climbs.effort(req.params.id, req.params.ride, req.query.from || '');
+  e ? res.json(e) : res.status(404).json({ error: 'no such effort (or no timed track for it)' });
+});
 app.get('/api/strava/status', (_req, res) => res.json(strava.status()));
 
 // Where you ride, run and so on: start towns and countries per kind of sport (as the Sports tab groups them)
@@ -517,7 +556,7 @@ app.get('/auth/strava/callback', async (req, res) => {
 let towns;  // GeoNames towns, read on first use (flightmail downloads data/cities1000.txt)
 
 // Each day and place you were somewhere, in the period ?from=YYYY-MM-DD&to=YYYY-MM-DD (both optional)
-function placesAndDays(from, to) {
+function placesAndDays(from, to, { stays: withStays = true } = {}) {
   const pts = [], inPeriod = d => d && (!from || d >= from) && (!to || d <= to);
   const add = (at, d, city) => { if (at && inPeriod(d)) pts.push({ at, day: d, city }); };
   const eachDay = (a, b, fn) => {  // a stay or Timeline visit: every day from the first to the last, at most 90
@@ -534,7 +573,7 @@ function placesAndDays(from, to) {
     if (t.from_lat != null) add([t.from_lat, t.from_lon], (t.date || '').slice(0, 10));
     if (t.to_lat != null) add([t.to_lat, t.to_lon], (t.date || '').slice(0, 10));
   });
-  stays.forEach(s => {
+  if (withStays) stays.forEach(s => {
     if (s.lat == null) return;
     if (s.what === 'car') add([s.lat, s.lon], s.start);
     else eachDay(s.start, s.end, d => add([s.lat, s.lon], d));
@@ -544,6 +583,141 @@ function placesAndDays(from, to) {
   activities.list().forEach(a => add(a.at, (a.date || '').slice(0, 10)));
   return pts;
 }
+
+// --- Countries as a list counts them: ISO codes, sovereign countries, Travelers' Century Club (regions.js) ---
+
+const regions = regionLists.create({ file: path.join(DATA_DIR, 'admin1.geojson'), download: httpsGet });
+
+// Per country (of the town each place belongs to): days there, separate visits, towns, first and last day, from every
+// source; and what happened there: nights in stays, flights in, trains, buses and ferries (from or to it), rental
+// cars, sports activities and their km, photos
+app.get('/api/countries', async (req, res) => {
+  if (towns === undefined) towns = cities.load(path.join(DATA_DIR, 'cities1000.txt'));
+  if (!towns) return res.json([]);
+  // ?scheme=iso|un|tcc: countries as that list counts them (regions.js); otherwise the town's country code
+  const scheme = regions.SCHEMES.includes(req.query.scheme) ? req.query.scheme : null;
+  if (scheme) {
+    try { await regions.ready(); } catch (e) { return res.status(502).json({ error: `Country map: ${e.message}` }); }
+  }
+  const from = req.query.from || '', to = req.query.to || '';
+  const inPeriod = d => d && (!from || d >= from) && (!to || d <= to);
+  const memo = new Map();
+  const townOf = (at, city) => {
+    if (!at) return null;
+    const key = at[0].toFixed(2) + ',' + at[1].toFixed(2) + (city ? '|' + city : '');
+    if (!memo.has(key)) memo.set(key, (city && cities.townNamed(towns, city, at[0], at[1])) || cities.townAt(towns, at[0], at[1]));
+    return memo.get(key);
+  };
+  const all = {};
+  const of = (at, city) => {
+    if (!at) return null;
+    const place = scheme ? regions.placeNow(scheme, at[0], at[1]) : townOf(at, city);
+    if (!place) return null;
+    const id = scheme ? place.id : place.cc;
+    return all[id] = all[id] || { country: id, name: scheme ? place.name : undefined, days: new Set(), towns: new Set(), nights: 0,
+      flights: 0, train: 0, bus: 0, ferry: 0, cars: 0, activities: 0, km: 0, photos: 0 };
+  };
+  placesAndDays(from, to).forEach(p => {
+    const v = of(p.at, p.city), t = townOf(p.at, p.city);
+    if (v) { v.days.add(p.day); if (t) v.towns.add(t.id); }
+  });
+  flights.forEach(f => {
+    const ap = airports[f.to];
+    if (ap && inPeriod((f.date || '').slice(0, 10))) { const v = of([ap.lat, ap.lon], ap.city); if (v) v.flights++; }
+  });
+  trips.forEach(t => {
+    if (!inPeriod((t.date || '').slice(0, 10)) || !['train', 'bus', 'ferry'].includes(t.mode)) return;
+    new Set([of(t.from_lat != null && [t.from_lat, t.from_lon]), of(t.to_lat != null && [t.to_lat, t.to_lon])]).forEach(v => { if (v) v[t.mode]++; });
+  });
+  stays.forEach(s => {
+    const v = s.lat != null && inPeriod(s.start) && of([s.lat, s.lon]);
+    if (!v) return;
+    if (s.what === 'car') v.cars++;
+    else v.nights += Math.max(1, Math.round((Date.parse(s.end || s.start) - Date.parse(s.start)) / 864e5));
+  });
+  activities.list().forEach(a => {
+    const v = inPeriod((a.date || '').slice(0, 10)) && of(a.at);
+    if (v) { v.activities++; v.km += a.distance || 0; }
+  });
+  readImport(PHOTOS_FILE, []).forEach(c => {
+    const v = (c.days || []).some(inPeriod) && of([c.lat, c.lon]);
+    if (v) v.photos += c.count || 0;
+  });
+  res.json(Object.values(all).filter(v => v.days.size).map(v => {
+    const days = [...v.days].sort();
+    const visits = days.filter((d, i) => !i || (Date.parse(d) - Date.parse(days[i - 1])) / 864e5 > 1).length;
+    return { ...v, days: days.length, visits, towns: v.towns.size, km: Math.round(v.km), first: days[0], last: days[days.length - 1] };
+  }).sort((a, b) => b.days - a.days));
+});
+
+app.get('/api/regions', async (req, res) => {
+  const scheme = regions.SCHEMES.includes(req.query.scheme) ? req.query.scheme : 'iso';
+  try {
+    const json = Buffer.from(JSON.stringify(await regions.visited(scheme, placesAndDays(req.query.from || '', req.query.to || ''))));
+    res.set('Vary', 'Accept-Encoding');
+    if (/\bgzip\b/.test(req.headers['accept-encoding'] || '')) return res.set({ 'Content-Encoding': 'gzip', 'Content-Type': 'application/json' }).send(zlib.gzipSync(json));
+    res.type('json').send(json);
+  } catch (e) {
+    res.status(502).json({ error: `Country map: ${e.message}` });
+  }
+});
+
+// One town, for its report page: the days and separate visits there, and everything done there in the period (?from=
+// &to=): stays and rental cars, flights in and out, trains, buses and ferries from or to it, sports activities that
+// started there, photos per day, Timeline places. A place belongs to a town as for the most visited cities.
+app.get('/api/city/:id', (req, res) => {
+  if (towns === undefined) towns = cities.load(path.join(DATA_DIR, 'cities1000.txt'));
+  if (!towns) return res.status(503).json({ error: 'no town list (data/cities1000.txt)' });
+  const id = Number(req.params.id);
+  let town = null;
+  for (const list of towns.values()) { town = list.find(t => t.id === id); if (town) break; }
+  if (!town) return res.status(404).json({ error: 'no such town' });
+  const from = req.query.from || '', to = req.query.to || '';
+  const inPeriod = d => d && (!from || d >= from) && (!to || d <= to);
+  const memo = new Map();
+  const here = (at, city) => {
+    if (!at || at[0] == null) return false;
+    const key = (+at[0]).toFixed(2) + ',' + (+at[1]).toFixed(2) + (city ? '|' + city : '');
+    if (!memo.has(key)) memo.set(key, (city && cities.townNamed(towns, city, at[0], at[1])) || cities.townAt(towns, at[0], at[1]));
+    return memo.get(key) === town;
+  };
+  const days = [...new Set(placesAndDays(from, to).filter(p => here(p.at, p.city)).map(p => p.day))].sort();
+  const visits = [];
+  days.forEach(d => {
+    const v = visits[visits.length - 1];
+    if (v && (Date.parse(d) - Date.parse(v.end)) / 864e5 <= 1) { v.end = d; v.days++; } else visits.push({ start: d, end: d, days: 1 });
+  });
+  const ap = code => airports[code] && [airports[code].lat, airports[code].lon];
+  const flightsHere = flights.filter(f => inPeriod((f.date || '').slice(0, 10)))
+    .map(f => ({ f, into: here(ap(f.to), airports[f.to]?.city), out: here(ap(f.from), airports[f.from]?.city) }))
+    .filter(x => x.into || x.out)
+    .map(({ f, into }) => ({ date: f.date, flight_number: f.flight_number, airline: f.airline, from: f.from, to: f.to,
+      from_city: airports[f.from]?.city, to_city: airports[f.to]?.city, direction: into ? 'in' : 'out' }));
+  const groundHere = trips.filter(t => inPeriod((t.date || '').slice(0, 10)) && (here([t.from_lat, t.from_lon]) || here([t.to_lat, t.to_lon])))
+    .map(t => ({ id: t.id, date: t.date, mode: t.mode, from: t.from, to: t.to, distance: t.distance }));
+  const staysHere = stays.filter(s => s.lat != null && (inPeriod(s.start) || inPeriod(s.end)) && here([s.lat, s.lon]))
+    .map(s => ({ id: s.id, what: s.what, start: s.start, end: s.end, place: s.place, hotel: s.hotel, type: s.type, provider: s.provider, price: s.price }));
+  const activitiesHere = activities.list().filter(a => a.at && inPeriod((a.date || '').slice(0, 10)) && here(a.at))
+    .map(a => ({ id: a.id, date: a.date, name: a.name, sport: a.sport, distance: a.distance, moving_time: a.moving_time, elevation: a.elevation, trainer: a.trainer }));
+  const photoDays = new Map();
+  readImport(PHOTOS_FILE, []).forEach(c => {
+    const ds = (c.days || []).filter(inPeriod);
+    if (!ds.length || !here([c.lat, c.lon])) return;
+    const each = (c.count || 0) / (c.days || []).length;  // a cell knows its days and its total: spread evenly
+    ds.forEach(d => photoDays.set(d, (photoDays.get(d) || 0) + each));
+  });
+  const timelineHere = (readImport(TIMELINE_FILE, {}).visits || [])
+    .filter(v => inPeriod(v.start.slice(0, 10)) && here([v.lat, v.lon])).map(v => ({ start: v.start, end: v.end, name: v.name }));
+  const sortBy = k => (a, b) => (b[k] || '').localeCompare(a[k] || '');  // newest first
+  res.json({
+    town: { id: town.id, name: town.name, country: town.cc, lat: town.lat, lon: town.lon, population: town.pop },
+    days: days.length, first: days[0], last: days[days.length - 1], visits: visits.reverse(),
+    stays: staysHere.sort(sortBy('start')), flights: flightsHere.sort(sortBy('date')), ground: groundHere.sort(sortBy('date')),
+    activities: activitiesHere.sort(sortBy('date')),
+    photos: [...photoDays].map(([day, n]) => ({ day, count: Math.max(1, Math.round(n)) })).sort(sortBy('day')),
+    timeline: timelineHere.sort(sortBy('start'))
+  });
+});
 
 app.get('/api/cities', (req, res) => {
   if (towns === undefined) towns = cities.load(path.join(DATA_DIR, 'cities1000.txt'));

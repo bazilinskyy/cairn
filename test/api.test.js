@@ -26,6 +26,9 @@ before(async () => {
   fs.copyFileSync(path.join(ROOT, 'strava.js'), path.join(dir, 'strava.js'));
   fs.copyFileSync(path.join(ROOT, 'cities.js'), path.join(dir, 'cities.js'));
   fs.copyFileSync(path.join(ROOT, 'activities.js'), path.join(dir, 'activities.js'));
+  fs.copyFileSync(path.join(ROOT, 'regions.js'), path.join(dir, 'regions.js'));
+  fs.copyFileSync(path.join(ROOT, 'country-lists.json'), path.join(dir, 'country-lists.json'));
+  ['climbs.js', 'ascents.js', 'efforts.js', 'climbs.json'].forEach(f => fs.copyFileSync(path.join(ROOT, f), path.join(dir, f)));
   fs.copyFileSync(path.join(ROOT, 'default.config'), path.join(dir, 'default.config'));
   fs.cpSync(path.join(ROOT, 'public'), path.join(dir, 'public'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'data'));
@@ -34,6 +37,10 @@ before(async () => {
     { id: 1, date: '2026-11-16 16:10:00', from: 'AMS', to: 'LIS', flight_number: 'KL1234', airline: 'KLM', distance: 1, duration: '02:55' },
     { id: 2, date: '2026-11-20 10:00:00', from: 'LIS', to: 'AMS', flight_number: 'KL1235', airline: 'KLM', distance: 1, duration: '02:45' },
   ]));
+  const square = (iso, code, lat, lon) => ({ type: 'Feature', properties: { iso_a2: iso, adm0_a3: '', iso_3166_2: code, adm1_code: code },
+    geometry: { type: 'Polygon', coordinates: [[[lon - 1, lat - 1], [lon + 1, lat - 1], [lon + 1, lat + 1], [lon - 1, lat + 1], [lon - 1, lat - 1]]] } });
+  fs.writeFileSync(path.join(dir, 'data', 'admin1.geojson'), JSON.stringify({ type: 'FeatureCollection', features: [
+    square('NL', 'NL-NH', 52.3, 4.8), square('PT', 'PT-11', 38.8, -9.1), square('ES', 'ES-TF', 28.4, -16.5)] }));
   fs.writeFileSync(path.join(dir, 'config'), JSON.stringify({ port: PORT, ground_lookups: false }));
   fs.writeFileSync(path.join(dir, 'secret'), '{}');
   server = spawn(process.execPath, ['app.js'], {
@@ -150,8 +157,48 @@ test('activities: Strava not set up, then the Garmin file read when it appears, 
     { count: 1, last_sync: '2024-06-01T10:00:00Z', error: '', error_at: '' });
 });
 
+test('climbs: none without rides', async () => {
+  assert.deepStrictEqual(await (await call('GET', '/api/climbs')).json(), []);
+});
+
 test('cities: none without the town list', async () => {
   assert.deepStrictEqual(await (await call('GET', '/api/cities?from=2024-01-01')).json(), []);
+});
+
+test('stays: a mail for a stay from the Booking.com export takes it over and keeps the hotel position', async () => {
+  const hotel = await (await call('POST', '/api/stays', { code: 'bk-1', what: 'stay', place: 'Ixelles', country: 'BE', start: '2025-04-29',
+    end: '2025-04-30', hotel: 'Hotel X', lat: 50.83, lon: 4.37, source: 'booking' })).json();
+  for (let i = 0; i < 2; i++) {  // the confirmation, then a reminder for the same booking
+    const s = await (await call('POST', '/api/stays', { code: '5555555555', what: 'stay', provider: 'Booking.com', place: 'Brussels',
+      country: 'Belgium', start: '2025-04-29', end: '2025-04-30', price: '€ 90' })).json();
+    assert.deepStrictEqual([s.id, s.code, s.place, s.lat, s.hotel, s.price], [hotel.id, '5555555555', 'Ixelles', 50.83, 'Hotel X', '€ 90']);
+  }
+  const all = await (await call('GET', '/api/stays')).json();
+  assert.strictEqual(all.filter(s => s.start === '2025-04-29').length, 1);
+  await call('DELETE', `/api/stays/${hotel.id}`);
+});
+
+test('stays: one deleted stays deleted when its booking is sent again', async () => {
+  const s = await (await call('POST', '/api/stays', { code: 'GONE1', what: 'stay', place: 'Split', start: '2020-04-03', end: '2020-04-05' })).json();
+  await call('DELETE', `/api/stays/${s.id}`);
+  const again = await (await call('POST', '/api/stays', { code: 'GONE1', what: 'stay', place: 'Split', start: '2020-04-03', end: '2020-04-05' })).json();
+  assert.strictEqual(again.ignored, 'deleted before');
+  assert.ok(!(await (await call('GET', '/api/stays')).json()).some(x => x.code === 'GONE1'));
+});
+
+test('countries as each list counts them: a stay on Tenerife is Spain, or the Canary Islands', async () => {
+  const stay = await (await call('POST', '/api/stays', { code: 'TF1', what: 'stay', place: 'Adeje', start: '2026-11-17', end: '2026-11-19', lat: 28.12, lon: -16.73 })).json();
+  const names = async scheme => {
+    const r = await (await call('GET', `/api/regions?scheme=${scheme}`)).json();
+    return [r.total, r.places.map(p => p.name).sort()];
+  };
+  assert.deepStrictEqual(await names('iso'), [250, ['Netherlands', 'Portugal', 'Spain']]);
+  assert.deepStrictEqual(await names('un'), [200, ['Netherlands', 'Portugal', 'Spain']]);
+  assert.deepStrictEqual(await names('tcc'), [330, ['Canary Islands', 'Netherlands', 'Portugal']]);
+  const r = await (await call('GET', '/api/regions?scheme=tcc&from=2026-11-17&to=2026-11-19')).json();
+  const canary = r.places.find(p => p.name === 'Canary Islands');
+  assert.deepStrictEqual([r.places.length, canary.days, canary.first, canary.shape.type], [1, 3, '2026-11-17', 'MultiPolygon']);
+  await call('DELETE', `/api/stays/${stay.id}`);
 });
 
 test('listens on 127.0.0.1 only', async (t) => {

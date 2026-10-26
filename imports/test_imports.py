@@ -177,3 +177,22 @@ if __name__ == "__main__":
     for t in tests:
         t()
     print(f"OK {len(tests)} tests")
+
+
+def test_garmin_vehicle_part():
+    """A hike whose last part is a car ride is caught; a fast descent on a bike is not."""
+    from datetime import datetime, timedelta, timezone
+    import garmin
+    t0 = datetime(2026, 5, 1, 10, tzinfo=timezone.utc)
+    def track(speeds_kmh, alt=lambda i: 100):  # a point every 10 s going north at each speed
+        pts, lat = [], 45.0
+        for i, v in enumerate(speeds_kmh):
+            pts.append((t0 + timedelta(seconds=10 * i), lat, 6.0, alt(i), None, None))
+            lat += v / 3.6 * 10 / 111320
+        return {"track": pts}
+    hike = track([5] * 360 + [80] * 60)  # an hour walking, then 10 minutes at 80 km/h
+    v = garmin.vehicle_part(hike, "Hike")
+    assert v and v["to_end"] and 4.5 < v["from_km"] < 5.5 and 12 < v["km"] < 14, v
+    assert garmin.vehicle_part(track([5] * 400), "Hike") is None
+    assert garmin.vehicle_part(track([25] * 200 + [65] * 60, alt=lambda i: 2000 - max(0, i - 200) * 15), "Ride") is None  # descending
+    assert garmin.vehicle_part(track([25] * 200 + [90] * 60), "Ride")["to_end"]

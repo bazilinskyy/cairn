@@ -11,9 +11,11 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/topojson-client@3.1.0/dist/topojson-client.min.js"></script>
   <script src="layers.js"></script>
   <script src="sports.js"></script>
+  <script src="city.js"></script>
+  <script src="terrain.js"></script>
+  <script src="climb.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -43,6 +45,7 @@
       --sport:    #c98500;
       --tile:     #66bb6a;
       --city:     #eceff1;
+      --climb:    #c0ca33;
     }
 
     [data-theme="light"] {
@@ -70,6 +73,7 @@
       --sport:     #eda100;
       --tile:      #2e7d32;
       --city:      #37474f;
+      --climb:     #827717;
     }
 
     html, body { height: 100%; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; }
@@ -130,13 +134,21 @@
     /* --- Map --- */
     #map { flex: 1; }
     .leaflet-container { background: #1a1a2e !important; }
-    .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(0.85) saturate(0.6); }
+    #map[data-basemap="auto"] .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(0.85) saturate(0.6); }
     /* Re-invert controls so they stay readable */
     .leaflet-control { filter: invert(1) hue-rotate(180deg); }
 
     [data-theme="light"] .leaflet-container { background: #e8eff4 !important; }
-    [data-theme="light"] .leaflet-tile-pane { filter: none; }
+    [data-theme="light"] #map[data-basemap="auto"] .leaflet-tile-pane { filter: none; }
     [data-theme="light"] .leaflet-control   { filter: none; }
+    /* Base maps chosen in the settings (layers.js BASEMAPS) */
+    #map[data-basemap="grey"] .leaflet-tile-pane { filter: grayscale(1) contrast(0.8) brightness(1.08); }
+    #map[data-basemap="grey"].leaflet-container { background: #e6e6e6 !important; }
+    #map[data-basemap="grey-dark"] .leaflet-tile-pane { filter: grayscale(1) invert(1) contrast(0.75) brightness(0.8); }
+    #map[data-basemap="grey-dark"].leaflet-container { background: #262626 !important; }
+    [data-theme="dark"] #map[data-basemap="satellite"] .leaflet-tile-pane,
+    [data-theme="dark"] #map[data-basemap="topo"] .leaflet-tile-pane,
+    [data-theme="dark"] #map[data-basemap="colour"] .leaflet-tile-pane { filter: brightness(0.85); }
 
     /* Popup */
     .leaflet-popup-content-wrapper, .leaflet-popup-tip {
@@ -163,6 +175,14 @@
     .map-legend .swatch { width: 18px; height: 0; border-top: 3px solid; display: inline-block; }
     .map-legend .count { color: var(--text2); margin-left: auto; padding-left: 8px; }
     .map-locate { display: flex !important; align-items: center; justify-content: center; color: #333; }
+    .map-3d { display: flex !important; align-items: center; justify-content: center; color: #333 !important; font-weight: 700; font-size: 12px; }
+    /* the 3D view (terrain.js) covers the 2D map */
+    #tab-map { position: relative; }
+    #map3d { position: absolute; inset: 0; z-index: 1000; background: #000; }
+    #map3d[hidden] { display: none; }
+    #map3d-canvas { position: absolute; inset: 0; }
+    #map3d .map3d-close { position: absolute; top: 12px; left: 12px; z-index: 2; background: var(--surface); color: var(--text); box-shadow: 0 2px 8px rgba(0,0,0,0.3); }
+    .maplibregl-popup-content { background: var(--surface); color: var(--text); }
     .map-legend .group { font-weight: 600; margin-top: 2px; }
     .map-legend .child { padding-left: 18px; }
     .map-legend .all { border-bottom: 1px solid var(--border); margin-bottom: 3px; padding-bottom: 2px; font-weight: 600; }
@@ -236,6 +256,12 @@
     .sp-table td .sp-link:hover { text-decoration: underline; }
     .sp-table tr.sp-hi { background: color-mix(in srgb, var(--accent) 8%, transparent); }
     .sp-rank { color: var(--text2); width: 20px; }
+    .country-fill { shape-rendering: crispEdges; }
+    .popup-link { display: inline-block; margin-top: 6px; color: var(--accent); font-weight: 600; text-decoration: none; }
+    .popup-link:hover { text-decoration: underline; }  /* no hairlines between a country's provinces */
+    .country-stats th[data-sort] { cursor: pointer; white-space: nowrap; }
+    .country-stats th.sorted { color: var(--accent); }
+    .country-stats td { text-align: right; }
     .sp-tip { display: none; position: fixed; z-index: 3000; pointer-events: none; background: var(--surface); color: var(--text);
       border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; font-size: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.3); }
 
@@ -341,7 +367,8 @@
 
   <!-- MAP -->
   <div id="tab-map" class="tab-content active">
-    <div id="map"></div>
+    <div id="map" data-basemap="auto"></div>
+    <div id="map3d" hidden><div id="map3d-canvas"></div><button class="btn btn-ghost map3d-close" onclick="close3D()">← 2D map</button></div>
   </div>
 
   <!-- STATS -->
@@ -397,6 +424,12 @@
           <div id="top-cities"></div>
         </div>
       </div>
+
+      <div class="chart-section" style="margin-top:24px">
+        <h3>Countries</h3>
+        <div class="sp-scroll"><table class="sp-table country-stats" id="country-stats"></table></div>
+        <p class="sp-note">A day counts in a country when you were there that day by any source (flights, trains, buses and ferries, stays, rental cars, photos, Timeline, sports activities); trains, buses and ferries count in both countries they connect. Countries are counted as chosen in the settings (⚙️). Click a column to sort.</p>
+      </div>
     </div>
   </div>
 
@@ -417,6 +450,32 @@
       <div id="sports-body"></div>
     </div>
     <div id="sp-tip" class="sp-tip"></div>
+  </div>
+
+  <!-- CITY REPORT (city.js), opened from a city on the map -->
+  <div id="tab-city" class="tab-content">
+    <div class="stats-page">
+      <div class="sp-head">
+        <button class="btn btn-ghost" onclick="closeCityReport()">← Map</button>
+        <h2 id="city-title"></h2>
+        <button class="btn btn-ghost" onclick="closeCityReport(true)">Show on the map</button>
+      </div>
+      <p class="sp-note" id="city-sub" style="margin: -12px 0 20px"></p>
+      <div id="city-body"></div>
+    </div>
+  </div>
+
+  <!-- CLIMB PAGE (climb.js), opened from the Sports tab or a climb on the map -->
+  <div id="tab-climb" class="tab-content">
+    <div class="stats-page">
+      <div class="sp-head">
+        <button class="btn btn-ghost" onclick="closeClimb()">← Sports</button>
+        <h2 id="climb-title"></h2>
+        <button class="btn btn-ghost" onclick="closeClimb(true)">Show on the map</button>
+      </div>
+      <p class="sp-note" id="climb-sub" style="margin: -12px 0 20px"></p>
+      <div id="climb-body"></div>
+    </div>
   </div>
 
   <!-- FLIGHTS -->
@@ -530,6 +589,18 @@
       <label><input type="radio" name="set-tiles" value="17"> Squadratinhos: zoom 17, about 200 m</label>
       <label><input type="checkbox" id="set-grid"> Show the grid of all tiles when zoomed in</label>
     </fieldset>
+    <fieldset class="settings-group" id="set-basemap-group">
+      <legend>Map</legend>
+    </fieldset>
+    <fieldset class="settings-group" id="set-lines-group">
+      <legend>Lines and markers</legend>
+    </fieldset>
+    <fieldset class="settings-group">
+      <legend>Countries</legend>
+      <label><input type="radio" name="set-countries" value="iso"> ISO countries and territories (250): Greenland, Puerto Rico, Hong Kong count apart</label>
+      <label><input type="radio" name="set-countries" value="un"> Sovereign countries (200): UN members and observers, Kosovo, Taiwan, Northern Cyprus, Cook Islands, Niue; territories count for none</label>
+      <label><input type="radio" name="set-countries" value="tcc"> Travelers' Century Club (330): islands, parts of countries and claims count apart</label>
+    </fieldset>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeSettings()">Cancel</button>
       <button class="btn btn-primary" onclick="saveSettings()">Save</button>
@@ -579,7 +650,7 @@ function toggleTheme() {
 }
 
 let airportLayer = null;
-let clusterMode  = false;
+let clusterMode  = localStorage.getItem('clusterMode') === '1';  // remembered in this browser
 const routeLayer  = L.layerGroup();  // flights
 const groundModes = { train: '🚆 Trains', bus: '🚌 Buses', ferry: '⛴️ Ferries' };
 const groundLayer = Object.fromEntries(Object.keys(groundModes).map(m => [m, L.layerGroup()]));
@@ -656,9 +727,18 @@ async function doTripItImport() {
 // --- Settings (layers.js keeps them) ---
 
 function openSettings() {
+  const radios = (id, name, list, value) => {
+    const box = document.getElementById(id);
+    box.querySelectorAll('label').forEach(l => l.remove());
+    Object.entries(list).forEach(([k, v]) => box.insertAdjacentHTML('beforeend',
+      `<label><input type="radio" name="${name}" value="${k}" ${k === value ? 'checked' : ''}> ${v.label}</label>`));
+  };
+  radios('set-basemap-group', 'set-basemap', BASEMAPS, prefs.basemap);
+  radios('set-lines-group', 'set-lines', LINE_STYLES, prefs.lines);
   document.querySelector(`input[name="set-units"][value="${prefs.units}"]`).checked = true;
   document.querySelector(`input[name="set-tiles"][value="${prefs.tileZoom}"]`).checked = true;
   document.getElementById('set-grid').checked = prefs.grid;
+  document.querySelector(`input[name="set-countries"][value="${prefs.countries}"]`).checked = true;
   document.getElementById('settings-modal').classList.add('open');
 }
 function closeSettings() {
@@ -668,11 +748,16 @@ function saveSettings() {
   savePrefs({
     units: document.querySelector('input[name="set-units"]:checked').value,
     tileZoom: +document.querySelector('input[name="set-tiles"]:checked').value,
-    grid: document.getElementById('set-grid').checked
+    grid: document.getElementById('set-grid').checked,
+    countries: document.querySelector('input[name="set-countries"]:checked').value,
+    basemap: document.querySelector('input[name="set-basemap"]:checked')?.value || prefs.basemap,
+    lines: document.querySelector('input[name="set-lines"]:checked')?.value || prefs.lines
   });
+  if (map) setBasemap();
   closeSettings();
   if (map) redrawMap();
   renderStats();
+  renderCountryStats();
   renderTable(document.getElementById('search').value);
   if (document.getElementById('tab-sports').classList.contains('active')) renderSports();
 }
@@ -706,13 +791,16 @@ function toast(msg, type = 'success') {
 // --- Map ---
 
 function initMap() {
-  map = L.map('map', { center: [30, 15], zoom: 2, zoomControl: false });
+  // where the map was when you left it, in this browser
+  let view = null;
+  try { view = JSON.parse(localStorage.getItem('contrail-view') || 'null'); } catch (_) {}
+  map = L.map('map', { center: view?.center || [30, 15], zoom: view?.zoom ?? 2, zoomControl: false });
+  map.on('moveend', () => {
+    try { localStorage.setItem('contrail-view', JSON.stringify({ center: [map.getCenter().lat, map.getCenter().lng], zoom: map.getZoom() })); } catch (_) {}
+  });
   L.control.zoom({ position: 'bottomright' }).addTo(map);  // the filters box has the top left corner
 
-  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-    maxZoom: 19
-  }).addTo(map);
+  setBasemap();
   initExtraPanes();
 
   // Cluster toggle control
@@ -731,6 +819,7 @@ function initMap() {
     }
   });
   new ClusterToggle().addTo(map);
+  showClusterMode();
 
   // Which lines to show; remembered in this browser
   let hidden = [];
@@ -739,6 +828,11 @@ function initMap() {
     ...Object.fromEntries(Object.entries(groundModes).map(([m, label]) => [m, [label, groundLayer[m], '--' + m]])),
     ...extraLayers() };
   Object.entries(layers).forEach(([k, [, layer]]) => { if (!hidden.includes(k)) layer.addTo(map); });
+  // the layers not on the map now, kept for the next visit (also after a layer was shown from elsewhere)
+  rememberLayers = () => {
+    hidden = Object.keys(layers).filter(k => !map.hasLayer(layers[k][1]));
+    try { localStorage.setItem('hiddenLines', JSON.stringify(hidden)); } catch (_) {}
+  };
   const Legend = L.Control.extend({
     options: { position: 'topright' },
     onAdd() {
@@ -756,7 +850,7 @@ function initMap() {
         if (k === 'all') box.querySelectorAll('input[data-layer]:not([data-layer="all"]):not([data-layer="act-group"])').forEach(i => show(i.dataset.layer, e.target.checked));
         else if (k === 'act-group') box.querySelectorAll('label.child input').forEach(i => show(i.dataset.layer, e.target.checked));
         else show(k, e.target.checked);
-        try { localStorage.setItem('hiddenLines', JSON.stringify(hidden)); } catch (_) {}
+        rememberLayers();
         afterToggle();  // activities by type: redrawn when the types shown change
         drawLegend();
       });
@@ -790,7 +884,7 @@ function initMap() {
   redrawMap();
 }
 
-let drawLegend = () => {};
+let drawLegend = () => {}, rememberLayers = () => {};
 
 // Everything on the map, for the period shown (layers.js)
 function redrawMap() {
@@ -948,7 +1042,11 @@ function drawAirports() {
 
 function toggleCluster() {
   clusterMode = !clusterMode;
+  try { localStorage.setItem('clusterMode', clusterMode ? '1' : '0'); } catch (_) {}
   drawAirports();
+  showClusterMode();
+}
+function showClusterMode() {
   const btn = document.getElementById('cluster-toggle');
   btn.innerHTML = clusterMode ? '⊕ Cluster' : '· Individual';
   btn.title     = clusterMode ? 'Switch to individual markers' : 'Switch to clustered markers';
@@ -1042,6 +1140,30 @@ async function renderTopCities() {
       <span class="name">${flagOf(c.country)}${escapeHTML(c.name)}</span>
       <span class="count" title="${c.visits} visits">${c.days} d</span>
     </div>`).join('') || '<small>Nothing yet</small>';
+}
+
+// Per country, all time (app.js /api/countries); sorted by the column clicked
+let countryStats = [], countrySort = ['days', -1];
+async function renderCountryStats(fetchAgain = true) {
+  if (fetchAgain) countryStats = await fetch(`/api/countries?scheme=${prefs.countries}`).then(r => r.ok ? r.json() : []).catch(() => []);
+  const names = new Intl.DisplayNames(['en'], { type: 'region' }), name = c => { try { return c.name || names.of(c.country) || c.country; } catch (_) { return c.country; } };
+  const cols = [['country', 'Country'], ['days', 'Days'], ['visits', 'Visits'], ['nights', 'Nights in stays'], ['flights', 'Flights in'],
+    ['train', 'Trains'], ['bus', 'Buses'], ['ferry', 'Ferries'], ['cars', 'Rental cars'], ['activities', 'Activities'], ['km', DU()],
+    ['photos', 'Photos'], ['towns', 'Towns'], ['first', 'First'], ['last', 'Last']];
+  const [key, dir] = countrySort;
+  const rows = [...countryStats].sort((a, b) => key === 'country' ? dir * name(a).localeCompare(name(b))
+    : (a[key] > b[key] ? 1 : a[key] < b[key] ? -1 : 0) * dir || b.days - a.days);
+  const cell = (c, k) => k === 'km' ? (c.km ? Math.round(dist(c.km)).toLocaleString() : '') : ['first', 'last'].includes(k) ? c[k].slice(0, 7)
+    : c[k] ? c[k].toLocaleString() : '';
+  const table = document.getElementById('country-stats');
+  table.innerHTML = '<thead><tr>' + cols.map(([k, label]) => `<th data-sort="${k}" class="${k === key ? 'sorted' : ''}">${label}${k === key ? (dir < 0 ? ' ↓' : ' ↑') : ''}</th>`).join('') +
+    '</tr></thead><tbody>' + rows.map(c => '<tr><th>' + flagOf(c.country) + escapeHTML(name(c)) + '</th>' +
+      cols.slice(1).map(([k]) => `<td>${cell(c, k)}</td>`).join('') + '</tr>').join('') + '</tbody>';
+  table.querySelectorAll('th[data-sort]').forEach(th => th.addEventListener('click', () => {
+    const k = th.dataset.sort;
+    countrySort = [k, countrySort[0] === k ? -countrySort[1] : (k === 'country' ? 1 : -1)];
+    renderCountryStats(false);
+  }));
 }
 
 // --- Flights table ---
@@ -1230,6 +1352,7 @@ async function init() {
   loadStrava();  // thousands of activities: after the rest of the map is up
   renderStats();
   renderTopCities();
+  renderCountryStats();
   initSports();
   renderTable();
 

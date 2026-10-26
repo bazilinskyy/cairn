@@ -6,6 +6,7 @@
 
 const UA = 'contrail (personal travel log; https://github.com/bazilinskyy/contrail)';
 const PHOTON = 'https://photon.komoot.io/api/';
+const PHOTON_REVERSE = 'https://photon.komoot.io/reverse';
 const TRANSITOUS = 'https://api.transitous.org/api/v5/plan';
 const OSRM = 'https://router.project-osrm.org/route/v1/driving/';
 const TRANSIT_MODES = { train: 'RAIL', bus: 'COACH,BUS', ferry: 'FERRY' };
@@ -21,6 +22,7 @@ const AIRPORT_RX =/airport|aeroport|aéroport|aeropuerto|flughafen|luchthaven|lo
 const NEAR_DAYS = 21;    // the last arrival this many days before a trip is where it starts from
 const START_KM = 1500;   // a trip starts at most this far from that last arrival
 const LEG_KM = 1500;     // and is at most this long
+const STAY_KM = 300;     // a stay is at most this far from where the rest of your data puts you on its days
 
 // --- geometry ---
 
@@ -147,12 +149,35 @@ function variants(name) {
 }
 
 const geoCache = new Map();
-async function geocode(name, bias, maxKm) {
+// A place named only by what it is ("Port", "Bus station"): the nearest such place to the other end of the trip, as
+// a calendar entry "Valverde - Port" means El Hierro's ferry port, not a town called Port somewhere else
+const BARE = [
+  [/^(the )?(port|harbou?r|ferry( terminal| port)?)$/i, 'amenity:ferry_terminal'],  // not "Porto" or "Puerto": towns
+  [/^(the )?(central )?bus (station|terminal)$/i, 'amenity:bus_station'],
+  [/^(the )?((central|main|train|railway) )?station$/i, 'railway:station'],
+];
+const BARE_KM = 40;
+
+async function nearestOf(tag, around) {
+  const key = `reverse|${tag}|${around.map(x => x.toFixed(2)).join(',')}`;
+  if (!geoCache.has(key)) {
+    const p = new URLSearchParams({ lat: around[0], lon: around[1], radius: BARE_KM, limit: '1', osm_tag: tag });
+    const d = await getJSON(`${PHOTON_REVERSE}?${p}`);
+    const f = (d.features || [])[0];
+    geoCache.set(key, f ? [{ at: [f.geometry.coordinates[1], f.geometry.coordinates[0]] }] : []);
+  }
+  return geoCache.get(key)[0]?.at || null;
+}
+
+async function geocode(name, bias, maxKm, lang = '') {
+  const bare = BARE.find(([rx]) => rx.test((name || '').trim()));
+  if (bare) return bias ? nearestOf(bare[1], bias) : null;  // with nothing to be near, any "Port" would be a guess
   const tags = AIRPORT_RX.test(name || '') ? ['aeroway:aerodrome'] : PLACE_TAGS;
   for (const [q, shortened] of variants(name)) {
-    const key = `${q}|${bias ? bias.map(x => x.toFixed(0)).join(',') : ''}`;
+    const key = `${q}|${bias ? bias.map(x => x.toFixed(0)).join(',') : ''}|${lang}`;
     if (!geoCache.has(key)) {
       const p = new URLSearchParams({ q, limit: '8' });
+      if (lang) p.set('lang', lang);  // names in that language ("Lisbon"), else each place's own ("Lisboa")
       tags.forEach(t => p.append('osm_tag', t));
       if (bias) p.set('lat', bias[0]), p.set('lon', bias[1]), p.set('zoom', '10'), p.set('location_bias_scale', '0.2');
       const d = await getJSON(`${PHOTON}?${p}`);
@@ -268,11 +293,22 @@ async function route(trip) {
 }
 
 // Where a hotel, Airbnb or rental car pick-up is: "Gradsko, North Macedonia", near the traveller's last arrival
-async function placeStay(stay, flights, trips, airports) {
-  const near = startNear({ date: `${stay.start} 12:00:00` }, flights, trips, airports);
+// Where a stay is: near where the rest of your data (flights, trains, photos, activities, Timeline: `seen`, points
+// [lat, lon] on its days) puts you then; with none of that, near your last arrival before it; else the biggest place of
+// that name ("Beijing" the city, not a village called Beijing).
+async function placeStay(stay, flights, trips, airports, seen = []) {
+  const ap = /^[A-Z]{3}$/.test(stay.place || '') && airports[stay.place];  // a car picked up at an airport, by its code
+  if (ap) { [stay.lat, stay.lon] = [ap.lat, ap.lon]; return; }
   const name = stay.country ? `${stay.place}, ${stay.country}` : stay.place;
-  const p = await geocode(name, near, near ? START_KM : null) || (near && await geocode(name, null, null));
-  if (p) [stay.lat, stay.lon] = p;
+  // English names first: trip docs and booking mails say "Lisbon" and "Naples", which Photon's own names ("Lisboa",
+  // "Napoli") do not match, leaving Lisbon, Iowa and Naples, Florida
+  const look = async (bias, maxKm) => await geocode(name, bias, maxKm, 'en') || await geocode(name, bias, maxKm);
+  const there = seen.length ? seen[Math.floor(seen.length / 2)] : null;
+  const near = startNear({ date: `${stay.start} 12:00:00` }, flights, trips, airports);
+  const p = (there && await look(there, STAY_KM)) || (!there && near && await look(near, START_KM)) || await look(null, null);
+  // a campsite or an area the map does not know ("Noah Beach camping area"): where your data puts you then
+  const at = p || there;
+  if (at) [stay.lat, stay.lon] = at;
   else stay.unplaced = true;
 }
 
@@ -300,7 +336,7 @@ async function enrich(store, log = console.log) {
   for (const stay of [...(store.stays || [])]) {
     if (stay.lat != null || stay.unplaced || !store.stays.includes(stay)) continue;
     try {
-      await placeStay(stay, store.flights(), store.trips, store.airports());
+      await placeStay(stay, store.flights(), store.trips, store.airports(), store.seen ? store.seen(stay.start, stay.end || stay.start) : []);
       if (stay.unplaced) log(`[ground] could not place stay ${stay.start} ${stay.place}`);
       store.saveStays();
     } catch (e) {
@@ -328,4 +364,4 @@ function forget(trip, changes) {
   if (moved) delete trip.unplaced, delete trip.path, delete trip.path_source;
 }
 
-module.exports = { km, decode, encode, simplify, plausible, planTime, startNear, forget, forgetStay, enrich, pick, similar, geocode };
+module.exports = { km, decode, encode, simplify, plausible, planTime, startNear, forget, forgetStay, enrich, pick, similar, geocode, placeStay };

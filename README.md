@@ -30,11 +30,11 @@ Contrail:
 - **World map** of all your routes with great-circle arcs and airport markers (clustered when zoomed out)
 - **Trains, buses and ferries** on the same map, each mode in its own colour, along the real track where one is found (see [Ground trips](#ground-trips))
 - **Hotels, Airbnbs and rental cars** from your booking emails, **photos** from your photo library and **Google Maps Timeline**, and the **countries** you have been to (see [The map](#the-map))
-- **Sports activities** from Garmin (its data export, then an hourly sync) or Strava, and the **map tiles** they explored, with the max square and cluster, as statshunters counts them; quick with thousands of activities
+- **Sports activities** from Garmin (its data export, then a nightly sync) or Strava, and the **map tiles** they explored, with the max square and cluster, as statshunters counts them; quick with thousands of activities
 - Your **most visited cities**, on the map and in the stats
 - A **Sports** tab for your Strava activities, cycling and running first: Eddington numbers, the year race, every day of a year, when you go out, explored tiles over time, records, best efforts, year by year and where you go
 - **Trips**, a **period** of years, and **where you were** on any day
-- **Stats dashboard**: total distance, flight hours, airports, countries, airlines, top routes and flights per year
+- **Stats dashboard**: total distance, flight hours, airports, countries, airlines, top routes and flights per year; and a table per country: days there, separate visits, nights in stays, flights in, trains, buses and ferries, rental cars, activities and their distance, photos, towns, first and last visit
 - **Flight list** with search and sortable columns
 - **Add a flight by flight number and date**: airports, airline, aircraft and duration are looked up via AeroDataBox
 - **Imports** from openflights.org (CSV) and TripIt (calendar link or OAuth)
@@ -63,11 +63,15 @@ flightmail:
 | `activities.js` | all sports activities from every source (Garmin, Strava), each once |
 | `strava.js` | Strava sign-in, the activity list and each activity's explored tiles (Strava's API needs a paid subscription) |
 | `cities.js` | most visited cities: places and days put in their towns (GeoNames) |
+| `regions.js`, `country-lists.json` | countries as a list counts them: ISO codes, sovereign countries or the Travelers' Century Club's 330 (Natural Earth states and provinces) |
 | `public/index.html` | Contrail web page (map, stats, list) |
 | `public/sports.js` | the Sports tab: cards, charts and tables of your Strava activities |
+| `public/city.js` | a town's report page, opened from a city on the map |
+| `public/terrain.js` | the 3D view: globe and terrain (MapLibre GL) with activities and climbs |
+| `climbs.js`, `ascents.js`, `climbs.json` | famous cycling climbs, their ways up (roads and terrain heights) and which your rides went up |
 | `public/layers.js` | the map's stays, rental cars, photos, Timeline, Strava activities and tiles, countries, trips, period and "where on" |
 | `imports/photos.py`, `imports/timeline.py` | photo places and Google Timeline into Contrail (see [The map](#the-map)) |
-| `imports/garmin.py`, `imports/install_garmin.sh` | Garmin activities into Contrail: the data export, the sign-in and the hourly sync (see [Sports activities](#sports-activities)) |
+| `imports/garmin.py`, `imports/install_garmin.sh` | Garmin activities into Contrail: the data export, the sign-in and the nightly sync (see [Sports activities](#sports-activities)) |
 | `imports/test_imports.py`, `imports/fixtures/` | tests of the import scripts, and a made-up Garmin activity file |
 | `default.config`, `default.secret` | committed templates for `config` and `secret` (see [Setup](#setup)) |
 | `test/*.test.js` | tests of the Contrail API, `ground.js`, `strava.js`, `cities.js` and the Sports tab's numbers |
@@ -314,7 +318,7 @@ The sign-in asks for full Drive access, because the trip docs you made yourself 
 | `~/.flightmail/flightmail.app` | the app that holds the Calendar permission |
 | `~/.flightmail/google_client.json`, `google_token.json` | the Google OAuth client and refresh token for the trip docs; never in the repo |
 
-Other commands: `mail/flightmail.py calendars` lists the calendars EventKit sees. `mail/flightmail.py history [--days N] [--dry-run]` sends the stays, rental cars, trains, buses and ferries of past years (default 6000 days) from the mail into Contrail's map, never into the calendar or the trip docs; the hourly run only handles trips still ahead. It is safe to run again. `--rescan-days N` reads all matching mail of the last N days again, for example after new rules were added (`open -W --env FLIGHTMAIL_ARGS="--rescan-days 365" ~/.flightmail/flightmail.app`); nothing is added twice.
+Other commands: `mail/flightmail.py calendars` lists the calendars EventKit sees. `mail/flightmail.py history [--days N] [--dry-run]` sends the stays, rental cars, trains, buses and ferries of past years (default 6000 days) from the mail into Contrail's map, never into the calendar or the trip docs; the hourly run only handles trips still ahead. A booking whose place, code or date could not be read is listed in its output and left out. It is safe to run again. `--rescan-days N` reads all matching mail of the last N days again, for example after new rules were added (`open -W --env FLIGHTMAIL_ARGS="--rescan-days 365" ~/.flightmail/flightmail.app`); nothing is added twice.
 
 To remove the hourly job:
 
@@ -342,8 +346,16 @@ The legend at the top right shows or hides each layer, with how many it holds in
 - **Timeline**: the places and daily paths of Google Maps Timeline. From `imports/timeline.py` (below).
 - **Activities**: your sports activities (see [Sports activities](#sports-activities)), a group in the legend with a row per type, **Cycling**, **Running**, **Walks & hikes** and **Other sports** (orange, violet, magenta, yellow), and **Explored tiles**; the group's box turns them all on or off, a type's box shows it alone. Activities without a route (indoor, virtual, swims without GPS) are counted but not drawn.
 - **Explored tiles**: the map squares your activities passed through, as [statshunters](https://www.statshunters.com) and VeloViewer count them: tiles at zoom 14 (about 1.5 km in the Netherlands), or squadratinhos at zoom 17 (about 200 m), as chosen in the settings. Zoomed in far enough, the grid of all tiles shows (can be turned off), so the unexplored ones you could ride or run to stand out. Darker: your **max cluster**, the biggest group of tiles whose four neighbours are explored too. Dashed: your **max square**, the biggest square of explored tiles; click it for the numbers. The legend shows the tile count and the square's size, for the period and the activity types shown.
-- **Countries** you have been to, shaded, with the day of your first visit in each. A country counts when you landed there (not only to change planes), took a train, bus or ferry there, stayed, rented a car, took a photo, started a Strava activity or Timeline saw you there. The country shapes come from [world-atlas](https://github.com/topojson/world-atlas) (Natural Earth).
+- **Countries** you have been to, shaded, with your days there, first and last visit; the legend shows how many of the list's countries you have. A country counts when you were there on a day by any source: you landed or took off there (not only to change planes), took a train, bus or ferry there, stayed, rented a car, took a photo, started an activity or Timeline saw you there. Choose in the settings how countries are counted:
+  - **ISO countries and territories** (250): every ISO 3166 country code, and Kosovo. Greenland, Puerto Rico, Hong Kong, Réunion and Svalbard count apart.
+  - **Sovereign countries** (200): the 193 UN members, the Vatican and Palestine, Cook Islands, Niue, Kosovo, Taiwan and Northern Cyprus, as the Travelers' Century Club takes them. A territory (Greenland, Réunion) counts for none.
+  - **[Travelers' Century Club](https://travelerscenturyclub.org/countries-and-territories)** (330): islands, parts of countries and claims count apart: the Canary Islands, Sicily, Scotland, Alaska, Russia in Asia, Turkey in Europe, Zanzibar, the Antarctic claims.
+
+  Each place is put in its state or province from [Natural Earth](https://www.naturalearthdata.com)'s 1:10m map (`data/admin1.geojson`, 40 MB, downloaded on first use), and that in a country of the list (`country-lists.json`: whole countries, provinces, and boxes for islands Natural Earth does not draw apart). A point just off the coast goes to the province within about 20 km. Choices made for the Travelers' Century Club list: Russia is split at the federal districts (Urals and east are Asia); Crimea counts as Ukraine; the Amami islands stay Japan, not Ryukyu; Kashmir is the Indian-administered part; where the Antarctic claims overlap, the Argentine one counts.
 - **Cities**: every town you have been to, sized by the days you were there, the ten most visited labelled; click one for its days, separate visits (a gap of more than a day starts a new one), and first and last day. A day counts in a town when, that day, you landed there or left from its airport (not when only changing planes), took a train, bus or ferry from or to it, slept there, picked up a rental car, took photos, started a Strava activity or Timeline saw you there. Each place goes to the town that pulls hardest, its population over the distance squared, within 25 km (GeoNames' towns over 1,000 people, `data/cities1000.txt`, which flightmail downloads); an airport goes to the city it is named for (Boryspil airport counts for Kyiv). The **Stats** tab lists the top ten of all time.
+- **Climbs** (with any rides): 1,082 famous cycling climbs, the climbs in the cycle-racing categories of six Wikipedias (English, French, Italian, Dutch, German, Catalan; towns and buildings left out), with their summits from Wikidata (`climbs.json`). Filled when one of your rides passed within 150 m of the top. A climb's **ways up** (Mont Ventoux from Bédoin and from Malaucène) are worked out in the background the first time a ride comes within 1.5 km of it: roads from the top down to the towns around (OSRM), heights along them from the open AWS Terrain Tiles; a way up starts where the road begins to climb (the next 2 km rise 3.5% or more) and ends at the road's high point. A ride counts for a way up when it rode that way's last 2 km up to the top, going up, and also the part that sets it apart from the climb's other ways (Bédoin and Sault share the last 6 km). A ride up a way not found is named after the nearest town 12 km before the top ("via Sault"). The popup lists each way up with its length, height gain and gradient, ✓ with your rides up it; the ways up you rode are drawn on the map. Kept in `data/climb_ascents.json`.
+- **3D**: the button above the locate button opens the map as a globe with real terrain (MapLibre GL, AWS Terrain Tiles), tilted when zoomed in, with your activities of the types shown and the climbs. Right-drag (or ctrl-drag) to tilt and turn; the mountain button switches the terrain off and on; "← 2D map" goes back to the same place.
+- **City report**: "Open report" in a city's popup opens a page for that town (in the period shown): days and separate visits, each visit with what happened in it, then the stays and rental cars (with the hotel), flights in and out, trains, buses and ferries from or to it, the sports activities that started there (click one for its route), photos per month and Google Timeline places. Its address, `#city=<GeoNames id>`, can be bookmarked.
 
 The box at the top left sets the period:
 - **Years**: only what happened from one year to another.
@@ -381,11 +393,11 @@ Contrail reads both files again whenever they change; no restart is needed.
 
 The **All layers** box at the top of the legend turns every layer on or off at once.
 
-**Settings** (⚙️ in the top bar, kept in this browser): kilometres and metres or miles and feet, everywhere (flight statistics and list, popups, the Sports tab: speeds in mph, paces per mile, the Eddington number in miles, ride best efforts at 30, 60, 100 and 125+ miles); tiles at zoom 14 or squadratinhos at zoom 17 (worked out in the browser from each route the first time, then kept); and whether to show the tile grid. The button above the zoom buttons (bottom right) centres the map on where you are (the browser asks you to allow it the first time; it works on `localhost`, also through the tunnel, and on https).
+**Settings** (⚙️ in the top bar, kept in this browser): kilometres and metres or miles and feet, everywhere (flight statistics and list, popups, the Sports tab: speeds in mph, paces per mile, the Eddington number in miles, ride best efforts at 30, 60, 100 and 125+ miles); tiles at zoom 14 or squadratinhos at zoom 17 (worked out in the browser from each route the first time, then kept); whether to show the tile grid; how countries are counted, on the map and in the Stats tab's Countries table; the **map**: following the light or dark theme, light grey or dark grey (lines and markers stand out, as on statshunters), OpenStreetMap in colour, topographic (OpenTopoMap) or satellite (Esri); and **lines and markers**: standard, bold (thicker, solid lines and bigger markers, best on a grey map) or fine. The browser also remembers which layers you show, where the map was, and whether airports are clustered. The button above the zoom buttons (bottom right) centres the map on where you are (the browser asks you to allow it the first time; it works on `localhost`, also through the tunnel, and on https).
 
 ### Sports activities
 
-Your rides, runs and other activities come from Garmin, free of charge: your whole history from Garmin's data export, then new ones every hour from Garmin Connect. Both are `imports/garmin.py`, run with [uv](https://docs.astral.sh/uv/) so nothing gets installed; it writes `data/garmin.json`, which Contrail reads again whenever it changes.
+Your rides, runs and other activities come from Garmin, free of charge: your whole history from Garmin's data export, then new ones every night from Garmin Connect. Both are `imports/garmin.py`, run with [uv](https://docs.astral.sh/uv/) so nothing gets installed; it writes `data/garmin.json`, which Contrail reads again whenever it changes.
 
 1. **Your history.** On garmin.com, Account > Data Management > **Export Your Data**; Garmin emails a link to a zip within a few days. On the Mac that runs Contrail, give it the zip as it came (or its unpacked folder):
    ```
@@ -396,9 +408,11 @@ Your rides, runs and other activities come from Garmin, free of charge: your who
    ```
    ~/.local/bin/uv run --with garminconnect python imports/garmin.py login
    ```
-3. **The hourly sync**: `imports/install_garmin.sh` installs the LaunchAgent `nl.tue.contrail-garmin`, which runs `garmin.py sync` every hour (log `~/Library/Logs/contrail-garmin.log`). It fetches new activities with their files, and once a day lists them all again, so renamed, retyped and deleted ones follow. A plain sync only fetches activities up to 30 days older than the newest it has: older ones are the export's. Without an export, `garmin.py sync --all` fetches everything, one file a second (hours for thousands).
+3. **The nightly sync**: `imports/install_garmin.sh` installs the LaunchAgent `nl.tue.contrail-garmin`, which runs `garmin.py sync` every night at 02:30 (on mini between the 01:30 backup and the jobs from 04:00; `HOUR=` and `MINUTE=` change it), with your cycling FTP and weight for the climbs (log `~/Library/Logs/contrail-garmin.log`). It fetches new activities with their files, and once a day lists them all again, so renamed, retyped and deleted ones follow. A plain sync only fetches activities up to 30 days older than the newest it has: older ones are the export's. Without an export, `garmin.py sync --all` fetches everything, one file a second (hours for thousands).
 
-Indoor and virtual activities (a trainer, a treadmill, MyWhoosh or Zwift) keep their numbers but no route, so a virtual world's made-up coordinates do not land on the map, in the tiles or in your countries.
+**Stop pressed too late.** When a run, walk or hike goes on at over 22 km/h (each minute's average) for 2 minutes, or a ride at over 55 km/h for 5 minutes on a road that is not going down, the activity probably went on in a car. The nightly sync then posts it to the alerts channel (flightmail's Discord webhook in `secret`): which activity, from which km, how far and how long at car speed, and a link to trim it in Garmin Connect. Activities from the export get the same check (`vehicle` in `data/garmin.json`) without alerts.
+
+Indoor and virtual activities (a trainer, a treadmill, MyWhoosh or Zwift) keep their numbers but no route, so a virtual world's made-up coordinates do not land on the map, in the tiles or in your countries. Their files often carry a made-up local clock too (1989, 2046): an offset from UTC over 14 hours is ignored, and the activity's date comes from Garmin's summary instead.
 
 The sync uses the unofficial Garmin Connect login ([python-garminconnect](https://github.com/cyberjunky/python-garminconnect)), which Garmin does not sanction: when Garmin changes its sign-in, the sync fails for a while (the map's box says so, with the error) until the library catches up; sign in again if the token has expired. The export always works.
 
@@ -446,6 +460,7 @@ The **Sports** tab shows your sports activities, cycling and running first (pick
 - **Records** per sport: longest, most climbing, longest moving time, fastest average (rides of 20 km or more, runs of 5 km or more, no trainer rides), highest average heart rate, most kudos, biggest week, month and year, longest streak. Click an activity to see it on the map, its route highlighted.
 - **Best efforts**: the best average pace of your runs of about 5 km, 10 km, a half and a full marathon, and the best average speed of rides of 50, 100, 160 and 200+ km. Strava's activity list has no splits, so these are whole-activity averages.
 - **Year by year**: activities, km, hours, climbing, longest and km a week.
+- **Famous climbs** (with cycling shown and any rides): how many of the famous climbs you rode up, by country, which ones and which ways up (✓ / ✗ per way), and the nearest ones still to do from where your rides usually start.
 - **Where you start** and **Countries**: the towns and countries your activities start in (all years), from GeoNames' towns as for the most visited cities.
 
 Sport colours: orange cycling, violet running, magenta walks and hikes, yellow other sports (validated for colour-blind readers in both themes).
@@ -532,13 +547,17 @@ Moving to MongoDB later only needs the data layer in `app.js` (the `flights` arr
 | `DELETE` | `/api/ground/:id` | delete a trip |
 | `GET` | `/api/stays` | all hotels, Airbnbs and rental cars |
 | `POST` | `/api/stays` | add a stay or rental car (at least `code`, `place` and `start`); one with the same `code` is updated instead |
-| `PUT`, `DELETE` | `/api/stays/:id` | change or delete one; a new `place` or `country` is looked up again |
+| `PUT`, `DELETE` | `/api/stays/:id` | change or delete one; a new `place` or `country` is looked up again. A deleted stay's code is kept in `data/stays.removed.json`, so a mail sending that booking again (the history import) does not bring it back |
 | `GET` | `/api/photos`, `/api/timeline` | the files the import scripts wrote (empty when there are none) |
 | `GET` | `/api/settings` | `home_airports`, for the trips on the map |
 | `GET` | `/api/activities` | all sports activities, Garmin's and Strava's, each once (gzipped when asked, `304` when the browser has them) |
 | `GET` | `/api/activities/status` | how many activities; Garmin's count, last sync and error; Strava's state |
 | `GET` | `/api/strava/status` | whether Strava is set up and connected, how many activities, the last fetch and error |
-| `GET` | `/api/cities?from=&to=` | every town visited in the period, most visited first (dates `YYYY-MM-DD`, both optional): `name`, `country`, `lat`, `lon`, `days`, `visits`, `first`, `last` |
+| `GET` | `/api/cities?from=&to=` | every town visited in the period, most visited first (dates `YYYY-MM-DD`, both optional): `id` (GeoNames), `name`, `country`, `lat`, `lon`, `days`, `visits`, `first`, `last` |
+| `GET` | `/api/city/:id?from=&to=` | one town (GeoNames id, as `/api/cities` gives it) for its report page: `town`, `days`, `first`, `last`, `visits` (`start`, `end`, `days`), and the `stays`, `flights` (with `direction` `in` or `out`), `ground`, `activities`, `photos` (`day`, `count`) and `timeline` places there |
+| `GET` | `/api/climbs` | the famous climbs with what you did on them ([] without rides): `id` (Wikidata), `name`, `country`, `lat`, `lon` (the road's high point once known), `ele`, `wiki`, `times`, `first`, `last`, `rides` (the newest 20: `id`, `date`, `name`), `ascents` (`from`, `length` km, `gain` m, `grade` %, `path`, `times`, `rides`), `other` (ways up not among them: `via`, `times`, `rides`) |
+| `GET` | `/api/regions?scheme=&from=&to=` | the countries visited in the period, as the list `iso`, `un` or `tcc` counts them: `scheme`, `total` (countries on the list), `places`: `id`, `name`, `region` (TCC), `days`, `first`, `last`, `shape` (GeoJSON outline) |
+| `GET` | `/api/countries?scheme=&from=&to=` | per country: `days`, `visits`, `towns`, `nights` in stays, `flights` in, `train`, `bus`, `ferry` from or to it, `cars`, `activities` and their `km`, `photos`, `first`, `last`; by the town's country code, or as `scheme` counts countries |
 | `GET` | `/api/activities/places` | where activities start: the towns and countries per kind of sport (`ride`, `run`, `walk`, `sport`, `all`) |
 | `POST` | `/api/strava/sync` | fetch new activities from Strava now |
 | `GET` | `/auth/strava` | sign in to Strava (redirects back to `/auth/strava/callback`) |

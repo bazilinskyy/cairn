@@ -82,7 +82,7 @@ function rank(grid, points, limit = Infinity) {
       if (!last || (Date.parse(d) - Date.parse(last)) / 864e5 > 1) visits++;
       last = d;
     }
-    return { name: t.name, country: t.cc, lat: t.lat, lon: t.lon, days: list.length, visits, first: list[0], last: list[list.length - 1] };
+    return { id: t.id, name: t.name, country: t.cc, lat: t.lat, lon: t.lon, days: list.length, visits, first: list[0], last: list[list.length - 1] };
   }).sort((a, b) => b.days - a.days || b.visits - a.visits || a.name.localeCompare(b.name)).slice(0, limit);
 }
 

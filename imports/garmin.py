@@ -7,7 +7,9 @@
   login    sign in to Garmin Connect once (email, password, and the code if you use two-step verification); the
            token goes to ~/.garminconnect (readable by you only) and lasts about a year; the password is not kept:
              uv run --with garminconnect python imports/garmin.py login
-  sync     new activities from Garmin Connect, with the sign-in token (run hourly by its LaunchAgent, see
+  profile  your cycling FTP and weight from Garmin Connect, for the climbs (every sync does this too; each change
+           is kept, as Garmin keeps no history of the cycling FTP)
+  sync     new activities from Garmin Connect, with the sign-in token (run nightly by its LaunchAgent, see
            imports/install_garmin.sh); once a day it also lists everything again, so renamed, retyped and deleted
            activities follow. --all fetches every activity, a history without the export (slow: one file a second):
              uv run --with garminconnect --with fitdecode python imports/garmin.py sync
@@ -16,7 +18,9 @@ The sync uses the unofficial login (the python-garminconnect library), which Gar
 working for a while when Garmin changes its sign-in; the export then still brings everything.
 Writes data/garmin.json: {"activities": [...], "last_sync", "last_full"}, each activity as Contrail keeps Strava's
 (id, name, sport, date, start, distance km, moving_time, elapsed_time, elevation, heartrate, trainer, path, at, tiles),
-its route from the activity's own file, simplified to about 20 m, its explored tiles from the full track.
+its route from the activity's own file, simplified to about 20 m, its explored tiles from the full track; "profile"
+(FTP, weight). Outdoor rides also get a timed track, data/tracks/<id>.json.gz (a point every 5 s with time, height,
+power and heart rate), from which Contrail times the climbs you rode.
 """
 import argparse
 import fcntl
@@ -85,10 +89,11 @@ def tiles_of(pts):
 
 def read_fit(data):
     """A FIT activity file: {"start" (UTC), "local" (offset), "sport", "sub_sport", "distance" m, "moving" s, "elapsed" s,
-    "ascent" m, "hr", "pts" [(lat, lon)]} or None when it is not an activity."""
+    "ascent" m, "hr", "pts" [(lat, lon)], "track" [(time UTC, lat, lon, height m, power W, heart rate)]} or None when it
+    is not an activity."""
     import fitdecode
-    pts = []
-    out = {"pts": pts}
+    pts, track = [], []
+    out = {"pts": pts, "track": track}
     with fitdecode.FitReader(io.BytesIO(data), check_crc=fitdecode.CrcCheck.DISABLED) as fit:
         for frame in fit:
             if frame.frame_type != fitdecode.FIT_FRAME_DATA:
@@ -98,6 +103,9 @@ def read_fit(data):
                 lat, lon = get("position_lat"), get("position_long")
                 if lat is not None and lon is not None and (lat or lon):
                     pts.append((lat * SEMI, lon * SEMI))
+                    alt = get("enhanced_altitude")
+                    track.append((get("timestamp"), lat * SEMI, lon * SEMI, alt if alt is not None else get("altitude"),
+                                  get("power"), get("heart_rate")))
             elif frame.name == "session" and "start" not in out:
                 out.update(start=get("start_time"), sport=str(get("sport") or ""), sub_sport=str(get("sub_sport") or ""),
                            distance=get("total_distance"), moving=get("total_timer_time"), elapsed=get("total_elapsed_time"),
@@ -107,7 +115,9 @@ def read_fit(data):
                 if ts and local:
                     if isinstance(local, (int, float)):  # seconds since the FIT epoch, 1989-12-31
                         local = datetime(1989, 12, 31) + timedelta(seconds=local)
-                    out["local"] = local.replace(tzinfo=None) - ts.replace(tzinfo=None)
+                    offset = local.replace(tzinfo=None) - ts.replace(tzinfo=None)
+                    if abs(offset) <= timedelta(hours=14):  # Zwift and the like write a made-up local clock (1989, 2046)
+                        out["local"] = offset
     return out if out.get("start") else None
 
 
@@ -159,7 +169,14 @@ def summaries(paths):
 
 # --- one activity as Contrail keeps it ---
 
-def to_activity(aid, name, type_key, start_utc, local_offset, distance_m, moving_s, elapsed_s, ascent_m, hr, pts, sub_sport=""):
+def ftp_of(summary):
+    """The FTP set when the activity was done: Garmin's intensity factor is normalized power over it."""
+    np_, if_ = (summary or {}).get("normPower"), (summary or {}).get("intensityFactor")
+    return round(np_ / if_) if np_ and if_ and 0.2 < if_ < 2 else None
+
+
+def to_activity(aid, name, type_key, start_utc, local_offset, distance_m, moving_s, elapsed_s, ascent_m, hr, pts, sub_sport="",
+                ftp=None, vehicle=None):
     sport, indoor = sport_of(type_key, sub_sport)
     if indoor:  # a trainer, a treadmill, or Zwift's made-up world: no route, tiles or place of its own
         pts = []
@@ -172,7 +189,102 @@ def to_activity(aid, name, type_key, start_utc, local_offset, distance_m, moving
         "elevation": round(ascent_m or 0), "heartrate": round(hr) if hr else None, "prs": 0, "kudos": 0, "commute": False,
         "trainer": indoor or not pts, "path": encode(simple) if len(simple) > 1 else "",
         "at": [round(pts[0][0], 5), round(pts[0][1], 5)] if pts else None, "tiles": tiles_of(pts) if len(pts) > 1 else [],
+        **({"ftp": ftp} if ftp else {}),
+        **({"vehicle": vehicle} if vehicle and not indoor else {}),
     }
+
+
+# --- a stop pressed too late: the end of a run, walk, hike or ride recorded in a car ---
+
+VEHICLE = {"foot": (22, 120), "ride": (55, 300)}  # km/h held over each minute, for this many seconds, means a vehicle
+
+
+def vehicle_part(f, sport):
+    """The part of an activity done in a car, bus or train, if any: {"from_km", "from_time" (UTC ISO), "km", "minutes",
+    "to_end"}. On foot: a minute-long average over 22 km/h for 2 minutes; on a bike: over 55 km/h for 5 minutes on a
+    road that is not going down (a fast descent is not a car)."""
+    kind = "ride" if re.search(r"Ride|Velomobile", sport or "") else "foot" if re.search(r"Run|Walk|Hike", sport or "") else None
+    track = [p for p in (f or {}).get("track") or [] if p[0] is not None]
+    if not kind or len(track) < 10:
+        return None
+    fast_kmh, hold = VEHICLE[kind]
+    t = [(p[0] - track[0][0]).total_seconds() for p in track]
+    d = [0.0]
+    for a, b in zip(track, track[1:]):
+        d.append(d[-1] + 6371000 * math.hypot(math.radians(b[1] - a[1]), math.radians(b[2] - a[2]) * math.cos(math.radians(a[1]))))
+    fast, j = [False] * len(track), 0
+    for i in range(len(track)):  # the minute starting at each point
+        while j < len(track) - 1 and t[j] - t[i] < 60:
+            j += 1
+        if t[j] - t[i] >= 45:
+            kmh = (d[j] - d[i]) / (t[j] - t[i]) * 3.6
+            down = kind == "ride" and track[i][3] is not None and track[j][3] is not None and (track[j][3] - track[i][3]) / max(1, d[j] - d[i]) < -0.02
+            fast[i] = kmh > fast_kmh and not down
+    i = 0
+    while i < len(track):  # the first run of fast minutes long enough
+        if not fast[i]:
+            i += 1
+            continue
+        k = i
+        while k + 1 < len(track) and (fast[k + 1] or t[k + 1] - t[k] < 30):
+            k += 1
+        if t[k] - t[i] >= hold:
+            rest = t[-1] - t[i]
+            moving = sum(t[x + 1] - t[x] for x in range(i, len(track) - 1) if fast[x])
+            return {"from_km": round(d[i] / 1000, 1), "from_time": track[i][0].astimezone(timezone.utc).isoformat()[:19] + "Z",
+                    "km": round((d[-1] - d[i]) / 1000, 1), "minutes": round(rest / 60), "to_end": moving > 0.6 * rest}
+        i = k + 1
+    return None
+
+
+def send_discord(text):
+    """A message to the alerts channel (flightmail's Discord webhook, in secret)."""
+    import urllib.request
+    try:
+        url = json.loads((HERE.parent / "secret").read_text()).get("flightmail", {}).get("discord_webhook")
+    except (OSError, ValueError):
+        url = None
+    if url:
+        req = urllib.request.Request(url, json.dumps({"content": text[:1900]}).encode(), method="POST",
+                                     headers={"Content-Type": "application/json", "User-Agent": "contrail-garmin"})
+        urllib.request.urlopen(req, timeout=20).close()
+
+
+def vehicle_alert(act):
+    v = act.get("vehicle")
+    when = act["date"][:16].replace("T", " ")
+    return (f"**{act['name']}** ({act['sport']}, {when}) looks like it went on in a car: from {v['from_km']} km on, "
+            f"{v['km']} km in {v['minutes']} min at car speed{' until the end' if v['to_end'] else ''}. Forgot to press stop? "
+            f"Trim it in Garmin Connect: https://connect.garmin.com/modern/activity/{act['id']}")
+
+
+# --- timed tracks of rides: when you passed where, for climbs (Contrail's climbs.js times each way up you rode) ---
+
+TRACK_STEP = 5  # seconds between the points kept
+
+
+def write_track(folder, aid, f):
+    """An outdoor ride's track into folder/<id>.json.gz: {"start": UTC seconds, "t": [s after start], "path": encoded
+    positions, "alt": [m], "pw": [W], "hr": [bpm]}, a point every 5 s. Other activities: nothing."""
+    import gzip
+    track = (f or {}).get("track") or []
+    if not folder or len(track) < 2 or "cycling" not in (f.get("sport") or "") or re.search(r"virtual|indoor|trainer", f.get("sub_sport") or ""):
+        return
+    t0, kept, last = track[0][0], [], None
+    for p in track:
+        if p[0] is None:
+            continue
+        s = (p[0] - t0).total_seconds()
+        if last is None or s - last >= TRACK_STEP or p is track[-1]:
+            kept.append((s, *p[1:]))
+            last = s
+    num = lambda v: None if v is None else round(v)  # noqa: E731
+    doc = {"start": int(t0.replace(tzinfo=timezone.utc).timestamp()), "t": [round(p[0]) for p in kept],
+           "path": encode([(p[1], p[2]) for p in kept]), "alt": [num(p[3]) for p in kept], "pw": [num(p[4]) for p in kept],
+           "hr": [num(p[5]) for p in kept]}
+    Path(folder).mkdir(parents=True, exist_ok=True)
+    with gzip.open(Path(folder) / f"{int(aid)}.json.gz", "wt") as out:
+        json.dump(doc, out, separators=(",", ":"))
 
 
 def ms_time(v):
@@ -185,7 +297,7 @@ def ms_time(v):
         return None
 
 
-def from_export(paths, log=print):
+def from_export(paths, log=print, tracks=None):
     """Every activity of a Garmin export: the summaries for name and type, each activity's file for its route and
     numbers. Summaries count distance and time in their own units (cm, ms in exports seen so far): the factors are
     measured against the files of activities that have both."""
@@ -209,7 +321,13 @@ def from_export(paths, log=print):
         ids = [int(x) for x in re.findall(r"\d{8,}", name) if int(x) in sums]
         aid = ids[0] if ids else next((by_start[k] for k in (start.replace(second=0, microsecond=0) + timedelta(minutes=d) for d in (0, -1, 1))
                                        if k in by_start), None)
-        fits[aid or -int(start.replace(tzinfo=timezone.utc).timestamp())] = f
+        key = aid or -int(start.replace(tzinfo=timezone.utc).timestamp())
+        a = sums.get(aid, {})
+        type_key = (a.get("activityType") or {}).get("typeKey") if isinstance(a.get("activityType"), dict) else a.get("activityType")
+        f["vehicle"] = vehicle_part(f, sport_of(type_key or f.get("sport"), f.get("sub_sport"))[0])
+        write_track(tracks, abs(key), f)
+        f.pop("track", None)  # written: thousands of them would not fit in memory
+        fits[key] = f
     log(f"{len(sums)} activity summaries, {n} activity files ({len(fits)} read)")
     factor = {"distance": [], "duration": [], "elevationGain": []}
     for aid, f in fits.items():
@@ -230,7 +348,8 @@ def from_export(paths, log=print):
         moving = f.get("moving") if f.get("moving") is not None else (a["movingDuration"] * med["duration"] if a.get("movingDuration") else None)
         out.append(to_activity(aid if aid > 0 else -aid, a.get("name"), type_key or f.get("sport"), start, local,
                                 val("distance", "distance"), moving or val("elapsed", "duration"), val("elapsed", "duration"),
-                                val("ascent", "elevationGain"), f.get("hr") or a.get("avgHr"), f.get("pts", []), f.get("sub_sport", "")))
+                                val("ascent", "elevationGain"), f.get("hr") or a.get("avgHr"), f.get("pts", []), f.get("sub_sport", ""),
+                                ftp_of(a), f.get("vehicle")))
     return out
 
 
@@ -243,24 +362,31 @@ def connect():
     return g
 
 
-def from_connect_item(g, item, fetch_file=True):
+def from_connect_item(g, item, fetch_file=True, tracks=None):
     """An activity of Garmin Connect's list, its route from its original file."""
     f = {}
     if fetch_file:
-        raw = g.download_activity(str(item["activityId"]), dl_fmt=g.ActivityDownloadFormat.ORIGINAL)
+        try:  # an activity entered by hand has no file (Garmin answers 404): kept without a route
+            raw = g.download_activity(str(item["activityId"]), dl_fmt=g.ActivityDownloadFormat.ORIGINAL)
+        except Exception as e:
+            if "404" not in str(e):
+                raise
+            raw = b""
         time.sleep(PAUSE)
         try:
             with zipfile.ZipFile(io.BytesIO(raw)) as z:
                 name = next((n for n in z.namelist() if n.lower().endswith(".fit")), None)
                 f = read_fit(z.read(name)) or {} if name else {}
         except zipfile.BadZipFile:
-            f = read_fit(raw) or {}
+            f = (read_fit(raw) or {}) if raw else {}
+        write_track(tracks, item["activityId"], f)
     start = datetime.fromisoformat(item["startTimeGMT"].replace(" ", "T"))
     local = datetime.fromisoformat(item["startTimeLocal"].replace(" ", "T")) - start
     t = item.get("activityType") or {}
+    vehicle = vehicle_part(f, sport_of(t.get("typeKey"), f.get("sub_sport", ""))[0]) if f else None
     return to_activity(item["activityId"], item.get("activityName"), t.get("typeKey"), start, local, item.get("distance"),
                        item.get("movingDuration") or item.get("duration"), item.get("elapsedDuration") or item.get("duration"),
-                       item.get("elevationGain"), item.get("averageHR"), f.get("pts", []), f.get("sub_sport", ""))
+                       item.get("elevationGain"), item.get("averageHR"), f.get("pts", []), f.get("sub_sport", ""), ftp_of(item), vehicle)
 
 
 def listing(g, stop_at=None):
@@ -278,7 +404,7 @@ def listing(g, stop_at=None):
         start += len(page)
 
 
-def sync(data, everything=False, log=print, save=None):
+def sync(data, everything=False, log=print, save=None, tracks=None):
     """New activities into data; once a day (and with everything, which also fetches every activity not yet known) the
     whole list, for renamed, retyped and deleted ones."""
     g = connect()
@@ -298,8 +424,14 @@ def sync(data, everything=False, log=print, save=None):
             continue
         if datetime.fromisoformat(item["startTimeGMT"].replace(" ", "T")).replace(tzinfo=timezone.utc).timestamp() < cutoff:
             continue
-        acts[aid] = from_connect_item(g, item)
+        acts[aid] = from_connect_item(g, item, tracks=tracks)
         added += 1
+        if acts[aid].get("vehicle"):  # a stop pressed too late: to the alerts channel
+            log(vehicle_alert(acts[aid]))
+            try:
+                send_discord(vehicle_alert(acts[aid]))
+            except Exception as e:
+                log(f"alert not sent: {e.__class__.__name__}: {e}")
         if save and added % 20 == 0:  # a long first sync keeps what it has
             data["activities"] = sorted(acts.values(), key=lambda a: -a["start"])
             save(data)
@@ -311,10 +443,51 @@ def sync(data, everything=False, log=print, save=None):
                 del acts[aid]
             log(f"{len(gone)} deleted on Garmin Connect")
         data["last_full"] = now.isoformat()
+        try:  # once a day: every weigh-in, for your weight on the day of a climb
+            data.setdefault("profile", {})["weights"] = weights(g)
+        except Exception as e:
+            log(f"weights not read: {e.__class__.__name__}: {e}")
+
+    try:  # every sync: FTP and weight (two small requests), for the climbs
+        data["profile"] = profile(g, data.get("profile"))
+    except Exception as e:  # nice to have: the activities matter more
+        log(f"profile not read: {e.__class__.__name__}: {e}")
     data["activities"] = sorted(acts.values(), key=lambda a: -a["start"])
     data["last_sync"] = now.isoformat()
     log(f"{added} new activities, {len(acts)} in all")
     return data
+
+
+def profile(g, before=None):
+    """Your cycling FTP and weight as Garmin Connect knows them now, for the climbs: {"ftp" W, "ftp_date", "weight" kg,
+    "weight_date", "history": [["YYYY-MM-DD", FTP W, weight kg], ...]}. Garmin keeps no history of the cycling FTP (only
+    the running one), so each change seen here is added to the history kept from before."""
+    out = dict(before or {})
+    f = g.get_cycling_ftp() or {}
+    f = f[0] if isinstance(f, list) and f else f
+    if f.get("functionalThresholdPower"):
+        out.update(ftp=f["functionalThresholdPower"], ftp_date=str(f.get("calendarDate", ""))[:10])
+    w = g.get_latest_weight() or {}
+    if w.get("weight"):
+        out.update(weight=round(w["weight"] / 1000, 1),
+                   weight_date=datetime.fromtimestamp(w["date"] / 1000, timezone.utc).strftime("%Y-%m-%d") if w.get("date") else "")
+    hist = [h for h in out.get("history", []) if isinstance(h, list)]
+    now = [out.get("ftp_date") or datetime.now().strftime("%Y-%m-%d"), out.get("ftp"), out.get("weight")]
+    if out.get("ftp") and (not hist or hist[-1][1:] != now[1:]):
+        hist.append(now)
+    out["history"] = hist
+    out.pop("ftp_history", None)
+    return out
+
+
+def weights(g, since="2000-01-01"):
+    """Every weigh-in Garmin Connect has: [["YYYY-MM-DD", kg], ...], oldest first."""
+    r = g.get_body_composition(since, datetime.now().strftime("%Y-%m-%d")) or {}
+    days = {}
+    for w in (r.get("dateWeightList") if isinstance(r, dict) else r) or []:
+        if w.get("weight") and w.get("calendarDate"):
+            days[str(w["calendarDate"])[:10]] = round(w["weight"] / 1000, 1)
+    return sorted([d, kg] for d, kg in days.items())
 
 
 def login():
@@ -331,7 +504,7 @@ def login():
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("command", choices=["export", "login", "sync"])
+    ap.add_argument("command", choices=["export", "login", "sync", "profile"])
     ap.add_argument("paths", nargs="*", help="export: the export zip(s) or folder")
     ap.add_argument("--all", action="store_true", help="sync: fetch every activity, not only new ones")
     data_dir = HERE.parent / "data"
@@ -340,6 +513,7 @@ def main(argv=None):
     if args.command == "login":
         return login()
     out = Path(args.out)
+    tracks = out.parent / "tracks"  # timed tracks of rides, for climbs
     data = json.loads(out.read_text()) if out.exists() else {"activities": []}
     stamp = lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S")  # noqa: E731
     log = lambda m: print(f"{stamp()} {m}", flush=True)  # noqa: E731
@@ -352,13 +526,16 @@ def main(argv=None):
     if args.command == "export":
         if not args.paths:
             ap.error("export: give the export zip or folder")
+        fresh = from_export(args.paths, log, tracks)
+        lock = open(out.with_suffix(".lock"), "w")
+        fcntl.flock(lock, fcntl.LOCK_EX)  # read the file again after a sync ends, so what it saved meanwhile stays
+        data = json.loads(out.read_text()) if out.exists() else {"activities": []}
         acts = {a["id"]: a for a in data.get("activities", [])}
-        fresh = from_export(args.paths, log)
         acts.update({a["id"]: a for a in fresh})
         data["activities"] = sorted(acts.values(), key=lambda a: -a["start"])
         log(f"{len(fresh)} activities from the export, {len(acts)} in all")
     else:
-        # one sync at a time: an hourly run that meets a long --all one (or the reverse) leaves it be
+        # one sync at a time: a nightly run that meets a long --all one (or the reverse) leaves it be
         lock = open(out.with_suffix(".lock"), "w")
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -366,7 +543,13 @@ def main(argv=None):
             log("another sync is running; skipped")
             return 0
         try:
-            data = sync(data, args.all, log, save)
+            if args.command == "profile":
+                g = connect()
+                data["profile"] = profile(g, data.get("profile"))
+                data["profile"]["weights"] = weights(g)
+                log(f"profile: {data['profile'].get('ftp')} W, {data['profile'].get('weight')} kg")
+            else:
+                data = sync(data, args.all, log, save, tracks)
         except Exception as e:  # signed out, Garmin's sign-in changed, rate limit: logged; the next hour tries again
             log(f"sync failed: {e.__class__.__name__}: {e}")
             data["error"] = f"{e.__class__.__name__}: {e}"[:300]

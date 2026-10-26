@@ -128,7 +128,8 @@ function renderSports() {
       <div class="chart-section"><h3>Year by year</h3><div class="sp-scroll"><table class="sp-table" id="sp-yeartable"></table></div></div>
       <div class="chart-section"><h3>Where you start</h3><table class="sp-table" id="sp-towns"></table></div>
       <div class="chart-section"><h3>Countries</h3><table class="sp-table" id="sp-countries"></table></div>
-    </div>`;
+    </div>
+    <div class="chart-section" id="sp-climbs-box" hidden><h3>Famous climbs</h3><div id="sp-climbs"></div></div>`;
   chartDefaults();
   renderCards(list, kinds);
   renderYears(all, kinds);
@@ -142,6 +143,58 @@ function renderSports() {
   renderBests(list, kinds);
   renderYearTable(all);
   renderPlaces(kinds);
+  renderClimbs(kinds);
+}
+
+// The famous cycling climbs (layers.js allClimbs): how many you rode over, by country, which, and the nearest ones
+// still to do from where your rides usually start. Only with cycling shown and climbs known.
+function renderClimbs(kinds) {
+  const box = document.getElementById('sp-climbs-box');
+  if (!box) return;
+  box.hidden = !allClimbs.length || !kinds.includes('ride');
+  if (box.hidden) return;
+  const year = sportPicked.year;
+  const ridden = c => c.rides.filter(r => !year || r.date.startsWith(year));
+  const done = allClimbs.filter(c => (year ? ridden(c).length : c.times)), todo = allClimbs.filter(c => !c.times);
+  const names = new Intl.DisplayNames(['en'], { type: 'region' }), country = cc => { try { return names.of(cc); } catch (_) { return cc || '—'; } };
+  const byCountry = {};
+  allClimbs.forEach(c => {
+    const k = c.country || '';
+    const v = byCountry[k] = byCountry[k] || { all: 0, done: 0 };
+    v.all++;
+    if (done.includes(c)) v.done++;
+  });
+  const countries = Object.entries(byCountry).filter(([, v]) => v.done).sort((a, b) => b[1].done - a[1].done || b[1].all - a[1].all);
+  const climbName = c => `<a href="#climb=${c.id}" class="sp-link" onclick="event.preventDefault(); openClimb('${c.id}')">${escapeHTML(c.name)}</a>`;
+  // where rides usually start: the middle of their start points
+  const starts = allActivities.filter(a => a.kind === 'ride' && a.at && !a.trainer).map(a => a.at);
+  const mid = i => starts.map(p => p[i]).sort((a, b) => a - b)[Math.floor(starts.length / 2)];
+  const home = starts.length ? [mid(0), mid(1)] : null;
+  const away = c => (home ? Math.hypot(c.lat - home[0], (c.lon - home[1]) * Math.cos(home[0] * Math.PI / 180)) * 111.32 : 0);
+  const next = home ? [...todo].sort((a, b) => away(a) - away(b)).slice(0, 15) : [];
+  document.getElementById('sp-climbs').innerHTML =
+    `<p style="margin-bottom:12px"><b style="font-size:22px;color:var(--accent)">${done.length}</b> of ${allClimbs.length} famous climbs` +
+    `${year ? ` in ${year}` : ''} (${Math.round(done.length / allClimbs.length * 100)}%)</p>` +
+    (countries.length ? `<h4>By country</h4><table class="sp-table"><tbody>${countries.map(([cc, v]) =>
+      `<tr><th>${flagOf(cc)}${escapeHTML(country(cc))}</th><td style="width:60%"><span class="sp-swatch" style="width:${Math.max(2, v.done / v.all * 100)}%;` +
+      `background:var(--climb);height:8px"></span></td><td>${v.done} / ${v.all}</td></tr>`).join('')}</tbody></table>` : '') +
+    (done.length ? `<h4>Climbed</h4><div class="sp-scroll"><table class="sp-table"><thead><tr><th>Climb</th><th>Height</th><th>Ways up</th><th>Times</th><th>Last</th></tr></thead><tbody>` +
+      [...done].sort((a, b) => b.times - a.times || (b.ele || 0) - (a.ele || 0)).map(c => {
+        const r = ridden(c), last = (year ? r : c.rides)[0];
+        const inYear = list => list.filter(x => !year || x.date.startsWith(year)).length;
+        const ways = (c.ascents || []).map(a => [`from ${a.from}`, inYear(a.rides), `${fmtDist(a.length, 1)}, ${fmtHeight(a.gain)}, ${a.grade}%`])
+          .concat((c.other || []).map(o => [o.via, inYear(o.rides), '']));
+        return `<tr><td>${climbName(c)}<small>${flagOf(c.country)}${escapeHTML(country(c.country))}</small></td><td>${c.ele ? fmtHeight(c.ele) : ''}</td>` +
+          `<td>${ways.map(([w, n, info]) => `<span title="${escapeHTML(info)}" style="display:block;${n ? '' : 'color:var(--text2)'}">${n ? '✓' : '✗'} ${escapeHTML(w)}${n > 1 ? ` ×${n}` : ''}</span>`).join('') ||
+            (c.known ? '' : '<small>ways up still being worked out</small>')}</td>` +
+          `<td>${year ? r.length : c.times}</td><td>${last ? `${linkTo({ id: last.id, name: fmtDate(last.date) })}` : ''}</td></tr>`;
+      }).join('') + '</tbody></table></div>' : '') +
+    (next.length ? `<h4>Not yet, nearest to where you usually start</h4><div class="sp-scroll"><table class="sp-table"><tbody>` +
+      next.map(c => `<tr><td>${climbName(c)}<small>${flagOf(c.country)}${escapeHTML(country(c.country))}</small></td>` +
+        `<td>${c.ele ? fmtHeight(c.ele) : ''}</td><td>${fmtDist(away(c))} away</td></tr>`).join('') + '</tbody></table></div>' : '') +
+    `<p class="sp-note">The climbs in the cycle-racing categories of Wikipedia (English, French, Italian, Dutch, German, Catalan), each with its summit. ` +
+    `A ride counts when its route passes within 150 m of the summit; for a way up (from Bédoin, from Malaucène) when it rode that way's last stretch up to the top, and the part that sets it apart from the other ways. Ways up are worked out from the roads and the terrain the first time a ride comes near a climb. On the map: the ⛰️ Climbs layer, filled when done, with the ways up you rode.</p>`;
+  hookLinks('sp-climbs');
 }
 
 function fillPickers() {
@@ -471,7 +524,7 @@ function showActivityOnMap(id) {
   const a = allActivities.find(x => x.id === id);
   if (!a?.bbox) return toast('This activity has no route', 'error');
   document.querySelector('.tab[data-tab="map"]').click();
-  if (!map.hasLayer(kindLayer[a.kind])) { kindLayer[a.kind].addTo(map); afterToggle(); drawLegend(); }
+  if (!map.hasLayer(kindLayer[a.kind])) { kindLayer[a.kind].addTo(map); afterToggle(); rememberLayers(); drawLegend(); }
   setTimeout(() => {
     map.invalidateSize();
     map.fitBounds([[a.bbox[0], a.bbox[1]], [a.bbox[2], a.bbox[3]]], { padding: [40, 40], maxZoom: 14 });

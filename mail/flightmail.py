@@ -108,7 +108,7 @@ def send_discord(text, sec):
 def fetch_new(cfg, sec, state, since_days=None, query=None):
     """(uid, message) for new messages in All Mail that match the travel query (or this one), oldest first; with
     since_days, all matching messages of that many days instead (a rescan). Never changes the mailbox."""
-    imap = imaplib.IMAP4_SSL("imap.gmail.com", 993)
+    imap = imaplib.IMAP4_SSL("imap.gmail.com", 993, timeout=120)  # a stalled connection fails instead of hanging
     try:
         imap.login(cfg["gmail_user"], sec["gmail_app_password"])
         _, boxes = imap.list()
@@ -711,10 +711,11 @@ def run(args, cfg, sec):
 # Senders and words of the stays, rental cars and tickets of the past (flightmail's own query is about flights)
 HISTORY_QUERY = ("from:booking.com OR from:airbnb.com OR from:hostelworld.com OR from:discovercars.com OR from:vipcars.com OR "
                  "rentalcars OR holidayautos OR stressfreecarrental OR bsp-auto OR goldcar OR arguscarhire OR bookinggroup OR "
-                 "from:hertz.com OR qeeq OR economybookings OR \"car rental\" OR \"car hire\" OR huurauto OR "
+                 "from:hertz.com OR from:thrifty.com OR qeeq OR economybookings OR \"car rental\" OR \"car hire\" OR huurauto OR "
                  "flixbus OR meinfernbus OR from:bahn.de OR from:deutschebahn.com OR nsinternational OR sncf OR trainline OR "
                  "eurostar OR renfe OR regiojet OR ouibus OR alsa OR getbybus OR busbud OR rnetickets OR from:rne.pt OR "
-                 "redbus OR 12go OR altibus OR blablacar OR directferries OR ferry OR veerboot")
+                 "redbus OR 12go OR altibus OR blablacar OR directferries OR ferry OR veerboot OR "
+                 "from:couchsurfing.com OR from:bewelcome.org")
 
 
 def history(args, cfg, sec):
@@ -725,7 +726,7 @@ def history(args, cfg, sec):
     airports, airlines, places = load_reference(cfg)
     con = ContrailHTTP(cfg.get("contrail_url", "http://127.0.0.1:3000"), airports, airlines)
     names, home_tz = cfg.get("passenger_names", []), cfg.get("home_timezone", "Europe/Amsterdam")
-    messages = fetch_new(cfg, sec, {}, since_days=args.days, query=HISTORY_QUERY)
+    messages = fetch_new(cfg, sec, {}, since_days=args.days, query=args.query or HISTORY_QUERY)
     log(f"{len(messages)} message(s) since {args.days} days ago")
     found, rides, cancelled = {}, {}, set()
     for uid, msg in messages:
@@ -764,6 +765,9 @@ def history(args, cfg, sec):
             log(f"  would send {leg.mode} {leg.dep_local:%Y-%m-%d %H:%M} {leg.dep} - {leg.arr}")
         return
     for s in found.values():
+        if not (s.code and s.place and s.start):  # Contrail needs all three; such a mail is listed to look at by hand
+            log(f"  skipped {s.what} {s.provider} {s.code or '(no code)'} {s.start or '(no date)'}: no place, code or date")
+            continue
         con.add_stay({k: (getattr(s, k).isoformat() if hasattr(getattr(s, k), "isoformat") else getattr(s, k) or "")
                       for k in STAY_FIELDS})
     for t in con._call("GET", "/api/stays"):
@@ -779,6 +783,7 @@ def main(argv=None):
     p.add_argument("command", nargs="?", choices=["run", "calendars", "history"], default="run")
     p.add_argument("--days", type=int, default=6000, metavar="N", help="history: how far back to read (default 6000)")
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--query", help="history: a Gmail search instead of all travel mail (from:couchsurfing.com OR ...)")
     p.add_argument("--rescan-days", type=int, metavar="N", help="read all matching mail of the last N days again")
     args = p.parse_args(argv)
     sec = {}

@@ -4,12 +4,10 @@
 // everything, and "where was I on" a day.
 // Loaded before the page's own script; uses its globals (map, allFlights, allAirports, allTrips, ...) when called.
 
-const COUNTRIES_URL = 'https://cdn.jsdelivr.net/npm/world-atlas@2.0.2/countries-50m.json';
-
 // --- settings (kept in this browser): units, and the exploration tiles ---
 
 const PREFS_KEY = 'contrail-settings';
-let prefs = { units: 'km', tileZoom: 14, grid: true };
+let prefs = { units: 'km', tileZoom: 14, grid: true, countries: 'iso', basemap: 'auto', lines: 'standard' };
 try { prefs = { ...prefs, ...JSON.parse(localStorage.getItem(PREFS_KEY) || '{}') }; } catch (_) {}
 function savePrefs(p) {
   prefs = { ...prefs, ...p };
@@ -17,6 +15,51 @@ function savePrefs(p) {
   TILE_Z = prefs.tileZoom;
   TILES = 2 ** TILE_Z;
 }
+
+// --- how the map looks: the base map, and how strong lines and markers are drawn ---
+
+const OSM = ['https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+  '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'];
+// filter: how the tiles are tinted (#map[data-basemap] in the page's styles); auto follows the light or dark theme
+const BASEMAPS = {
+  auto: { label: 'Follow the theme (dark or light)', tiles: OSM },
+  grey: { label: 'Light grey: lines and markers stand out, as on statshunters', tiles: OSM },
+  'grey-dark': { label: 'Dark grey', tiles: OSM },
+  colour: { label: 'OpenStreetMap in colour', tiles: OSM },
+  topo: { label: 'Topographic (OpenTopoMap)', tiles: ['https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
+    'Map data &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, SRTM; style &copy; <a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA)', 17] },
+  satellite: { label: 'Satellite (Esri)', tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    'Imagery &copy; Esri, Maxar, Earthstar Geographics, and the GIS User Community'] }
+};
+let baseLayer = null;
+function setBasemap() {
+  const b = BASEMAPS[prefs.basemap] || BASEMAPS.auto, [url, attribution, maxZoom = 19] = b.tiles;
+  if (!baseLayer || baseLayer._url !== url) {
+    if (baseLayer) map.removeLayer(baseLayer);
+    baseLayer = L.tileLayer(url, { attribution, maxZoom }).addTo(map);
+  }
+  document.getElementById('map').dataset.basemap = BASEMAPS[prefs.basemap] ? prefs.basemap : 'auto';
+}
+
+// Lines and markers: w scales line widths, o their opacity, r the size of markers. Applied to every line and marker
+// as it is made (and to the activity routes drawn on canvas), so a change needs the map drawn again.
+const LINE_STYLES = {
+  standard: { label: 'Standard', w: 1, o: 1, r: 1 },
+  bold: { label: 'Bold: thicker, solid lines and bigger markers (best on a grey map)', w: 1.8, o: 1.5, r: 1.35 },
+  fine: { label: 'Fine: thin and faint, the map shows through', w: 0.6, o: 0.75, r: 0.8 }
+};
+const lineStyle = () => LINE_STYLES[prefs.lines] || LINE_STYLES.standard;
+L.Path.addInitHook(function () {
+  const st = lineStyle(), o = this.options;
+  if (st === LINE_STYLES.standard) return;
+  if (o.weight) o.weight *= st.w;
+  if (o.opacity) o.opacity = Math.min(1, o.opacity * st.o);
+  if (this instanceof L.CircleMarker && !(this instanceof L.Circle)) {  // markers (not areas such as countries)
+    if (o.fillOpacity) o.fillOpacity = Math.min(1, o.fillOpacity * st.o);
+    o.radius *= st.r;
+    this._radius = o.radius;
+  }
+});
 
 // Distances and heights as chosen; everything is kept in km and m
 const MILE = 1.609344, FOOT = 0.3048;
@@ -29,6 +72,8 @@ const HU = () => (imperial() ? 'ft' : 'm');
 const fmtHeight = m => `${Math.round(height(m)).toLocaleString()} ${HU()}`;
 const stayLayer = L.layerGroup(), carLayer = L.layerGroup(), photoLayer = L.layerGroup();
 const timelineLayer = L.layerGroup(), countryLayer = L.layerGroup(), activityLayer = L.layerGroup(), tileLayer = L.layerGroup();
+const climbLayer = L.layerGroup();
+let allClimbs = [];  // famous cycling climbs and the rides over them (/api/climbs); none without rides
 const cityLayer = L.layerGroup();
 // Activities by type: a legend row each; the activity layer draws the types whose row is on
 const ACT_KINDS = { ride: '🚴 Cycling', run: '🏃 Running', walk: '🥾 Walks & hikes', sport: '🏅 Other sports' };
@@ -40,7 +85,7 @@ let allStays = [], allPhotos = [], allTimeline = { visits: [], paths: [] }, sett
 let allActivities = [], stravaStatus = {}, explored = null, topCities = [], citiesAsked = '';
 let journeys = [];               // trips: from leaving a home airport until coming back
 let win = { from: '', to: '' };  // the period shown, 'YYYY-MM-DD' inclusive; empty: everything
-let whereMarker = null, countryShapes = null, visitedCount = 0;
+let whereMarker = null, visitedCount = 0;
 
 const day = d => (d || '').slice(0, 10);
 const inWin = d => !d || ((!win.from || day(d) >= win.from) && (!win.to || day(d) <= win.to));
@@ -58,7 +103,7 @@ function extraLayers() {
     stay: ['🏨 Stays', stayLayer, '--stay'], car: ['🚗 Rental cars', carLayer, '--car'],
     photo: ['📷 Photos', photoLayer, '--photo'], timeline: ['🧭 Timeline', timelineLayer, '--timeline'],
     ...Object.fromEntries(Object.entries(ACT_KINDS).map(([k, label]) => ['act-' + k, [label, kindLayer[k], '--' + k]])),
-    tile: ['🟩 Explored tiles', tileLayer, '--tile'],
+    tile: ['🟩 Explored tiles', tileLayer, '--tile'], climb: ['⛰️ Climbs', climbLayer, '--climb'],
     country: ['🌍 Countries', countryLayer, '--country'], city: ['🏙️ Cities', cityLayer, '--city']
   };
 }
@@ -68,10 +113,11 @@ function extraCounts() {
   return {
     stay: shown.filter(s => s.what !== 'car').length, car: shown.filter(s => s.what === 'car').length,
     photo: photoCells().reduce((n, c) => n + c.count, 0),
-    timeline: allTimeline.visits.filter(v => overlapsWin(v.start, v.end)).length, country: visitedCount,
+    timeline: allTimeline.visits.filter(v => overlapsWin(v.start, v.end)).length, country: visitedCount ? `${visitedCount} / ${countryTotal}` : 0,
     ...Object.fromEntries(Object.keys(ACT_KINDS).map(k => ['act-' + k, allActivities.filter(a => a.kind === k && inWin(a.date)).length])),
     tile: explored?.tiles.size ? `${explored.tiles.size.toLocaleString()} · ▢${explored.square.size}` : 0,
-    city: topCities.length
+    city: topCities.length,
+    climb: allClimbs.length ? `${allClimbs.filter(climbDone).length} / ${allClimbs.length}` : 0
   };
 }
 
@@ -83,21 +129,82 @@ function drawExtras() {
   drawTiles();
   drawCountries();
   drawCities();
+  drawClimbs();
+}
+
+// --- famous cycling climbs ---
+
+// Done in the period shown: a ride over its summit then (all climbs come with the newest 20 of their rides)
+const climbDone = c => c.times > 0 && (!win.from && !win.to || c.rides.some(r => inWin(r.date)));
+
+async function loadClimbs() {
+  allClimbs = await fetch('/api/climbs').then(r => (r.ok ? r.json() : [])).catch(() => []);
+  drawClimbs();
+  drawLegend();
+  if (document.getElementById('tab-sports')?.classList.contains('active')) renderSports();
+}
+
+function drawClimbs() {
+  climbLayer.clearLayers();
+  const color = getCSSVar('--climb'), ring = getCSSVar('--surface');
+  // the ones not done first, so the done ones are drawn over them
+  [...allClimbs].sort((a, b) => climbDone(a) - climbDone(b)).forEach(c => {
+    const done = climbDone(c);
+    const link = r => `<a href="#" onclick="event.preventDefault(); showActivityOnMap(${r.id})">${fmtDate(r.date)}</a>`;
+    const ridden = list => list.filter(r => inWin(r.date));
+    // each way up: ✓ with the rides up it, or ✗; then ways up that are not among them ("via Sault")
+    const ways = (c.ascents || []).map(a => {
+      const r = ridden(a.rides);
+      return `${r.length ? '✓' : '✗'} from ${escapeHTML(a.from)} · ${fmtDist(a.length, 1)} · ${fmtHeight(a.gain)} · ${a.grade}%` +
+        (r.length ? ` · ${r.length}× ${r.slice(0, 3).map(link).join(', ')}` : '');
+    }).concat((c.other || []).map(o => `✓ ${escapeHTML(o.via)} · ${ridden(o.rides).length}× ${ridden(o.rides).slice(0, 3).map(link).join(', ')}`));
+    const summary = done
+      ? `climbed ${c.times} time${c.times !== 1 ? 's' : ''}` + (c.times > 1 ? `, first ${fmtDate(c.first)}` : '') +
+        (ways.length ? '' : '<br>' + ridden(c.rides).slice(0, 5).map(r => `${link(r)} · ${escapeHTML(r.name || 'ride')}`).join('<br>'))
+      : 'not climbed yet';
+    L.circleMarker([c.lat, c.lon], done
+      ? { radius: 5.5, color: ring, weight: 1.5, fillColor: color, fillOpacity: 0.95 }
+      : { radius: 3.5, color, weight: 1.3, opacity: 0.6, fillOpacity: 0 }
+    ).bindPopup(`<b>⛰️ ${flagOf(c.country)}${escapeHTML(c.name)}</b>${c.ele ? ` · ${fmtHeight(c.ele)}` : ''}<br><small>${summary}` +
+      (ways.length ? '<br>' + ways.join('<br>') : '') +
+      `<br><a href="#climb=${c.id}" class="popup-link" onclick="event.preventDefault(); openClimb('${c.id}')">Open climb page →</a>` + '</small>', { maxWidth: 320 })
+      .addTo(climbLayer);
+    // the ways up you rode, as lines
+    (c.ascents || []).filter(a => ridden(a.rides).length).forEach(a => {
+      L.polyline(decodePath(a.path), { color, weight: 4, opacity: 0.85, interactive: false }).addTo(climbLayer);
+    });
+  });
 }
 
 // --- stays and rental cars ---
 
+// Stays at the same spot are one marker (a booking email gives only the town, so every hotel in Brussels lands on
+// Brussels): its size follows the nights there, its popup lists each stay, newest first
 function drawStays() {
   stayLayer.clearLayers();
   carLayer.clearLayers();
+  const spots = new Map();
   allStays.filter(s => s.lat != null && overlapsWin(s.start, s.end)).forEach(s => {
-    const car = s.what === 'car', n = nights(s), color = getCSSVar(car ? '--car' : '--stay');
-    const what = car ? `${n} day${n !== 1 ? 's' : ''}` : `${n} night${n !== 1 ? 's' : ''}`;
+    const key = `${s.what === 'car'}|${s.lat.toFixed(4)},${s.lon.toFixed(4)}`;
+    if (!spots.has(key)) spots.set(key, []);
+    spots.get(key).push(s);
+  });
+  spots.forEach(list => {
+    list.sort((a, b) => b.start.localeCompare(a.start));
+    const s = list[0], car = s.what === 'car', color = getCSSVar(car ? '--car' : '--stay');
+    const total = list.reduce((t, x) => t + nights(x), 0);
+    const count = n => (car ? `${n} day${n !== 1 ? 's' : ''}` : `${n} night${n !== 1 ? 's' : ''}`);
+    const line = x => `${fmtDate(x.start)} – ${fmtDate(x.end || x.start)} · ${count(nights(x))}` +
+      `${x.hotel ? ' · ' + escapeHTML(x.hotel) : ''}${!car && x.type ? ' · ' + escapeHTML(x.type) : ''}${x.price ? ' · ' + escapeHTML(x.price) : ''}${x.provider ? ' · ' + escapeHTML(x.provider) : ''}`;
+    const head = list.length > 1
+      ? `${car ? '🚗 Rental cars' : '🏨 Stays'}, ${escapeHTML(s.place)}</b><br><small>${list.length} ${car ? 'rentals' : 'stays'}, ${count(total)}</small>`
+      : `${car ? '🚗 Rental car' : '🏨 ' + escapeHTML(s.type || 'Stay')}, ${escapeHTML(s.place)}</b>`;
+    const lines = list.slice(0, 20).map(line).join('<br>') + (list.length > 20 ? `<br>and ${list.length - 20} more` : '');
     L.circleMarker([s.lat, s.lon], {
-      radius: car ? 5 : Math.min(3 + Math.sqrt(n) * 1.5, 9), color, fillColor: color, fillOpacity: 0.85, weight: 1
-    }).bindPopup(`<b>${car ? '🚗 Rental car' : '🏨 ' + escapeHTML(s.type || 'Stay')}, ${escapeHTML(s.place)}</b><br>` +
-      `<small>${fmtDate(s.start)} – ${fmtDate(s.end || s.start)} · ${what}${s.price ? ' · ' + escapeHTML(s.price) : ''}` +
-      `${s.provider ? ' · ' + escapeHTML(s.provider) : ''}</small>`, { maxWidth: 260 }).addTo(car ? carLayer : stayLayer);
+      // small and half see-through, so routes and places show through; an invisible ring keeps them easy to click
+      radius: car ? Math.min(3 + (list.length - 1) * 0.5, 5) : Math.min(2.5 + Math.sqrt(total) * 0.8, 7),
+      color, opacity: 0, weight: 8, fillColor: color, fillOpacity: 0.55
+    }).bindPopup(`<b>${head}<br><small>${lines}</small>`, { maxWidth: 300 }).addTo(car ? carLayer : stayLayer);
   });
 }
 
@@ -210,9 +317,9 @@ const ActivityCanvas = L.GridLayer.extend({
     c.width = size.x; c.height = size.y;
     const ctx = c.getContext('2d'), ox = coords.x * size.x, oy = coords.y * size.y, pad = 4;
     const west = lonAt(ox - pad, z), east = lonAt(ox + size.x + pad, z), north = latAt(oy - pad, z), south = latAt(oy + size.y + pad, z);
-    ctx.lineWidth = z < 9 ? 1 : z < 13 ? 1.6 : 2.4;
+    ctx.lineWidth = (z < 9 ? 1 : z < 13 ? 1.6 : 2.4) * lineStyle().w;
     ctx.lineJoin = ctx.lineCap = 'round';
-    ctx.globalAlpha = 0.75;
+    ctx.globalAlpha = Math.min(1, 0.75 * lineStyle().o);
     for (const a of actShown) {
       const [s, w, n, e] = a.bbox;
       if (n < south || s > north || e < west || w > east) continue;
@@ -308,6 +415,7 @@ function initExtraPanes() {
   ['explored', 'activities'].forEach(p => { map.getPane(p).style.pointerEvents = 'none'; });
   map.on('popupopen', () => { lastPopup = Date.now(); });
   addLocateControl();
+  add3DControl();
   map.on('click', e => setTimeout(() => { if (Date.now() - lastPopup > 150) openActivityAt(e.latlng); }, 0));
 }
 
@@ -419,6 +527,7 @@ async function loadStrava() {
   drawTiles();
   drawCountries();
   drawLegend();
+  loadClimbs();
   if (document.getElementById('tab-sports')?.classList.contains('active')) renderSports();
 }
 
@@ -486,7 +595,8 @@ function paintCities() {
     const m = L.circleMarker([c.lat, c.lon], {
       radius: 3 + 11 * Math.sqrt(c.days / most), color, weight: 1.5, fillColor: color, fillOpacity: 0.35
     }).bindPopup(`<b>🏙️ ${flagOf(c.country)}${escapeHTML(c.name)}</b> · #${i + 1}<br><small>${c.days} day${c.days !== 1 ? 's' : ''}, ` +
-      `${c.visits} visit${c.visits !== 1 ? 's' : ''} · ${fmtDate(c.first)} – ${fmtDate(c.last)}</small>`);
+      `${c.visits} visit${c.visits !== 1 ? 's' : ''} · ${fmtDate(c.first)} – ${fmtDate(c.last)}</small>` +
+      (c.id ? `<br><a href="#city=${c.id}" class="popup-link" onclick="event.preventDefault(); openCityReport(${c.id})">Open report →</a>` : ''));
     if (i < 10) m.bindTooltip(`${i + 1}. ${escapeHTML(c.name)}`, { permanent: true, direction: 'right', className: 'city-label', offset: [6, 0] });
     m.addTo(cityLayer);
   });
@@ -494,101 +604,34 @@ function paintCities() {
 
 // --- countries visited ---
 
-// Where you were in the period: the airports you arrived at (not only to change planes), the ends of trains, buses and
-// ferries, stays, rental cars, photos and Timeline visits
-function visitPoints() {
-  const pts = [];
-  const fl = allFlights.filter(f => f.date && allAirports[f.to]).sort((a, b) => a.date.localeCompare(b.date));
-  fl.forEach((f, i) => {
-    const next = fl[i + 1];
-    const change = next && next.from === f.to && new Date(next.date.replace(' ', 'T')) - new Date(f.date.replace(' ', 'T')) < 864e5;
-    if (!change && inWin(f.date)) pts.push({ at: [allAirports[f.to].lat, allAirports[f.to].lon], date: day(f.date) });
-  });
-  allTrips.forEach(t => {
-    if (!inWin(t.date)) return;
-    if (t.from_lat != null) pts.push({ at: [t.from_lat, t.from_lon], date: day(t.date) });
-    if (t.to_lat != null) pts.push({ at: [t.to_lat, t.to_lon], date: day(t.date) });
-  });
-  allStays.forEach(s => { if (s.lat != null && overlapsWin(s.start, s.end)) pts.push({ at: [s.lat, s.lon], date: day(s.start) }); });
-  photoCells().forEach(c => pts.push({ at: [c.lat, c.lon], date: c.days.sort()[0] }));
-  allTimeline.visits.forEach(v => { if (overlapsWin(v.start, v.end)) pts.push({ at: [v.lat, v.lon], date: day(v.start) }); });
-  allActivities.forEach(a => { if (a.at && inWin(a.date)) pts.push({ at: a.at, date: day(a.date) }); });
-  return pts;
-}
-
-function ringsOf(g) {
-  return g.type === 'Polygon' ? [g.coordinates] : g.type === 'MultiPolygon' ? g.coordinates : [];
-}
-
-const boxOf = pts => {
-  let w = 180, s = 90, e = -180, n = -90;
-  pts.forEach(([x, y]) => { if (x < w) w = x; if (x > e) e = x; if (y < s) s = y; if (y > n) n = y; });
-  return [w, s, e, n];
-};
-const inBox = ([w, s, e, n], lat, lon) => lon >= w && lon <= e && lat >= s && lat <= n;
-
-// Even-odd ray casting; a ring whose box does not hold the point cannot flip the result, so it is skipped (most of a
-// country's outline parts are small islands far from the point)
-function inShape(shape, lat, lon) {
-  if (!inBox(shape.bbox, lat, lon)) return false;
-  let inside = false;
-  for (const { box, ring } of shape.rings) {
-    if (!inBox(box, lat, lon)) continue;
-    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-      const [xi, yi] = ring[i], [xj, yj] = ring[j];
-      if ((yi > lat) !== (yj > lat) && lon < (xj - xi) * (lat - yi) / (yj - yi) + xi) inside = !inside;
-    }
-  }
-  return inside;
-}
-
-// The country of a point, to about 5 km; a point just off the coast (a port, an airport on the shore) takes the one
-// within about 10 km. The country found last is tried first: points come in runs from the same place.
-const countryCache = new Map();
-let lastCountry = null;
-function countryAt(lat, lon) {
-  const key = (Math.round(lat * 20) / 20) + ',' + (Math.round(lon * 20) / 20);
-  if (!countryCache.has(key)) {
-    const find = (y, x) => (lastCountry && inShape(lastCountry, y, x) && lastCountry) || countryShapes.find(c => inShape(c, y, x));
-    let hit = find(lat, lon);
-    for (const [dy, dx] of [[0.1, 0], [-0.1, 0], [0, 0.1], [0, -0.1], [0.07, 0.07], [-0.07, -0.07], [0.07, -0.07], [-0.07, 0.07]]) {
-      if (hit) break;
-      hit = find(lat + dy, lon + dx);
-    }
-    if (hit) lastCountry = hit;
-    countryCache.set(key, hit || null);
-  }
-  return countryCache.get(key);
-}
-
-async function loadCountries() {
-  const topo = await fetch(COUNTRIES_URL).then(r => r.json());
-  countryShapes = topojson.feature(topo, topo.objects.countries).features.map(f => {
-    const rings = ringsOf(f.geometry).flat().map(ring => ({ box: boxOf(ring), ring }));
-    return { name: f.properties.name, feature: f, rings, bbox: boxOf(rings.map(r => r.box).flatMap(([w, s, e, n]) => [[w, s], [e, n]])) };
-  });
-}
+// The countries of the list chosen in the settings (ISO codes, sovereign countries, or the Travelers' Century Club's
+// 330 places) you were in during the period, by any source. The server puts each place in its state or province
+// (regions.js), so islands and parts of countries count as the list has them.
+const COUNTRY_LISTS = { iso: 'ISO countries and territories', un: 'Sovereign countries', tcc: "Travelers' Century Club" };
+const countryData = new Map();  // address -> the server's answer, or the request for it
+let countryTotal = 0;
+const countryUrl = () => `/api/regions?scheme=${prefs.countries}&from=${win.from}&to=${win.to}`;
 
 function drawCountries() {
-  countryLayer.clearLayers();
-  if (!countryShapes) {
-    if (typeof topojson !== 'undefined') loadCountries().then(() => { drawCountries(); drawLegend(); }).catch(e => console.warn('countries:', e));
+  const url = countryUrl(), got = countryData.get(url);
+  if (!got) {
+    countryData.set(url, fetch(url).then(r => (r.ok ? r.json() : null)).catch(() => null).then(d => {
+      countryData.set(url, d || { places: [], total: 0 });
+      if (countryUrl() === url) { drawCountries(); drawLegend(); }
+    }));
     return;
   }
-  const seen = new Map();  // shape -> { first, n }
-  visitPoints().forEach(p => {
-    const c = countryAt(p.at[0], p.at[1]);
-    if (!c) return;
-    const v = seen.get(c) || { first: p.date, n: 0 };
-    v.n++;
-    if (p.date && p.date < v.first) v.first = p.date;
-    seen.set(c, v);
-  });
-  visitedCount = seen.size;
+  if (got instanceof Promise) return;
+  countryLayer.clearLayers();
+  visitedCount = got.places.length;
+  countryTotal = got.total;
   const color = getCSSVar('--country');
-  seen.forEach((v, c) => {
-    L.geoJSON(c.feature, { style: { color, weight: 0.8, opacity: 0.6, fillColor: color, fillOpacity: 0.16 } })
-      .bindPopup(`<b>🌍 ${escapeHTML(c.name)}</b><br><small>first visit${win.from || win.to ? ' in this period' : ''}: ${fmtDate(v.first)}</small>`)
+  got.places.forEach(c => {
+    const flag = String(c.id).length === 2 ? flagOf(c.id) : '';
+    L.geoJSON(c.shape, { style: { stroke: false, fillColor: color, fillOpacity: /^grey/.test(prefs.basemap) ? 0.08 : 0.18, fillRule: 'nonzero', className: 'country-fill' } })
+      .bindPopup(`<b>🌍 ${flag}${escapeHTML(c.name)}</b><br><small>${c.region ? escapeHTML(c.region.toLowerCase().replace(/\b\w/g, l => l.toUpperCase())) + '<br>' : ''}` +
+        `${c.days} day${c.days !== 1 ? 's' : ''}${win.from || win.to ? ' in this period' : ''}, first ${fmtDate(c.first)}` +
+        `${c.last !== c.first ? ', last ' + fmtDate(c.last) : ''}<br>${COUNTRY_LISTS[prefs.countries]}: ${visitedCount} of ${countryTotal}</small>`)
       .addTo(countryLayer);
   });
   countryLayer.eachLayer(l => l.bringToBack());
