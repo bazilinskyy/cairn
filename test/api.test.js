@@ -20,7 +20,7 @@ const AIRPORTS = [
 let dir, server;
 
 before(async () => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'contrail-test-'));
+  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cairn-test-'));
   fs.copyFileSync(path.join(ROOT, 'app.js'), path.join(dir, 'app.js'));
   fs.copyFileSync(path.join(ROOT, 'ground.js'), path.join(dir, 'ground.js'));
   fs.copyFileSync(path.join(ROOT, 'strava.js'), path.join(dir, 'strava.js'));
@@ -28,7 +28,7 @@ before(async () => {
   fs.copyFileSync(path.join(ROOT, 'activities.js'), path.join(dir, 'activities.js'));
   fs.copyFileSync(path.join(ROOT, 'regions.js'), path.join(dir, 'regions.js'));
   fs.copyFileSync(path.join(ROOT, 'country-lists.json'), path.join(dir, 'country-lists.json'));
-  ['climbs.js', 'ascents.js', 'efforts.js', 'climbs.json'].forEach(f => fs.copyFileSync(path.join(ROOT, f), path.join(dir, f)));
+  ['climbs.js', 'ascents.js', 'efforts.js', 'climbs.json', 'photos.js', 'climb_records.json', 'trips.js', 'weather.js', 'stats.js', 'lastfm.js', 'suggestions.js'].forEach(f => fs.copyFileSync(path.join(ROOT, f), path.join(dir, f)));
   fs.copyFileSync(path.join(ROOT, 'default.config'), path.join(dir, 'default.config'));
   fs.cpSync(path.join(ROOT, 'public'), path.join(dir, 'public'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'data'));

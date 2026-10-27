@@ -16,11 +16,11 @@ const DEM_Z = 12;
 const STEP_M = 50;          // ascents are compared every 50 m
 const NEAR_M = 60;          // a ride is on the ascent's road within this
 const LAST_M = 2000;        // the last stretch a ride must follow to the summit (or half the ascent, when shorter)
-const MIN_GAIN = 150, MIN_LEN = 1500;
+const MIN_GAIN = 40, MIN_LEN = 400;  // short Flemish and Dutch hills count too
 
 function get(url) {
   return new Promise((resolve, reject) => {
-    https.get(url, { headers: { 'User-Agent': 'Contrail (personal travel map)' } }, res => {
+    https.get(url, { headers: { 'User-Agent': 'Cairn (personal travel map)' } }, res => {
       if (res.statusCode !== 200) { res.resume(); return reject(new Error(`${res.statusCode} ${url}`)); }
       const chunks = [];
       res.on('data', c => chunks.push(c));
@@ -146,7 +146,7 @@ async function ascentsOf(climb, towns, wait = ms => new Promise(r => setTimeout(
     }
     // the climb proper starts where it gets going: up from the foot, the first point from which the next 2 km rise
     // 3.5% or more (the gentle approach through Caromb is not the Ventoux from Bédoin)
-    const R = Math.round(2000 / STEP_M);
+    const R = Math.max(4, Math.min(Math.round(2000 / STEP_M), Math.round(low * 0.4)));  // 2 km, less on a short climb
     while (low > R && hs[low - R] - hs[low] < 0.035 * R * STEP_M) low--;
     const gain = Math.round(hs[0] - hs[low]), len = low * STEP_M;
     if (gain < MIN_GAIN || len < MIN_LEN) continue;
@@ -162,7 +162,9 @@ async function ascentsOf(climb, towns, wait = ms => new Promise(r => setTimeout(
   // went on another way at a junction), so it goes
   const along = (a, b) => a.up.filter(p => b.up.some(q => metresBetween(p, q) < 80)).length / a.up.length;
   const onRoad = (a, b) => b.up.some(q => metresBetween(a.foot, q) < 80);
-  const kept = found.sort((a, b) => b.length - a.length).filter((a, i, all) => !all.slice(0, i).some(b => onRoad(a, b) && along(a, b) > 0.9));
+  // and a way up that lies along a longer one for 80% of its length: the same road from a nearby start (two "from
+  // Séez" a little apart), so it goes too
+  const kept = found.sort((a, b) => b.length - a.length).filter((a, i, all) => !all.slice(0, i).some(b => (onRoad(a, b) && along(a, b) > 0.9) || along(a, b) > 0.8));
   // two ways up from the same town: told apart by the side of the climb they come up
   const side = f => ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'][
     Math.round(((Math.atan2(f[1] - top[1], f[0] - top[0]) * 180 / Math.PI + 360) % 360) / 45) % 8];

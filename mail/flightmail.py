@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""flightmail: read new Gmail messages, put the owner's flights into the Travel calendar and Contrail.
+"""flightmail: read new Gmail messages, put the owner's flights into the Travel calendar and Cairn.
 
 Run hourly on mini through ~/.flightmail/flightmail.app (see mail/install.sh), which holds the Calendar permission.
   flightmail.py              read new mail and apply it
   flightmail.py --dry-run    read and log what would change; writes nothing, state untouched
   flightmail.py calendars    list the calendars EventKit can see
-  flightmail.py history [--days N] [--dry-run]   past stays, rental cars, trains, buses and ferries into Contrail
+  flightmail.py history [--days N] [--dry-run]   past stays, rental cars, trains, buses and ferries into Cairn
 Never exits non-zero: failures are logged and posted to Discord (an applet that fails shows a blocking dialog).
 """
 import argparse
@@ -453,13 +453,13 @@ STAY_FIELDS = ("code", "what", "provider", "place", "country", "start", "end", "
 
 
 def sync_stays(state, con, dry=False):
-    """Contrail's copy of each hotel, Airbnb and rental car in state["stays"], for its map; Contrail keeps them after
+    """Cairn's copy of each hotel, Airbnb and rental car in state["stays"], for its map; Cairn keeps them after
     flightmail forgets them. New and changed ones are posted, cancelled ones deleted; each remembers what was sent."""
     for s in state.get("stays", {}).values():
         sent = s.get("contrail")
         if s.get("cancelled"):
             if sent:
-                log(f"{'would delete' if dry else 'delete'} contrail stay {s['place']} {s['start']} (cancelled)")
+                log(f"{'would delete' if dry else 'delete'} Cairn stay {s['place']} {s['start']} (cancelled)")
                 if not dry:
                     con.delete(f"stays/{sent[0]}")
                     s["contrail"] = None
@@ -468,7 +468,7 @@ def sync_stays(state, con, dry=False):
         signature = json.dumps(body, sort_keys=True)
         if sent and sent[1] == signature:
             continue
-        log(f"{'would send' if dry else 'send'} contrail stay {s['what']} {s['place']} {s['start']}..{s['end']}")
+        log(f"{'would send' if dry else 'send'} Cairn stay {s['what']} {s['place']} {s['start']}..{s['end']}")
         if not dry:
             s["contrail"] = [con.add_stay(body)["id"], signature]
 
@@ -512,9 +512,9 @@ def run_extras(state, todos, blocks, banners, airports, now, home, work_tz="Euro
             del owned[i]
 
 
-# --- Contrail (HTTP API on mini) ---
+# --- Cairn (HTTP API on mini) ---
 
-class ContrailHTTP:
+class CairnHTTP:
     def __init__(self, url, airports, airlines):
         self.url, self.airports, self.airlines, self._flights = url.rstrip("/"), airports, airlines, None
 
@@ -539,7 +539,7 @@ class ContrailHTTP:
                    and ((f.get("from"), f.get("to")) == (dep, arr) or f.get("flight_number") == flight) for f in self._flights)
 
     def lookup(self, flight, day):
-        """Airports and scheduled local times from AeroDataBox through Contrail; None when unknown or unavailable."""
+        """Airports and scheduled local times from AeroDataBox through Cairn; None when unknown or unavailable."""
         try:
             r = self._call("POST", "/api/flights/lookup", {"flight_number": flight, "date": day.isoformat()})
             dep = datetime.fromisoformat(r["departure_time"]).replace(tzinfo=None)
@@ -558,11 +558,11 @@ class ContrailHTTP:
 
     @staticmethod
     def _path(cid):
-        """Contrail ids of ground trips and stays are kept as "ground/12" and "stays/3", of flights as plain numbers."""
+        """Cairn ids of ground trips and stays are kept as "ground/12" and "stays/3", of flights as plain numbers."""
         return f"/api/{cid}" if "/" in str(cid) else f"/api/flights/{cid}"
 
     def add(self, leg, event_id=None):
-        if leg.mode != "flight":  # Contrail keeps one trip per departure minute and mode: posting it again updates it
+        if leg.mode != "flight":  # Cairn keeps one trip per departure minute and mode: posting it again updates it
             trip = {**self._ground(leg), **({"event_id": event_id} if event_id else {})}
             return f"ground/{self._call('POST', '/api/ground', trip)['id']}"
         f = self._call("POST", "/api/flights", self._payload(leg))
@@ -582,13 +582,13 @@ class ContrailHTTP:
         self._flights = None
 
     def add_stay(self, stay):
-        """Contrail adds the stay, or updates the one with the same booking code."""
+        """Cairn adds the stay, or updates the one with the same booking code."""
         return self._call("POST", "/api/stays", stay)
 
 
 def open_stores(cfg, airports, airlines):
     return (EventKitCalendar(cfg.get("calendar_account", "Google"), cfg.get("calendar_title", "Travel"), airports),
-            ContrailHTTP(cfg.get("contrail_url", "http://127.0.0.1:3000"), airports, airlines))
+            CairnHTTP(cfg.get("cairn_url") or cfg.get("contrail_url", "http://127.0.0.1:3000"), airports, airlines))
 
 
 class Logged:
@@ -643,7 +643,7 @@ def run(args, cfg, sec):
     airports, airlines, places = load_reference(cfg)
     cal, con = open_stores(cfg, airports, airlines)
     extras = open_extras(cfg, cal)
-    cal, con = Logged(cal, "calendar", args.dry_run), Logged(con, "contrail", args.dry_run)
+    cal, con = Logged(cal, "calendar", args.dry_run), Logged(con, "cairn", args.dry_run)
     work = json.loads(json.dumps(state)) if args.dry_run else state
     cache_file = home() / "lookups.json"  # a cache, kept even in dry runs: lookups use the free monthly quota
     cache = json.loads(cache_file.read_text()) if cache_file.exists() else {}
@@ -680,8 +680,8 @@ def run(args, cfg, sec):
         if not args.dry_run:
             save_state(work)
     except Exception as e:  # never in the way of the rest of the run
-        log(f"stays not sent to Contrail: {e!r}")
-        alerts.append(f"Hotels and rental cars not updated in Contrail: {e!r}")
+        log(f"stays not sent to Cairn: {e!r}")
+        alerts.append(f"Hotels and rental cars not updated in Cairn: {e!r}")
     if extras:
         todos, blocks, banners = (Logged(x, name, args.dry_run) for x, name in zip(extras, ("things", "work calendar", "banner")))
         run_extras(work, todos, blocks, banners, airports, now(), cfg.get("home_airports", ["AMS", "EIN", "RTM"]),
@@ -719,12 +719,12 @@ HISTORY_QUERY = ("from:booking.com OR from:airbnb.com OR from:hostelworld.com OR
 
 
 def history(args, cfg, sec):
-    """Past hotels, Airbnbs, rental cars, trains, buses and ferries from the mail of the last --days days into Contrail
+    """Past hotels, Airbnbs, rental cars, trains, buses and ferries from the mail of the last --days days into Cairn
     (never the calendar): the hourly run only handles trips still ahead and forgets stays a month after they end.
-    Oldest first, so a later cancellation undoes the booking; safe to run again (Contrail keeps one stay per booking
+    Oldest first, so a later cancellation undoes the booking; safe to run again (Cairn keeps one stay per booking
     code and one ground trip per departure minute and mode)."""
     airports, airlines, places = load_reference(cfg)
-    con = ContrailHTTP(cfg.get("contrail_url", "http://127.0.0.1:3000"), airports, airlines)
+    con = CairnHTTP(cfg.get("cairn_url") or cfg.get("contrail_url", "http://127.0.0.1:3000"), airports, airlines)
     names, home_tz = cfg.get("passenger_names", []), cfg.get("home_timezone", "Europe/Amsterdam")
     messages = fetch_new(cfg, sec, {}, since_days=args.days, query=args.query or HISTORY_QUERY)
     log(f"{len(messages)} message(s) since {args.days} days ago")
@@ -765,7 +765,7 @@ def history(args, cfg, sec):
             log(f"  would send {leg.mode} {leg.dep_local:%Y-%m-%d %H:%M} {leg.dep} - {leg.arr}")
         return
     for s in found.values():
-        if not (s.code and s.place and s.start):  # Contrail needs all three; such a mail is listed to look at by hand
+        if not (s.code and s.place and s.start):  # Cairn needs all three; such a mail is listed to look at by hand
             log(f"  skipped {s.what} {s.provider} {s.code or '(no code)'} {s.start or '(no date)'}: no place, code or date")
             continue
         con.add_stay({k: (getattr(s, k).isoformat() if hasattr(getattr(s, k), "isoformat") else getattr(s, k) or "")
@@ -775,7 +775,7 @@ def history(args, cfg, sec):
             con.delete(f"stays/{t['id']}")
     for leg in rides.values():
         con._call("POST", "/api/ground", {**con._ground(leg), "source": "email"})
-    log(f"sent {len(found)} stays and rental cars and {len(rides)} trains, buses and ferries to Contrail")
+    log(f"sent {len(found)} stays and rental cars and {len(rides)} trains, buses and ferries to Cairn")
 
 
 def main(argv=None):

@@ -23,7 +23,7 @@ function load(file) {
   for (const line of text.split('\n')) {
     const f = line.split('\t');
     if (f.length < 15 || SKIP.has(f[7])) continue;
-    const town = { id: +f[0], name: f[1], cc: f[8], lat: +f[4], lon: +f[5], pop: +f[14] || 1000 };
+    const town = { id: +f[0], name: f[1], cc: f[8], lat: +f[4], lon: +f[5], pop: +f[14] || 1000, fc: f[7] };
     // its names to match an airport's city by: other spellings only for towns over 50,000 ("Kiev" is Kyiv)
     town.names = new Set([f[1], f[2], ...(town.pop >= 50000 ? f[3].split(',') : [])].map(norm).filter(Boolean));
     const key = Math.floor(town.lat) + ',' + Math.floor(town.lon);
@@ -109,7 +109,7 @@ function starts(grid, activities) {
   }
   const order = (a, b) => b.count - a.count || b.km - a.km;
   const round = v => ({ ...v, km: Math.round(v.km) });
-  return { towns: [...towns.values()].sort(order).slice(0, 25).map(round), countries: [...countries.values()].sort(order).map(round) };
+  return { towns: [...towns.values()].sort(order).slice(0, 200).map(round), countries: [...countries.values()].sort(order).map(round) };
 }
 
 module.exports = { load, townAt, townNamed, rank, starts };

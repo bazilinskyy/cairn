@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Google Maps Timeline into Contrail's map: the places you stayed at and the paths you travelled, per day.
+"""Google Maps Timeline into Cairn's map: the places you stayed at and the paths you travelled, per day.
 
 Reads any of Google's exports (no network, standard library only):
   - Timeline.json from the phone (Settings > Location > Timeline > Export), Android or iOS layout
@@ -208,7 +208,7 @@ def load(paths):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("export", nargs="+", help="Timeline.json, Records.json, or a folder of Takeout files")
-    data = Path(__file__).resolve().parent.parent / "data"  # Contrail's data folder in a checkout, else here
+    data = Path(__file__).resolve().parent.parent / "data"  # Cairn's data folder in a checkout, else here
     ap.add_argument("--out", default=str(data / "timeline.json" if data.is_dir() else Path("timeline.json")))
     ap.add_argument("--send", metavar="HOST:PATH", help="also copy the result there with scp, e.g. mini:repos/contrail/data/timeline.json")
     args = ap.parse_args(argv)

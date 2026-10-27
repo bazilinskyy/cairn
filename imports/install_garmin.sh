@@ -1,15 +1,15 @@
 #!/bin/sh
 # The nightly Garmin Connect sync on this Mac (run it on mini, from the checkout), after signing in once with
 #   ~/.local/bin/uv run --with garminconnect python imports/garmin.py login
-# LaunchAgent nl.tue.contrail-garmin runs imports/garmin.py sync every night at 02:30 (new activities, the whole list,
-# FTP, weight; HOUR and MINUTE change the time); log ~/Library/Logs/contrail-garmin.log. On mini 02:30 sits between the
+# LaunchAgent nl.tue.cairn-garmin runs imports/garmin.py sync every night at 02:30 (new activities, the whole list,
+# FTP, weight; HOUR and MINUTE change the time); log ~/Library/Logs/cairn-garmin.log. On mini 02:30 sits between the
 # 01:30 backup and the jobs from 04:00 (dataset page, short videos, Claude's lessons).
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 UV="${UV:-$HOME/.local/bin/uv}"
-LABEL=nl.tue.contrail-garmin
+LABEL=nl.tue.cairn-garmin
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
-LOG="$HOME/Library/Logs/contrail-garmin.log"
+LOG="$HOME/Library/Logs/cairn-garmin.log"
 HOUR="${HOUR:-2}"
 MINUTE="${MINUTE:-30}"
 [ -x "$UV" ] || { echo "uv not found at $UV (set UV=...)"; exit 1; }

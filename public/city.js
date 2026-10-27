@@ -1,7 +1,8 @@
 'use strict';
 // A town's report page: opened from a city on the map (or #city=<GeoNames id>), it lists the visits there and what
 // you did: stays and rental cars, flights, trains, buses and ferries, sports activities, photos, Timeline places.
-// Uses the page's and layers.js's globals (win, fmtDate, nights, flagOf, dist, DU, groundModes, linkTo, hookLinks).
+// Uses the page's and layers.js's globals (win, fmtDate, nights, flagOf, dist, DU, groundModes, linkTo, hookLinks, and
+// the map data: allActivities, allTrips, allStays, allAirports, allClimbs, allPhotoPoints).
 
 let cityShown = null;  // the report's data
 
@@ -42,7 +43,8 @@ function renderCityReport() {
     (note ? `<p class="sp-note">${note}</p>` : '') + '</div>';
   const table = (head, rows) => `<table class="sp-table"><thead><tr>${head.map(h => `<th>${h}</th>`).join('')}</tr></thead>` +
     `<tbody>${rows.join('')}</tbody></table>`;
-  let html = '<div class="stat-cards">' +
+  let html = `<div class="chart-section" style="padding:0;overflow:hidden"><div id="city-map" class="mini-map" style="height:340px"></div></div>` +
+    '<div class="stat-cards">' +
     card('Days', d.days.toLocaleString(), plural(d.visits.length, 'visit')) +
     card('Nights in stays', stays.reduce((n, s) => n + nights(s), 0).toLocaleString(), plural(stays.length, 'stay')) +
     card('Flights', d.flights.length.toLocaleString(), `${d.flights.filter(f => f.direction === 'in').length} in, ${d.flights.filter(f => f.direction === 'out').length} out`) +
@@ -51,7 +53,7 @@ function renderCityReport() {
     card('Photos', photos.toLocaleString(), plural(d.photos.length, 'day')) + '</div>';
 
   if (d.visits.length) {
-    html += section('Visits', table(['When', 'Days', 'What you did'], d.visits.map(v => {
+    html += section('Visits', table(['When', 'Days', 'What you did', 'Trip'], d.visits.map(v => {
       const did = [
         [d.stays.filter(s => s.what !== 'car' && s.start <= v.end && (s.end || s.start) >= v.start).length, '🏨'],
         [d.flights.filter(f => inVisit(v, f.date)).length, '✈️'],
@@ -59,7 +61,8 @@ function renderCityReport() {
         [d.activities.filter(a => inVisit(v, a.date)).length, '🏃'],
         [d.photos.filter(p => inVisit(v, p.day)).reduce((n, p) => n + p.count, 0), '📷']
       ].filter(([n]) => n).map(([n, icon]) => `${icon} ${n}`).join(' · ');
-      return `<tr><th>${range(v.start, v.end)}</th><td>${v.days}</td><td>${did}</td></tr>`;
+      const trip = tripOn(v.start);
+      return `<tr><th>${range(v.start, v.end)}</th><td>${v.days}</td><td>${did}</td><td>${trip ? tripLink(trip) : ''}</td></tr>`;
     })), 'A visit is a run of days in a row there; ✈️ flights, 🚆 trains, buses and ferries, 🏃 activities, 📷 photos on those days.');
   }
   if (d.stays.length) {
@@ -105,12 +108,70 @@ function renderCityReport() {
       `<tr><th>${new Date(m + '-15T12:00:00Z').toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })}</th>` +
       `<td>${v.n.toLocaleString()}</td><td>${v.days}</td></tr>`)), 'From the photo places import; counts per day are spread over a place’s days.');
   }
+  if (d.music?.plays) html += musicSection(d.music, 'Music played here', 'What you played on Last.fm on your days here');
   if (d.timeline.length) {
     html += section('Google Timeline places', table(['When', 'Place'], d.timeline.slice(0, 200).map(v =>
       `<tr><th>${range(v.start, v.end)}</th><td>${escapeHTML(v.name || '')}</td></tr>`)));
   }
   document.getElementById('city-body').innerHTML = html;
   hookLinks('city-body');
+  paginateTables('city-body');
+  drawCityMap(d);
+}
+
+// The town on a small map you can drag and zoom: what the report lists (activities, trains, buses and ferries, stays,
+// the airports of its flights) and the photos and famous climbs around it, each with its popup
+const CITY_PHOTO_KM = 15, CITY_CLIMB_KM = 30;
+let cityMap = null;
+function drawCityMap(d) {
+  if (cityMap) { cityMap.remove(); cityMap = null; }
+  const box = document.getElementById('city-map'), t = d.town;
+  box.dataset.basemap = BASEMAPS[prefs.basemap] ? prefs.basemap : 'auto';
+  cityMap = L.map(box, { zoomControl: true, attributionControl: true }).setView([t.lat, t.lon], 12);
+  const b = BASEMAPS[prefs.basemap] || BASEMAPS.auto, [url, attribution, maxZoom = 19] = b.tiles;
+  L.tileLayer(url, { attribution, maxZoom }).addTo(cityMap);
+  const st = lineStyle(), col = k => getCSSVar('--' + k);
+  const near = (lat, lon, maxKm) => Math.hypot(lat - t.lat, (lon - t.lon) * Math.cos(t.lat * Math.PI / 180)) * 111.2 <= maxKm;
+  const acts = new Set(d.activities.map(a => a.id));
+  allActivities.filter(a => acts.has(a.id) && a.pts).forEach(a => {
+    const pts = [];
+    for (let i = 0; i < a.pts.length; i += 2) pts.push([a.pts[i], a.pts[i + 1]]);
+    L.polyline(pts, { color: col(a.kind || 'sport'), weight: 2.5 * st.w, opacity: Math.min(1, 0.75 * st.o) })
+      .bindPopup(`<b>${escapeHTML(a.name || a.sport || '')}</b><br><small>${fmtDate(a.date)}</small><br><a href="#" onclick="event.preventDefault(); showActivityOnMap(${a.id})">Show on the big map →</a>`).addTo(cityMap);
+  });
+  const ground = new Set(d.ground.map(g => g.id));
+  allTrips.filter(g => ground.has(g.id) && g.from_lat != null && g.to_lat != null).forEach(g => {
+    L.polyline(g.path ? decodePath(g.path) : [[g.from_lat, g.from_lon], [g.to_lat, g.to_lon]],
+      { color: col(g.mode in { train: 1, bus: 1, ferry: 1 } ? g.mode : 'bus'), weight: 3 * st.w, opacity: 0.85, dashArray: g.path ? null : '6 6' })
+      .bindPopup(`<b>${(groundModes[g.mode] || '🚌').split(' ')[0]} ${escapeHTML(g.from)} → ${escapeHTML(g.to)}</b><br><small>${fmtDate(g.date)}</small>`).addTo(cityMap);
+  });
+  const stays = new Set(d.stays.map(s => s.id));
+  allStays.filter(s => stays.has(s.id) && s.lat != null).forEach(s => {
+    const c = col(s.what === 'car' ? 'car' : 'stay');
+    L.circleMarker([s.lat, s.lon], { radius: 7 * st.r, color: '#fff', weight: 1.5, fillColor: c, fillOpacity: 0.9 })
+      .bindPopup(`<b>${s.what === 'car' ? '🚗' : '🏨'} ${escapeHTML(s.hotel || s.type || s.place || '')}</b><br><small>${fmtDate(s.start)}` +
+        `${s.end && s.end !== s.start ? ' – ' + fmtDate(s.end) : ''} · ${escapeHTML(s.provider || '')}</small>`).addTo(cityMap);
+  });
+  [...new Set(d.flights.map(f => (f.direction === 'in' ? f.to : f.from)))].filter(code => allAirports[code]).forEach(code => {
+    const ap = allAirports[code], n = d.flights.filter(f => f.to === code || f.from === code).length;
+    L.circleMarker([ap.lat, ap.lon], { radius: 8 * st.r, color: '#fff', weight: 1.5, fillColor: col('accent'), fillOpacity: 0.9 })
+      .bindPopup(`<b>✈️ ${escapeHTML(ap.name)} (${code})</b><br><small>${n} flight${n !== 1 ? 's' : ''}</small>`).addTo(cityMap);
+  });
+  allClimbs.filter(c => near(c.lat, c.lon, CITY_CLIMB_KM)).forEach(c => {
+    const done = climbDone(c);
+    L.circleMarker([c.lat, c.lon], { radius: (done ? 6 : 5) * st.r, color: done ? '#fff' : col('climb'), weight: 1.5, fillColor: col('climb'), fillOpacity: done ? 0.95 : 0 })
+      .bindPopup(`<b>⛰️ ${escapeHTML(c.name)}</b><br><small>${done ? `climbed ${c.times}×` : 'not climbed yet'}</small>` +
+        `<br><a href="#" onclick="event.preventDefault(); openClimb('${c.id}')">Open climb page →</a>`).addTo(cityMap);
+  });
+  const photos = (allPhotoPoints || []).filter(p => inWin(photoDay(p)) && near(p[2], p[3], CITY_PHOTO_KM));
+  if (photos.length) {
+    const group = L.markerClusterGroup({ showCoverageOnHover: false, maxClusterRadius: 40,
+      iconCreateFunction: c => L.divIcon({ html: `<span>${c.getChildCount().toLocaleString()}</span>`, className: 'photo-cluster', iconSize: [30, 30] }) });
+    const icon = L.divIcon({ className: 'photo-dot', iconSize: [10, 10] });
+    group.addLayers(photos.map(p => L.marker([p[2], p[3]], { icon }).bindPopup(() => photoPopup(p), { maxWidth: 260, minWidth: 240 })));
+    cityMap.addLayer(group);
+  } else if (allPhotoPoints === null) loadPhotoPoints();
+  setTimeout(() => cityMap && cityMap.invalidateSize(), 50);
 }
 
 window.addEventListener('load', () => {

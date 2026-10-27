@@ -105,7 +105,7 @@ def test_run_applies_and_saves_state(home):
     assert sent == []
 
 
-class StubContrail(flightmail.ContrailHTTP):
+class StubCairn(flightmail.CairnHTTP):
     def __init__(self, replies):
         super().__init__("http://x", test_parse.airports(), test_parse.airlines())
         self.replies, self.sent = replies, []
@@ -115,8 +115,8 @@ class StubContrail(flightmail.ContrailHTTP):
         return self.replies[(method, path)]
 
 
-def test_contrail_duplicate_by_route_or_number():
-    con = StubContrail({("GET", "/api/flights"): [
+def test_cairn_duplicate_by_route_or_number():
+    con = StubCairn({("GET", "/api/flights"): [
         {"id": 4, "date": "2026-11-04 18:55:00", "from": "TER", "to": "LIS", "flight_number": "140"},
         {"id": 5, "date": "2026-11-16 16:10:00", "from": "AMS", "to": "MAD", "flight_number": "KL1234"}]})
     d = flightmail.datetime
@@ -125,8 +125,8 @@ def test_contrail_duplicate_by_route_or_number():
     assert not con.has_flight("KL1234", "AMS", "LIS", d(2026, 11, 17).date())
 
 
-def test_contrail_ground_ids_and_payload():
-    con = StubContrail({("POST", "/api/ground"): {"id": 12}, ("PUT", "/api/ground/12"): {}, ("DELETE", "/api/ground/12"): {},
+def test_cairn_ground_ids_and_payload():
+    con = StubCairn({("POST", "/api/ground"): {"id": 12}, ("PUT", "/api/ground/12"): {}, ("DELETE", "/api/ground/12"): {},
                         ("DELETE", "/api/flights/7"): {}})
     bus = flightmail.Leg("", "Lisboa (Oriente)", "Porto (Campanhã)", flightmail.datetime(2026, 11, 21, 9, 30),
                          flightmail.datetime(2026, 11, 21, 13, 0), ("3000000001",), "", None, "bus", "Europe/Lisbon", "Europe/Lisbon")
@@ -140,7 +140,7 @@ def test_contrail_ground_ids_and_payload():
     assert [c[:2] for c in con.sent[1:]] == [("PUT", "/api/ground/12"), ("DELETE", "/api/ground/12"), ("DELETE", "/api/flights/7")]
 
 
-class StayContrail:
+class StayCairn:
     def __init__(self):
         self.posted, self.deleted = [], []
 
@@ -158,7 +158,7 @@ def test_stays_sent_once_and_cancellations_deleted():
                "start": "2026-10-22", "end": "2026-10-23", "type": "Hostel", "price": "14.83€", "link": "https://x"},
         "C1": {"what": "car", "provider": "DiscoverCars", "code": "C1", "place": "Skopje", "country": "North Macedonia",
                "start": "2026-09-26", "end": "2026-09-30", "type": "Rental car", "price": "89.85€"}}}
-    con = StayContrail()
+    con = StayCairn()
     flightmail.sync_stays(state, con, dry=True)
     assert con.posted == [] and "contrail" not in state["stays"]["B1"]
     flightmail.sync_stays(state, con)
@@ -173,8 +173,8 @@ def test_stays_sent_once_and_cancellations_deleted():
     assert state["stays"]["C1"]["contrail"] is None
 
 
-def test_contrail_lookup():
-    con = StubContrail({("POST", "/api/flights/lookup"): {"from": "MAD", "to": "AMS", "airline": "KLM",
+def test_cairn_lookup():
+    con = StubCairn({("POST", "/api/flights/lookup"): {"from": "MAD", "to": "AMS", "airline": "KLM",
                         "departure_time": "2026-11-16 16:10+01:00", "arrival_time": "2026-11-16 18:45+01:00"}})
     leg = con.lookup("KL1234", flightmail.datetime(2026, 11, 16).date())
     assert (leg.flight, leg.dep, leg.arr, leg.dep_local, leg.arr_local) == (

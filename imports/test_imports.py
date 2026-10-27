@@ -135,7 +135,7 @@ def test_garmin_sports_and_tiles():
                                  [(-11.6, 166.9), (-11.7, 167.0)])  # Watopia's coordinates, in the Pacific
     assert (virtual["trainer"], virtual["path"], virtual["at"], virtual["tiles"], virtual["distance"]) == (True, "", None, [], 30.0)
     assert garmin.sport_of("hiking") == ("Hike", False) and garmin.sport_of("strength_training") == ("StrengthTraining", False)
-    # the same tiles as Contrail's strava.js: Eindhoven station is 8441/5452, three tiles east to 5.52
+    # the same tiles as Cairn's strava.js: Eindhoven station is 8441/5452, three tiles east to 5.52
     assert garmin.tiles_of([(51.4433, 5.4797), (51.4433, 5.52)]) == [x * 16384 + 5452 for x in (8441, 8442, 8443)]
 
 
@@ -172,11 +172,6 @@ def test_garmin_export():
         "sport": "Run", "date": "2024-06-02 09:00:00", "distance": 10.0, "moving_time": 2900, "heartrate": 150, "trainer": True, "path": "", "at": None}
 
 
-if __name__ == "__main__":
-    tests = [f for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
-    for t in tests:
-        t()
-    print(f"OK {len(tests)} tests")
 
 
 def test_garmin_vehicle_part():
@@ -196,3 +191,31 @@ def test_garmin_vehicle_part():
     assert garmin.vehicle_part(track([5] * 400), "Hike") is None
     assert garmin.vehicle_part(track([25] * 200 + [65] * 60, alt=lambda i: 2000 - max(0, i - 200) * 15), "Ride") is None  # descending
     assert garmin.vehicle_part(track([25] * 200 + [90] * 60), "Ride")["to_end"]
+
+
+def test_garmin_days():
+    """A day's sleep and resting heart rate, as the export and Garmin Connect give them."""
+    import garmin
+    uds = {"calendarDate": "2026-03-24", "restingHeartRate": 46, "totalSteps": 15787,
+           "allDayStress": {"aggregatorList": [{"type": "TOTAL", "averageStressLevel": 30}]},
+           "bodyBattery": {"bodyBatteryStatList": [{"bodyBatteryStatType": "HIGHEST", "statsValue": 95},
+                                                   {"bodyBatteryStatType": "LOWEST", "statsValue": 29}]}}
+    sleep = {"sleepStartTimestampGMT": "2026-03-23T19:44:00.0", "sleepEndTimestampGMT": "2026-03-24T03:22:00.0",
+             "deepSleepSeconds": 6000, "lightSleepSeconds": 16620, "remSleepSeconds": 4800, "awakeSleepSeconds": 60,
+             "sleepScores": {"overallScore": 89}}
+    assert garmin._day(uds, sleep) == {"rhr": 46, "steps": 15787, "stress": 30, "bb_max": 95, "bb_min": 29, "sleep": 27420,
+                                       "deep": 6000, "light": 16620, "rem": 4800, "awake": 60, "bed": "2026-03-23T19:44",
+                                       "wake": "2026-03-24T03:22", "score": 89}
+    # Garmin Connect: times in ms, the score nested, the total asleep given
+    connect = {"sleepTimeSeconds": 27000, "sleepStartTimestampGMT": 1774295040000, "deepSleepSeconds": 6000,
+               "sleepScores": {"overall": {"value": 80}}}
+    day = garmin._day({"restingHeartRate": 45, "bodyBatteryHighestValue": 79}, connect)
+    assert (day["rhr"], day["bb_max"], day["sleep"], day["score"], day["bed"]) == (45, 79, 27000, 80, "2026-03-23T19:44")
+    assert garmin._day(None, {"retro": False}) == {}  # a night not recorded
+
+
+if __name__ == "__main__":
+    tests = [f for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
+    for t in tests:
+        t()
+    print(f"OK {len(tests)} tests")

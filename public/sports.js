@@ -100,7 +100,7 @@ function renderSports() {
     const st = stravaStatus || {};
     root.innerHTML = `<div class="chart-section"><h3>No activities yet</h3><p class="sp-note">${st.garmin?.error
       ? `The Garmin sync failed: ${escapeHTML(st.garmin.error)}. `
-      : st.strava?.connected ? 'Contrail is fetching your activities from Strava; this page fills in when they arrive. ' : ''}
+      : st.strava?.connected ? 'Cairn is fetching your activities from Strava; this page fills in when they arrive. ' : ''}
       Import your Garmin data export, or sign in to Garmin Connect for the hourly sync, to see your rides and runs here:
       the README's "Sports activities" says how.</p></div>`;
     return;
@@ -195,6 +195,7 @@ function renderClimbs(kinds) {
     `<p class="sp-note">The climbs in the cycle-racing categories of Wikipedia (English, French, Italian, Dutch, German, Catalan), each with its summit. ` +
     `A ride counts when its route passes within 150 m of the summit; for a way up (from Bédoin, from Malaucène) when it rode that way's last stretch up to the top, and the part that sets it apart from the other ways. Ways up are worked out from the roads and the terrain the first time a ride comes near a climb. On the map: the ⛰️ Climbs layer, filled when done, with the ways up you rode.</p>`;
   hookLinks('sp-climbs');
+  paginateTables('sp-climbs');
 }
 
 function fillPickers() {
@@ -362,7 +363,7 @@ function renderEddington(list, kinds) {
           backgroundColor: ns.map(n => n === e.e ? getCSSVar('--accent') : color(k)), borderRadius: 2, order: 1 }
       ] },
       options: { responsive: true, maintainAspectRatio: false, scales: axes('days', { x: { title: { display: true, text: DU(), color: getCSSVar('--chart-tick') },
-        ticks: { autoSkip: true, maxTicksLimit: 8 } }, y: { beginAtZero: false, min: Math.max(0, from - 10), max: Math.ceil(upto * 1.6 / 10) * 10 } }),  // taller bars run off the top
+        ticks: { autoSkip: true, maxTicksLimit: 8 } }, y: { beginAtZero: true, grace: '8%' } }),  // every bar whole, with room above
         plugins: { legend: { display: false }, tooltip: { callbacks: { title: i => `${i[0].label} ${DU()}`, label: c => c.dataset.type === 'line' ? '' : `${c.parsed.y} days with ${c.label}+ ${DU()}` } } } }
     });
     document.getElementById(`sp-edd-${k}-note`).innerHTML = `<b>E = ${e.e}</b>: ${e.e} days of at least ${e.e} ${DU()}. For ${e.next}: ${e.missing} more day${e.missing !== 1 ? 's' : ''} of ${e.next}+ ${DU()}.`;
@@ -388,7 +389,7 @@ function renderTilesGrowth(all) {
   chart('sp-square', {
     type: 'bar', data: { labels: years, datasets: [{ label: 'Max square', backgroundColor: getCSSVar('--tile'), borderRadius: 4, maxBarThickness: 24,
       data: years.map(y => exploredOf(sorted.filter(a => yearOf(a) <= y)).square) }] },
-    options: { responsive: true, maintainAspectRatio: false, scales: axes('tiles a side'),
+    options: { responsive: true, maintainAspectRatio: false, scales: axes('tiles a side', { y: { grace: '12%' } }),  // room above the tallest
       plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => `${c.parsed.y}×${c.parsed.y}` } } } }
   });
 }
@@ -477,7 +478,7 @@ function renderYearTable(all) {
     }).join('') + '</tbody>';
 }
 
-// Start towns and countries, from Contrail (cities.js); all years
+// Start towns and countries, from Cairn (cities.js); all years
 async function renderPlaces(kinds) {
   if (!sportPlaces) sportPlaces = await fetch('/api/activities/places').then(r => r.ok ? r.json() : {}).catch(() => ({}));
   const merge = key => {
@@ -490,7 +491,7 @@ async function renderPlaces(kinds) {
     }));
     return [...m.values()].sort((a, b) => b.count - a.count || b.km - a.km);
   };
-  const towns = merge('towns').slice(0, 12), countries = merge('countries');
+  const countries = merge('countries'), towns = merge('towns').slice(0, Math.max(5, countries.length));  // as many as countries
   const names = new Intl.DisplayNames(['en'], { type: 'region' });
   const el = (id, html) => { const e = document.getElementById(id); if (e) e.innerHTML = html; };
   el('sp-towns', towns.length ? `<thead><tr><th></th><th>Town</th><th>Activities</th><th>${DU()}</th></tr></thead><tbody>` + towns.map((t, i) =>

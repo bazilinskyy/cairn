@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Where your photos were taken, for Contrail's map: rounded to about 1 km, counted per place and year.
+"""Where your photos were taken, for Cairn's map: rounded to about 1 km, counted per place and year.
 From Apple Photos, a folder of files, or Google Photos (through Google Takeout).
 
 Only the rounded places, counts and days leave the library: no file names, no pictures, no exact positions.
@@ -13,7 +13,7 @@ Only the rounded places, counts and days leave the library: no file names, no pi
       python imports/photos.py --takeout ~/Downloads/takeout-*.zip
 Sources can be combined in one run (each run replaces the file): a photo in two of them, the same moment and place, counts
 once. Writes data/photos.json: [{"lat", "lon", "year", "count", "days": ["YYYY-MM-DD", ...]}]; --send HOST:PATH also
-copies it there with scp, for example to the Mac that runs Contrail: --send mini:repos/contrail/data/photos.json
+copies it there with scp, for example to the Mac that runs Cairn: --send mini:repos/contrail/data/photos.json
 """
 import argparse
 import json
@@ -29,15 +29,21 @@ CELL = 0.01  # degrees: about 1 km
 
 def unique(shots):
     """The same photo from two sources (the laptop's Apple Photos and a Google Takeout of the same pictures) once: same
-    moment to the second, about the same place. shots: (lat, lon, day, unix time or None)."""
+    moment to the second and about the same place, or the same file name on the same day. shots: (lat, lon, day, unix
+    time or None[, file path, file name])."""
     seen = set()
-    for lat, lon, day, stamp in shots:
+    for shot in shots:
+        lat, lon, day, stamp = shot[:4]
+        name = shot[5] if len(shot) > 5 else None
+        keys = []
         if stamp is not None and lat is not None and lon is not None:
-            key = (stamp, round(lat, 3), round(lon, 3))
-            if key in seen:
-                continue
-            seen.add(key)
-        yield lat, lon, day, stamp
+            keys.append((stamp, round(lat, 3), round(lon, 3)))
+        if name and day:
+            keys.append((Path(name).stem.lower().split("(")[0], day))
+        if any(k in seen for k in keys):
+            continue
+        seen.update(keys)
+        yield shot
 
 
 def cells(shots):
@@ -65,7 +71,8 @@ def from_library(path):
         sys.exit("no Photos library found: name it with --library")
     for p in db.photos():
         lat, lon = p.location
-        yield lat, lon, p.date.strftime("%Y-%m-%d") if p.date else "", int(p.date.timestamp()) if p.date else None
+        yield (lat, lon, p.date.strftime("%Y-%m-%d") if p.date else "", int(p.date.timestamp()) if p.date else None,
+               p.path, p.original_filename)
 
 
 def from_folder(folder):
@@ -88,18 +95,18 @@ def from_takeout(paths):
     """Google Photos in Takeout: each photo or video has a JSON file beside it (IMG_1.jpg.json, newer exports
     IMG_1.jpg.supplemental-metadata.json, cut short when long) with photoTakenTime and geoData, which Google fills from
     the camera or from a place you set in Google Photos. A photo in an album is there twice: counted once."""
-    def docs():
+    def docs():  # (read, the photo's file when it is on disk)
         for p in map(Path, paths):
             if p.is_dir():
                 for f in p.rglob("*.json"):
-                    yield f.read_bytes
+                    yield f.read_bytes, media_of(f)
             elif zipfile.is_zipfile(p):
                 with zipfile.ZipFile(p) as z:
                     for name in z.namelist():
                         if name.endswith(".json"):
-                            yield lambda name=name, z=z: z.read(name)
+                            yield (lambda name=name, z=z: z.read(name)), None
     seen = set()
-    for read in docs():
+    for read, media in docs():
         try:
             d = json.loads(read())
         except (ValueError, UnicodeDecodeError):
@@ -112,7 +119,43 @@ def from_takeout(paths):
         if not geo.get("latitude") and not geo.get("longitude"):
             geo = d.get("geoDataExif") or {}
         day = datetime.fromtimestamp(int(taken), timezone.utc).strftime("%Y-%m-%d")
-        yield geo.get("latitude"), geo.get("longitude"), day, int(taken)
+        yield geo.get("latitude"), geo.get("longitude"), day, int(taken), str(media) if media else None, d.get("title")
+
+
+def media_of(sidecar):
+    """The photo a Takeout .json belongs to: IMG_1.jpg.supplemental-metadata.json -> IMG_1.jpg; Google numbers
+    duplicates on the .json's end: 2020-09-29.jpg.supplemental-metadata(786).json -> 2020-09-29(786).jpg."""
+    import re
+    m = re.match(r"(.+?)(\.[^.]+)\.(?:supplemental-metadata|supplemental-metad|supplemental-me|supplemental|suppl)?[^.]*?(\(\d+\))?\.json$", sidecar.name)
+    if not m:
+        return None
+    f = sidecar.with_name(m.group(1) + (m.group(3) or "") + m.group(2))
+    return f if f.exists() else None
+
+
+def from_sidecars(folder):
+    """An osxphotos export (osxphotos export --sidecar json): each photo with a .json beside it holding its EXIF (local
+    time, no time zone: matched to other sources by file name and day)."""
+    for f in Path(folder).rglob("*.json"):
+        try:
+            d = json.loads(f.read_text())
+        except (ValueError, OSError):
+            continue
+        d = d[0] if isinstance(d, list) and d else d
+        if not isinstance(d, dict):
+            continue
+        lat, lon = d.get("EXIF:GPSLatitude"), d.get("EXIF:GPSLongitude")
+        if lat is not None and str(d.get("EXIF:GPSLatitudeRef", "N")).upper().startswith("S"):
+            lat = -abs(lat)
+        if lon is not None and str(d.get("EXIF:GPSLongitudeRef", "E")).upper().startswith("W"):
+            lon = -abs(lon)
+        when = str(d.get("EXIF:DateTimeOriginal") or d.get("EXIF:CreateDate") or d.get("QuickTime:CreateDate") or "")
+        try:
+            t = datetime.strptime(when[:19], "%Y:%m:%d %H:%M:%S")
+        except ValueError:
+            continue
+        media = f.with_suffix("")  # IMG_1.jpeg.json -> IMG_1.jpeg
+        yield lat, lon, t.strftime("%Y-%m-%d"), int(t.replace(tzinfo=timezone.utc).timestamp()), str(media) if media.exists() else None, media.name
 
 
 def main(argv=None):
@@ -121,14 +164,24 @@ def main(argv=None):
                     "~/Pictures/Photos Library.photoslibrary); may be given more than once")
     ap.add_argument("--folder", action="append", help="a folder of photos and videos (needs exiftool)")
     ap.add_argument("--takeout", nargs="+", metavar="ZIP_OR_FOLDER", help="Google Photos from Google Takeout")
-    data = Path(__file__).resolve().parent.parent / "data"  # Contrail's data folder in a checkout, else here
+    ap.add_argument("--sidecars", action="append", help="an osxphotos export folder (photos with .json sidecars)")
+    ap.add_argument("--points", metavar="FILE", help="also every photo with its exact place, time and file, for Cairn's "
+                    "photo layer and trips (on the Mac that runs Cairn: data/photo_points.json)")
+    data = Path(__file__).resolve().parent.parent / "data"  # Cairn's data folder in a checkout, else here
     ap.add_argument("--out", default=str(data / "photos.json" if data.is_dir() else Path("photos.json")))
     ap.add_argument("--send", metavar="HOST:PATH", help="also copy the result there with scp")
     args = ap.parse_args(argv)
     sources = [from_library(lib) for lib in args.library or []] + [from_folder(f) for f in args.folder or []]
     if args.takeout:
         sources.append(from_takeout(args.takeout))
-    result = cells(unique(shot for source in (sources or [from_library(None)]) for shot in source))
+    sources += [from_sidecars(f) for f in args.sidecars or []]
+    shots = list(unique(shot for source in (sources or [from_library(None)]) for shot in source))
+    result = cells(shots)
+    if args.points:  # [[unix time, lat, lon, file path or ""], ...] by time, the ones with a place
+        pts = sorted([s[3], round(s[0], 6), round(s[1], 6), (s[4] if len(s) > 4 else None) or ""] for s in shots
+                     if s[3] is not None and s[0] is not None and s[1] is not None and not (s[0] == 0 and s[1] == 0))
+        Path(args.points).write_text(json.dumps(pts, separators=(",", ":")))
+        print(f"{len(pts)} photos with a place and time, written to {args.points}")
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(result, separators=(",", ":")))

@@ -1,14 +1,16 @@
 'use strict';
 // Ground trips (trains, buses, ferries) for the map: where their stations are and the track between them; and where
 // stays and rental cars are. Places come from Photon (OpenStreetMap), biased towards where the traveller was just
-// before; tracks from Transitous (timetabled trains and coaches) or OSRM (roads, for buses), else a straight line.
+// before; tracks from Transitous (timetabled trains and coaches), else for a train the likeliest railway line (BRouter),
+// for a bus the roads (OSRM); else a straight line.
 // Each trip or stay is looked up once, in the background, and the result is kept in it.
 
-const UA = 'contrail (personal travel log; https://github.com/bazilinskyy/contrail)';
+const UA = 'cairn (personal travel log; https://github.com/bazilinskyy/cairn)';
 const PHOTON = 'https://photon.komoot.io/api/';
 const PHOTON_REVERSE = 'https://photon.komoot.io/reverse';
 const TRANSITOUS = 'https://api.transitous.org/api/v5/plan';
 const OSRM = 'https://router.project-osrm.org/route/v1/driving/';
+const BROUTER = 'https://brouter.de/brouter';
 const TRANSIT_MODES = { train: 'RAIL', bus: 'COACH,BUS', ferry: 'FERRY' };
 const NOT_TRANSIT = new Set(['WALK', 'BIKE', 'CAR', 'RENTAL', 'CAR_PARKING', 'FLEX', 'ODM']);
 const PLACE_TAGS = ['place', 'boundary:administrative', 'railway:station', 'railway:halt', 'public_transport:station',
@@ -102,15 +104,17 @@ function plausible(pts, a, b) {
 // --- services ---
 
 const last = {};
+const SPACING = { 'brouter.de': 3000 };  // BRouter's public server asks for fewer
 async function getJSON(url) {
   const host = new URL(url).host;  // at most one request a second per service
-  const wait = (last[host] || 0) + 1100 - Date.now();
+  const wait = (last[host] || 0) + (SPACING[host] || 1100) - Date.now();
   if (wait > 0) await new Promise(r => setTimeout(r, wait));
   last[host] = Date.now();
   const res = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(30000) });
-  if (res.status === 429 || res.status >= 500) throw new Error(`${host}: HTTP ${res.status}`);
-  return res.json();
+  if (res.status === 429 || res.status === 403 || (res.status >= 500 && !OK_FAILS[host])) throw new Error(`${host}: HTTP ${res.status}`);
+  return res.json().catch(() => ({}));  // BRouter's "no track found" is plain text: no route
 }
+const OK_FAILS = { 'brouter.de': true };  // a route BRouter gives up on (too long, no track) is an answer, not an outage
 
 const norm = s => (s || '').normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
 
@@ -157,6 +161,17 @@ const BARE = [
   [/^(the )?((central|main|train|railway) )?station$/i, 'railway:station'],
 ];
 const BARE_KM = 40;
+
+// The stations (or other places of a kind) around a place, nearest first, at most n
+async function placesNear(tag, around, n) {
+  const key = `reverse${n}|${tag}|${around.map(x => x.toFixed(2)).join(',')}`;
+  if (!geoCache.has(key)) {
+    const p = new URLSearchParams({ lat: around[0], lon: around[1], radius: BARE_KM, limit: String(n), osm_tag: tag });
+    const d = await getJSON(`${PHOTON_REVERSE}?${p}`);
+    geoCache.set(key, (d.features || []).map(f => ({ at: [f.geometry.coordinates[1], f.geometry.coordinates[0]] })));
+  }
+  return geoCache.get(key).map(x => x.at);
+}
 
 async function nearestOf(tag, around) {
   const key = `reverse|${tag}|${around.map(x => x.toFixed(2)).join(',')}`;
@@ -238,6 +253,57 @@ async function transitous(a, b, mode, date) {
   return null;
 }
 
+// The likeliest railway line between two places (BRouter's rail profile on OpenStreetMap's tracks): a best guess for
+// trains no timetable Cairn can ask knows (Ukraine, India), drawn like a timetable's track
+async function railGuess(a, b) {
+  const d = await getJSON(`${BROUTER}?lonlats=${a[1]},${a[0]}|${b[1]},${b[0]}&profile=rail&alternativeidx=0&format=geojson`);  // busy: the lookups pause
+  const pts = (d?.features?.[0]?.geometry?.coordinates || []).map(([lon, lat]) => [lat, lon]);
+  return plausible(pts, a, b) ? pts : null;
+}
+
+// A long one in pieces (BRouter's public server gives up after 8 seconds): the road route's stations about every
+// LEG_STEP_KM, and the railway between each two of them
+const LEG_STEP_KM = 150;
+async function railGuessLong(a, b) {
+  const road = await osrmPoints(a, b);
+  if (!road) return null;
+  const samples = [];
+  let run = 0;
+  for (let i = 1; i < road.length; i++) {
+    run += km(road[i - 1], road[i]);
+    if (run >= LEG_STEP_KM && km(road[i], b) > LEG_STEP_KM / 2) { samples.push(road[i]); run = 0; }
+  }
+  // from station to station: at each sample the first of the stations around it the railway reaches (a station off
+  // the main lines, a museum railway, is passed over); a sample with none is skipped
+  const pts = [];
+  let prev = a;
+  for (const p of samples) {
+    for (const st of (await placesNear('railway:station', p, 3)).filter(x => km(x, p) < 30)) {
+      const leg = await railPiece(prev, st, 1);
+      if (leg) { pts.push(...leg); prev = st; break; }
+    }
+  }
+  const last = await railPiece(prev, b, 2);
+  if (!last) return null;
+  pts.push(...last);
+  return plausible(pts, a, b) ? pts : null;
+}
+
+// one piece; one that fails is split at the station halfway, at most `depth` times
+async function railPiece(a, b, depth) {
+  const pts = await railGuess(a, b);
+  if (pts || !depth) return pts;
+  const mid = await nearestOf('railway:station', [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]);
+  if (!mid || km(mid, a) < 10 || km(mid, b) < 10) return null;
+  const first = await railPiece(a, mid, depth - 1), second = first && await railPiece(mid, b, depth - 1);
+  return first && second ? [...first, ...second] : null;
+}
+
+async function osrmPoints(a, b) {
+  const d = await getJSON(`${OSRM}${a[1]},${a[0]};${b[1]},${b[0]}?overview=simplified&geometries=polyline6`);
+  return d?.code === 'Ok' && d.routes?.[0] ? decode(d.routes[0].geometry, 6) : null;
+}
+
 async function osrm(a, b) {
   const d = await getJSON(`${OSRM}${a[1]},${a[0]};${b[1]},${b[0]}?overview=full&geometries=polyline6`);
   const pts = d.code === 'Ok' && d.routes?.[0] ? decode(d.routes[0].geometry, 6) : [];
@@ -277,10 +343,28 @@ async function place(trip, flights, trips, airports) {
   if (!a || !b) trip.unplaced = true;
 }
 
+// A trip with no track from where its ends were placed (a town's middle, too far to walk to its station) is tried
+// again from the nearest station or port at each end
+const STATION_TAGS = { train: 'railway:station', bus: 'amenity:bus_station', ferry: 'amenity:ferry_terminal' };
+const ROUTE_VERSION = 8;  // straight lines from before the station retry and the railway guess are tried once more
+
 async function route(trip) {
   const a = at(trip, 'from'), b = at(trip, 'to');
-  let pts = await transitous(a, b, trip.mode, trip.date), source = 'transitous';
+  let pts = await transitous(a, b, trip.mode, trip.date), source = 'transitous', sa = null, sb = null;
+  if (!pts && STATION_TAGS[trip.mode]) {
+    [sa, sb] = [await nearestOf(STATION_TAGS[trip.mode], a), await nearestOf(STATION_TAGS[trip.mode], b)];
+    if (!(sa && sb && km(sa, a) < 15 && km(sb, b) < 15)) sa = sb = null;
+    if (sa) pts = await transitous(sa, sb, trip.mode, trip.date);
+  }
   if (!pts && trip.mode === 'bus') pts = await osrm(a, b), source = 'osrm';
+  if (!pts && trip.mode === 'train') {  // from stations: BRouter starts on a track (the nearest may be a park railway: then the next)
+    const [as, bs] = [await placesNear('railway:station', a, 3), await placesNear('railway:station', b, 3)];
+    const pairs = [[0, 0], [1, 1], [0, 1], [1, 0], [2, 2]].filter(([i, j]) => as[i] && bs[j] && km(as[i], a) < 15 && km(bs[j], b) < 15);
+    for (const [i, j] of pairs) if (!pts) pts = await railGuess(as[i], bs[j]);
+    if (!pts) pts = await railGuess(a, b);
+    if (!pts && km(a, b) > LEG_STEP_KM) pts = await railGuessLong(as[0] || a, bs[0] || b);
+    source = 'rail';
+  }
   if (pts) {
     trip.path = encode(simplify(pts));
     trip.distance = Math.round(pathKm(pts));
@@ -288,6 +372,7 @@ async function route(trip) {
     trip.path = '';
     trip.distance = Math.round(km(a, b));
     source = 'straight';
+    trip.route_v = ROUTE_VERSION;
   }
   trip.path_source = source;
 }
@@ -324,7 +409,7 @@ async function enrich(store, log = console.log) {
         if (trip.unplaced) log(`[ground] could not place ${trip.date} ${trip.from} - ${trip.to}`);
         store.save();
       }
-      if (at(trip, 'from') && at(trip, 'to') && !trip.path_source) {
+      if (at(trip, 'from') && at(trip, 'to') && (!trip.path_source || (trip.path_source === 'straight' && (trip.route_v || 1) < ROUTE_VERSION))) {
         await route(trip);
         store.save();
       }
@@ -361,7 +446,7 @@ function forget(trip, changes) {
   }
   const moved = ['from', 'to', 'from_lat', 'from_lon', 'to_lat', 'to_lon', 'mode', 'date']
     .some(k => k in changes && changes[k] !== trip[k]);
-  if (moved) delete trip.unplaced, delete trip.path, delete trip.path_source;
+  if (moved) delete trip.unplaced, delete trip.path, delete trip.path_source, delete trip.route_v;
 }
 
 module.exports = { km, decode, encode, simplify, plausible, planTime, startNear, forget, forgetStay, enrich, pick, similar, geocode, placeStay };

@@ -1,8 +1,8 @@
 #!/bin/sh
-# Installs flightmail and the Contrail service on this Mac (run it on mini, from the checkout):
+# Installs flightmail and the Cairn service on this Mac (run it on mini, from the checkout):
 #   ~/.flightmail/flightmail.app   small AppleScript app that holds the Calendar permission and runs flightmail.py
 #   nl.tue.flightmail              launchd job: the app every 60 minutes (log ~/.flightmail/run.log)
-#   nl.tue.contrail                launchd service: the Contrail server, kept running (log ~/.flightmail/contrail.log)
+#   nl.tue.cairn                launchd service: the Cairn server, kept running (log ~/.flightmail/cairn.log)
 # PYTHON and NODE default to the micromamba env "contrail".
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -45,9 +45,9 @@ EOF
 launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
 launchctl bootstrap "gui/$(id -u)" "$AGENTS/$LABEL.plist"
 
-if [ ! -f "$AGENTS/nl.tue.contrail.plist" ]; then
-  sed -e "s#__REPO__#$ROOT#g" -e "s#__NODE__#$NODE#g" -e "s#__HOME__#$HOME#g" "$ROOT/mail/contrail.plist.template" > "$AGENTS/nl.tue.contrail.plist"
-  launchctl bootstrap "gui/$(id -u)" "$AGENTS/nl.tue.contrail.plist"
+if [ ! -f "$AGENTS/nl.tue.cairn.plist" ]; then
+  sed -e "s#__REPO__#$ROOT#g" -e "s#__NODE__#$NODE#g" -e "s#__HOME__#$HOME#g" "$ROOT/mail/cairn.plist.template" > "$AGENTS/nl.tue.cairn.plist"
+  launchctl bootstrap "gui/$(id -u)" "$AGENTS/nl.tue.cairn.plist"
 fi
 
 echo "flightmail runs every 60 minutes. Log: $DIR/run.log"

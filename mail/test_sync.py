@@ -1,4 +1,4 @@
-"""Tests for sync.py with in-memory calendar and Contrail. Run: python mail/test_sync.py (no pytest needed)."""
+"""Tests for sync.py with in-memory calendar and Cairn. Run: python mail/test_sync.py (no pytest needed)."""
 import sys
 from datetime import date, datetime
 from pathlib import Path
@@ -37,7 +37,7 @@ class FakeCalendar:
         del self.events[event_id]
 
 
-class FakeContrail:
+class FakeCairn:
     def __init__(self, foreign=()):
         self.flights, self.events, self.foreign, self.n = {}, {}, set(foreign), 0
 
@@ -71,7 +71,7 @@ def booking(*legs, kind="booking", passengers=("Jan Testers",), old=(), latest=d
 
 
 def test_new_booking_creates_both():
-    cal, con, state = FakeCalendar(), FakeContrail(), {}
+    cal, con, state = FakeCalendar(), FakeCairn(), {}
     assert run(booking(leg()), state, cal, con) == []
     assert [l.flight for l, _ in cal.events.values()] == ["KL1234"]
     assert [l.flight for l in con.flights.values()] == ["KL1234"]
@@ -79,7 +79,7 @@ def test_new_booking_creates_both():
 
 
 def test_existing_event_not_duplicated():
-    cal, con, state = FakeCalendar(foreign={("KL1234", date(2026, 11, 16))}), FakeContrail(), {}
+    cal, con, state = FakeCalendar(foreign={("KL1234", date(2026, 11, 16))}), FakeCairn(), {}
     run(booking(leg()), state, cal, con)
     assert cal.events == {}
     assert len(con.flights) == 1
@@ -87,7 +87,7 @@ def test_existing_event_not_duplicated():
 
 
 def test_same_email_twice_is_noop():
-    cal, con, state = FakeCalendar(), FakeContrail(), {}
+    cal, con, state = FakeCalendar(), FakeCairn(), {}
     run(booking(leg()), state, cal, con)
     run(booking(leg()), state, cal, con)
     assert len(cal.events) == 1 and len(con.flights) == 1 and len(state["legs"]) == 1
@@ -95,7 +95,7 @@ def test_same_email_twice_is_noop():
 
 
 def test_schedule_change_updates_and_notes():
-    cal, con, state = FakeCalendar(), FakeContrail(), {}
+    cal, con, state = FakeCalendar(), FakeCairn(), {}
     run(booking(leg()), state, cal, con)
     new = leg(dep_local=D(2026, 11, 16, 18, 0), arr_local=D(2026, 11, 16, 19, 45))
     assert run(booking(new, kind="change"), state, cal, con, sender="Gotogate") == []
@@ -107,7 +107,7 @@ def test_schedule_change_updates_and_notes():
 
 
 def test_cancel_deletes_both():
-    cal, con, state = FakeCalendar(), FakeContrail(), {}
+    cal, con, state = FakeCalendar(), FakeCairn(), {}
     run(booking(leg()), state, cal, con)
     cancelled = Leg("KL1234", "AMS", "LIS", None, None, ("ABC123",))
     assert run(booking(cancelled, kind="cancel"), state, cal, con) == []
@@ -115,13 +115,13 @@ def test_cancel_deletes_both():
 
 
 def test_cancel_for_unowned_alerts():
-    cal, con, state = FakeCalendar(), FakeContrail(), {}
+    cal, con, state = FakeCalendar(), FakeCairn(), {}
     alerts = run(booking(Leg("KL1234", "AMS", "LIS", None, None, ("ABC123",)), kind="cancel"), state, cal, con, subject="Geannuleerd")
     assert len(alerts) == 1 and "KL1234" in alerts[0]
 
 
 def test_rebooking_replaces_with_note():
-    cal, con, state = FakeCalendar(), FakeContrail(), {}
+    cal, con, state = FakeCalendar(), FakeCairn(), {}
     run(booking(leg()), state, cal, con)
     new = leg(flight="KL1236", dep_local=D(2026, 11, 17, 9, 0), arr_local=D(2026, 11, 17, 10, 45))
     run(booking(new, kind="change"), state, cal, con)
@@ -131,7 +131,7 @@ def test_rebooking_replaces_with_note():
 
 
 def test_rebooking_with_old_legs():
-    cal, con, state = FakeCalendar(), FakeContrail(), {}
+    cal, con, state = FakeCalendar(), FakeCairn(), {}
     run(booking(leg()), state, cal, con)
     a = leg(flight="AF1229", dep="AMS", arr="MAD", dep_local=D(2026, 11, 17, 6, 50), arr_local=D(2026, 11, 17, 9, 15))
     b = leg(flight="AF1840", dep="MAD", arr="LIS", dep_local=D(2026, 11, 17, 11, 30), arr_local=D(2026, 11, 17, 12, 0))
@@ -143,26 +143,26 @@ def test_rebooking_with_old_legs():
 
 
 def test_past_leg_ignored():
-    cal, con, state = FakeCalendar(), FakeContrail(), {}
+    cal, con, state = FakeCalendar(), FakeCairn(), {}
     run(booking(leg(dep_local=D(2026, 10, 20, 8, 0), arr_local=D(2026, 10, 20, 10, 0))), state, cal, con)
     assert cal.events == {} and con.flights == {}
 
 
 def test_other_passenger_ignored():
-    cal, con, state = FakeCalendar(), FakeContrail(), {}
+    cal, con, state = FakeCalendar(), FakeCairn(), {}
     assert run(booking(leg(), passengers=["Anna Testers"]), state, cal, con) == []
     assert cal.events == {} and con.flights == {}
 
 
 def test_change_for_unowned_alerts():
-    cal, con, state = FakeCalendar(foreign={("KL1234", date(2026, 11, 16))}), FakeContrail(), {}
+    cal, con, state = FakeCalendar(foreign={("KL1234", date(2026, 11, 16))}), FakeCairn(), {}
     alerts = run(booking(leg(), kind="change"), state, cal, con)
     assert len(alerts) == 1 and "KL1234" in alerts[0]
     assert cal.events == {}
 
 
 def test_unreadable_booking_alerts():
-    cal, con, state = FakeCalendar(), FakeContrail(), {}
+    cal, con, state = FakeCalendar(), FakeCairn(), {}
     half = Leg("KL1234", "AMS", "", None, None, ("ABC123",))
     alerts = run(booking(half), state, cal, con, sender="eDreams", subject="Je reservering is bevestigd")
     assert alerts == ["Could not read flight: eDreams | Je reservering is bevestigd | 2026-10-21"]
@@ -171,7 +171,7 @@ def test_unreadable_booking_alerts():
 
 
 def test_no_alerts_for_emails_about_the_past():
-    cal, con, state = FakeCalendar(), FakeContrail(), {}
+    cal, con, state = FakeCalendar(), FakeCairn(), {}
     half = Leg("KL1234", "AMS", "", None, None, ("ABC123",))
     assert run(booking(half, latest=date(2026, 9, 1)), state, cal, con) == []
     assert run(booking(Leg("KL1234", "AMS", "LIS", None, None, ("ABC123",)), kind="cancel", latest=date(2026, 9, 1)), state, cal, con) == []
@@ -226,7 +226,7 @@ def test_enrich_keeps_email_when_unknown_and_skips_past_and_cap():
 
 
 def test_same_flight_two_dates_in_one_email():
-    cal, con, state = FakeCalendar(), FakeContrail(), {}
+    cal, con, state = FakeCalendar(), FakeCairn(), {}
     second = leg(dep_local=D(2026, 11, 23, 16, 10), arr_local=D(2026, 11, 23, 17, 55))
     run(booking(leg(), second), state, cal, con)
     assert sorted(l.dep_local.day for l, _ in cal.events.values()) == [16, 23]
@@ -238,8 +238,8 @@ def bus(dep_local=D(2026, 11, 21, 9, 30), codes=("3000000001",)):
                "bus", "Europe/Lisbon", "Europe/Lisbon")
 
 
-def test_ground_leg_goes_to_calendar_and_contrail_with_its_event():
-    cal, con, state = FakeCalendar(), FakeContrail(), {}
+def test_ground_leg_goes_to_calendar_and_cairn_with_its_event():
+    cal, con, state = FakeCalendar(), FakeCairn(), {}
     assert run(booking(bus()), state, cal, con) == []
     assert len(cal.events) == 1 and list(con.flights.values()) == [bus()] and con.events == {1: "ev1"}
     assert state["legs"][0]["flight"] == "bus:Lisboa (Oriente)>Porto (Campanhã)" and state["legs"][0]["contrail_id"] == 1
@@ -247,14 +247,14 @@ def test_ground_leg_goes_to_calendar_and_contrail_with_its_event():
 
 def test_ground_duplicate_is_an_event_at_the_same_moment():
     start = bus().instants(AIRPORTS)[0]
-    cal, con, state = FakeCalendar(foreign_at={start}), FakeContrail(), {}
+    cal, con, state = FakeCalendar(foreign_at={start}), FakeCairn(), {}
     run(booking(bus()), state, cal, con)
-    assert cal.events == {} and con.events == {1: None}  # Contrail merges it with the calendar's trip at that minute
+    assert cal.events == {} and con.events == {1: None}  # Cairn merges it with the calendar's trip at that minute
     assert state["legs"][0]["event_id"] is None and state["legs"][0]["contrail_id"] == 1
 
 
 def test_ground_cancel_by_booking_code_only():
-    cal, con, state = FakeCalendar(), FakeContrail(), {}
+    cal, con, state = FakeCalendar(), FakeCairn(), {}
     run(booking(bus()), state, cal, con)
     assert run(Parsed("cancel", [], [], False, [], date(2026, 11, 1), ("3000000001",)), state, cal, con) == []
     assert cal.events == {} and con.flights == {} and state["legs"] == []
@@ -267,7 +267,7 @@ def test_enrich_skips_ground_legs():
 
 
 def test_seen_records_every_future_flight_i_am_on():
-    cal, con, state = FakeCalendar(foreign={("KL1234", date(2026, 11, 16))}), FakeContrail(), {}
+    cal, con, state = FakeCalendar(foreign={("KL1234", date(2026, 11, 16))}), FakeCairn(), {}
     run(booking(leg()), state, cal, con)
     assert list(state["seen"]) == ["KL1234@2026-11-16"]
     assert state["seen"]["KL1234@2026-11-16"]["codes"] == ["ABC123"]
@@ -276,7 +276,7 @@ def test_seen_records_every_future_flight_i_am_on():
 
 
 def test_seen_follows_schedule_change_and_cancel():
-    cal, con, state = FakeCalendar(), FakeContrail(), {}
+    cal, con, state = FakeCalendar(), FakeCairn(), {}
     run(booking(leg()), state, cal, con)
     moved = leg(dep_local=D(2026, 11, 17, 9, 0), arr_local=D(2026, 11, 17, 10, 45))
     run(booking(moved, kind="change"), state, cal, con)
@@ -286,7 +286,7 @@ def test_seen_follows_schedule_change_and_cancel():
 
 
 def test_seen_drops_rebooked_old_legs():
-    cal, con, state = FakeCalendar(), FakeContrail(), {}
+    cal, con, state = FakeCalendar(), FakeCairn(), {}
     run(booking(leg()), state, cal, con)
     new = leg(flight="AF1229", dep="AMS", arr="MAD", dep_local=D(2026, 11, 17, 6, 50), arr_local=D(2026, 11, 17, 9, 15))
     old = Leg("KL1234", "AMS", "LIS", D(2026, 11, 16, 16, 10), None, ("ABC123",))
@@ -295,14 +295,14 @@ def test_seen_drops_rebooked_old_legs():
 
 
 def test_other_kind_does_nothing():
-    cal, con, state = FakeCalendar(), FakeContrail(), {}
+    cal, con, state = FakeCalendar(), FakeCairn(), {}
     assert run(booking(leg(), kind="other"), state, cal, con) == []
     assert cal.events == {} and con.flights == {}
 
 
 
 def test_ground_legs_are_tracked_for_busy_blocks():
-    cal, con, state = FakeCalendar(), FakeContrail(), {}
+    cal, con, state = FakeCalendar(), FakeCairn(), {}
     run(booking(bus()), state, cal, con)
     (sid, row), = state["ground"].items()
     assert row["mode"] == "bus" and row["tz"] == ["Europe/Lisbon", "Europe/Lisbon"] and row["dep_local"] == bus().dep_local.isoformat()

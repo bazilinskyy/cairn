@@ -7,7 +7,7 @@
 // --- settings (kept in this browser): units, and the exploration tiles ---
 
 const PREFS_KEY = 'contrail-settings';
-let prefs = { units: 'km', tileZoom: 14, grid: true, countries: 'iso', basemap: 'auto', lines: 'standard' };
+let prefs = { units: 'km', tileZoom: 14, grid: true, countries: 'iso', basemap: 'auto', lines: 'standard', photos: 'clusters' };
 try { prefs = { ...prefs, ...JSON.parse(localStorage.getItem(PREFS_KEY) || '{}') }; } catch (_) {}
 function savePrefs(p) {
   prefs = { ...prefs, ...p };
@@ -70,6 +70,27 @@ const fmtDist = (km, digits = 0) => `${(Math.round(dist(km) * 10 ** digits) / 10
 const height = m => (imperial() ? m / FOOT : m);
 const HU = () => (imperial() ? 'ft' : 'm');
 const fmtHeight = m => `${Math.round(height(m)).toLocaleString()} ${HU()}`;
+// The weather on a ride (weather.js on the server, Open-Meteo's history): loaded once, the first time it is wanted
+let allWeather = null, weatherAsked = null;
+function loadWeather() {
+  return weatherAsked = weatherAsked || fetch('/api/weather').then(r => (r.ok ? r.json() : {})).catch(() => ({})).then(w => (allWeather = w));
+}
+const SKY = [[0, '☀️', 'clear'], [2, '🌤️', 'partly cloudy'], [3, '☁️', 'overcast'], [48, '🌫️', 'fog'], [57, '🌦️', 'drizzle'], [67, '🌧️', 'rain'],
+  [77, '🌨️', 'snow'], [82, '🌧️', 'showers'], [86, '🌨️', 'snow showers'], [99, '⛈️', 'thunderstorm']];
+const skyOf = code => (code == null ? ['', ''] : (SKY.find(([max]) => code <= max) || SKY[SKY.length - 1]).slice(1));
+const fmtTemp = c => (imperial() ? `${Math.round(c * 9 / 5 + 32)}°F` : `${Math.round(c)}°C`);
+const fmtWind = kmh => (imperial() ? `${Math.round(kmh / MILE)} mph` : `${Math.round(kmh)} km/h`);
+const COMPASS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+// "🌤️ 18°C · wind 14 km/h from the SW, gusts 30 · rain 1.2 mm" (short: icon, temperature, wind)
+function weatherText(w, short = false) {
+  if (!w) return '';
+  const [icon, word] = skyOf(w.code);
+  const from = w.dir != null ? ` ${short ? '' : 'from the '}${COMPASS[Math.round(w.dir / 45) % 8]}` : '';
+  if (short) return `<span title="${word}, ${fmtTemp(w.tmin)} to ${fmtTemp(w.tmax)}, wind ${fmtWind(w.wind)}${from}${w.rain ? `, rain ${w.rain} mm` : ''}">${icon} ${fmtTemp(w.temp)} · 💨 ${fmtWind(w.wind)}${from}</span>`;
+  return `${icon} ${word}, ${fmtTemp(w.temp)}${w.tmax - w.tmin >= 2 ? ` (${fmtTemp(w.tmin)}–${fmtTemp(w.tmax)})` : ''} · wind ${fmtWind(w.wind)}${from}` +
+    `${w.gust ? `, gusts ${fmtWind(w.gust)}` : ''}${w.rain ? ` · rain ${w.rain} mm` : ''}`;
+}
+
 const stayLayer = L.layerGroup(), carLayer = L.layerGroup(), photoLayer = L.layerGroup();
 const timelineLayer = L.layerGroup(), countryLayer = L.layerGroup(), activityLayer = L.layerGroup(), tileLayer = L.layerGroup();
 const climbLayer = L.layerGroup();
@@ -112,7 +133,7 @@ function extraCounts() {
   const shown = allStays.filter(s => s.lat != null && overlapsWin(s.start, s.end));
   return {
     stay: shown.filter(s => s.what !== 'car').length, car: shown.filter(s => s.what === 'car').length,
-    photo: photoCells().reduce((n, c) => n + c.count, 0),
+    photo: allPhotoPoints?.length && (prefs.photos || 'clusters') !== 'places' ? shownPhotoPoints().length : photoCells().reduce((n, c) => n + c.count, 0),
     timeline: allTimeline.visits.filter(v => overlapsWin(v.start, v.end)).length, country: visitedCount ? `${visitedCount} / ${countryTotal}` : 0,
     ...Object.fromEntries(Object.keys(ACT_KINDS).map(k => ['act-' + k, allActivities.filter(a => a.kind === k && inWin(a.date)).length])),
     tile: explored?.tiles.size ? `${explored.tiles.size.toLocaleString()} · ▢${explored.square.size}` : 0,
@@ -130,6 +151,29 @@ function drawExtras() {
   drawCountries();
   drawCities();
   drawClimbs();
+  if (typeof map3d !== 'undefined' && map3d && !document.getElementById('map3d').hidden) refresh3D();  // the 3D view follows
+}
+
+// --- long tables: the first rows, and a button for more ---
+
+// Every table under root with more than `first` rows shows `first`, then a button that shows `step` more at a time
+function paginateTables(root, first = 20, step = 20) {
+  (typeof root === 'string' ? document.getElementById(root) : root)?.querySelectorAll('table.sp-table').forEach(t => {
+    const rows = [...t.tBodies[0]?.rows || []];
+    t.parentElement.querySelectorAll(':scope > .sp-more').forEach(b => b.remove());
+    if (rows.length <= first + 5) return;
+    let shown = first;
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-ghost sp-more';
+    const update = () => {
+      rows.forEach((r, i) => { r.hidden = i >= shown; });
+      btn.textContent = `Show ${Math.min(step, rows.length - shown)} more (${rows.length - shown} left)`;
+      btn.hidden = shown >= rows.length;
+    };
+    btn.addEventListener('click', () => { shown += step; update(); });
+    t.insertAdjacentElement('afterend', btn);
+    update();
+  });
 }
 
 // --- famous cycling climbs ---
@@ -142,6 +186,14 @@ async function loadClimbs() {
   drawClimbs();
   drawLegend();
   if (document.getElementById('tab-sports')?.classList.contains('active')) renderSports();
+  refreshPages();
+}
+
+// A trip's or a town's page that opened before the activities and climbs had loaded: drawn again with them
+function refreshPages() {
+  const open = id => document.getElementById(id)?.classList.contains('active');
+  if (open('tab-trip') && typeof tripShown !== 'undefined' && tripShown) renderTrip();
+  if (open('tab-city') && typeof cityShown !== 'undefined' && cityShown) renderCityReport();
 }
 
 function drawClimbs() {
@@ -157,7 +209,8 @@ function drawClimbs() {
       const r = ridden(a.rides);
       return `${r.length ? '✓' : '✗'} from ${escapeHTML(a.from)} · ${fmtDist(a.length, 1)} · ${fmtHeight(a.gain)} · ${a.grade}%` +
         (r.length ? ` · ${r.length}× ${r.slice(0, 3).map(link).join(', ')}` : '');
-    }).concat((c.other || []).map(o => `✓ ${escapeHTML(o.via)} · ${ridden(o.rides).length}× ${ridden(o.rides).slice(0, 3).map(link).join(', ')}`));
+    }).concat((c.other || []).map(o => `✓ ${escapeHTML(o.via)}${o.best?.length ? ` · ${fmtDist(o.best.length, 1)}${o.best.gain ? ' · ' + fmtHeight(o.best.gain) : ''}` : ''}` +
+      ` · ${ridden(o.rides).length}× ${ridden(o.rides).slice(0, 3).map(link).join(', ')}`));
     const summary = done
       ? `climbed ${c.times} time${c.times !== 1 ? 's' : ''}` + (c.times > 1 ? `, first ${fmtDate(c.first)}` : '') +
         (ways.length ? '' : '<br>' + ridden(c.rides).slice(0, 5).map(r => `${link(r)} · ${escapeHTML(r.name || 'ride')}`).join('<br>'))
@@ -169,9 +222,12 @@ function drawClimbs() {
       (ways.length ? '<br>' + ways.join('<br>') : '') +
       `<br><a href="#climb=${c.id}" class="popup-link" onclick="event.preventDefault(); openClimb('${c.id}')">Open climb page →</a>` + '</small>', { maxWidth: 320 })
       .addTo(climbLayer);
-    // the ways up you rode, as lines
+    // the ways up you rode, as lines: the worked-out ones, and your own (from your track) for the others
     (c.ascents || []).filter(a => ridden(a.rides).length).forEach(a => {
       L.polyline(decodePath(a.path), { color, weight: 4, opacity: 0.85, interactive: false }).addTo(climbLayer);
+    });
+    (c.other || []).filter(o => o.path && ridden(o.rides).length).forEach(o => {
+      L.polyline(decodePath(o.path), { color, weight: 4, opacity: 0.85, interactive: false }).addTo(climbLayer);
     });
   });
 }
@@ -223,18 +279,76 @@ function photoCells() {
   return Object.values(cells);
 }
 
+// Every photo (/api/photos/points: [id, unix time, lat, lon, video]), loaded once when the layer is first drawn.
+// As chosen in the settings: grouped into clusters (a photo: its thumbnail, a click away from the whole photo), a
+// heatmap, or the older places (counts per place, from the photo places import). Without the index: the places.
+let allPhotoPoints = null, photoPointsAsked = false;
+const photoDay = p => new Date(p[1] * 1000).toISOString().slice(0, 10);
+
+function loadPhotoPoints() {
+  if (photoPointsAsked) return;
+  photoPointsAsked = true;
+  fetch('/api/photos/points').then(r => (r.ok ? r.json() : [])).catch(() => []).then(list => {
+    allPhotoPoints = list;
+    drawPhotos();
+    drawLegend();
+  });
+}
+
+function photoPopup(p) {
+  const when = new Date(p[1] * 1000);
+  return `<div class="photo-pop"><a href="/api/photos/${p[0]}/full" target="_blank" rel="noopener" title="Open the whole ${p[4] ? 'video' : 'photo'}">` +
+    `<img src="/api/photos/${p[0]}/thumb" alt="" loading="lazy" width="240"></a><br><small>${p[4] ? '🎬 ' : '📷 '}` +
+    `${fmtDate(photoDay(p))} ${when.toISOString().slice(11, 16)} UTC · <a href="/api/photos/${p[0]}/full" target="_blank" rel="noopener">open ${p[4] ? 'video' : 'full size'}</a></small></div>`;
+}
+
+let heatLoading = null;
+function loadHeat() {  // leaflet.heat, the first time a heatmap is drawn
+  if (window.L?.heatLayer) return Promise.resolve();
+  return heatLoading = heatLoading || new Promise(resolve => {
+    const js = document.createElement('script');
+    js.src = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet.heat/0.2.0/leaflet-heat.js';
+    js.onload = resolve;
+    document.head.appendChild(js);
+  });
+}
+
+function shownPhotoPoints() {
+  return (allPhotoPoints || []).filter(p => inWin(photoDay(p)));
+}
+
 function drawPhotos() {
   photoLayer.clearLayers();
-  const color = getCSSVar('--photo');
-  photoCells().forEach(c => {
-    const days = c.days.sort();
-    L.circleMarker([c.lat, c.lon], {
-      renderer: canvasRenderer, radius: Math.min(2 + Math.sqrt(c.count) * 0.6, 12), color, fillColor: color,
-      fillOpacity: 0.45, weight: 0.5
-    }).bindPopup(`<b>📷 ${c.count.toLocaleString()} photo${c.count !== 1 ? 's' : ''}</b><br>` +
-      `<small>${days.length} day${days.length !== 1 ? 's' : ''}: ${fmtDate(days[0])}${days.length > 1 ? ' – ' + fmtDate(days[days.length - 1]) : ''}</small>`)
-      .addTo(photoLayer);
-  });
+  const color = getCSSVar('--photo'), mode = prefs.photos || 'clusters';
+  if (mode !== 'places' && allPhotoPoints === null) loadPhotoPoints();
+  if (mode === 'places' || !allPhotoPoints?.length) {  // counts per place (imports/photos.py without --points)
+    photoCells().forEach(c => {
+      const days = c.days.sort();
+      L.circleMarker([c.lat, c.lon], {
+        renderer: canvasRenderer, radius: Math.min(2 + Math.sqrt(c.count) * 0.6, 12), color, fillColor: color,
+        fillOpacity: 0.45, weight: 0.5
+      }).bindPopup(`<b>📷 ${c.count.toLocaleString()} photo${c.count !== 1 ? 's' : ''}</b><br>` +
+        `<small>${days.length} day${days.length !== 1 ? 's' : ''}: ${fmtDate(days[0])}${days.length > 1 ? ' – ' + fmtDate(days[days.length - 1]) : ''}</small>`)
+        .addTo(photoLayer);
+    });
+    return;
+  }
+  const pts = shownPhotoPoints();
+  if (mode === 'heat') {
+    loadHeat().then(() => {
+      if ((prefs.photos || 'clusters') !== 'heat') return;
+      photoLayer.clearLayers();
+      L.heatLayer(pts.map(p => [p[2], p[3], 1]), { radius: 14, blur: 18, minOpacity: 0.35, maxZoom: 12,
+        gradient: { 0.2: '#0e7490', 0.5: '#22d3ee', 0.8: '#a5f3fc', 1: '#ffffff' } }).addTo(photoLayer);
+    });
+    return;
+  }
+  // clusters: a number per group, photos one by one when zoomed in; added in chunks so 80,000 do not stall the page
+  const group = L.markerClusterGroup({ chunkedLoading: true, showCoverageOnHover: false, maxClusterRadius: 45,
+    iconCreateFunction: c => L.divIcon({ html: `<span>${c.getChildCount().toLocaleString()}</span>`, className: 'photo-cluster', iconSize: [34, 34] }) });
+  const icon = L.divIcon({ className: 'photo-dot', iconSize: [10, 10] });
+  group.addLayers(pts.map(p => L.marker([p[2], p[3]], { icon }).bindPopup(() => photoPopup(p), { maxWidth: 260, minWidth: 240 })));
+  photoLayer.addLayer(group);
 }
 
 // --- Google Timeline ---
@@ -256,7 +370,7 @@ function drawTimeline() {
 // --- Strava activities and the tiles they explored ---
 // Made for thousands of activities: they load after the rest of the map; each route is decoded once; routes and
 // explored tiles are painted on canvas map tiles, only where the map is in view (never one map object per activity);
-// and the explored tiles of each activity come worked out from Contrail.
+// and the explored tiles of each activity come worked out from Cairn.
 
 const SPORTS = {
   ride: /Ride|Velomobile|Handcycle|Wheelchair/, run: /Run/, walk: /Walk|Hike|Snowshoe/
@@ -267,7 +381,7 @@ const sportEmoji = { ride: '🚴', run: '🏃', walk: '🥾', sport: '🏅' };
 // ~200 m), as chosen in the settings; packed as x * TILES + y
 let TILE_Z = prefs.tileZoom, TILES = 2 ** TILE_Z;
 
-// An activity's tiles at the chosen zoom: Contrail's (zoom 14), else from its route, once (a point every quarter tile)
+// An activity's tiles at the chosen zoom: Cairn's (zoom 14), else from its route, once (a point every quarter tile)
 function actTiles(a) {
   if (TILE_Z === 14 || !a.pts) return a.tiles || [];
   const key = 'tiles' + TILE_Z;
@@ -449,9 +563,13 @@ function activityPopup(a, ll) {
     L.polyline(pts, { color: getCSSVar('--text'), weight: 7, opacity: 0.9, interactive: false }),
     L.polyline(pts, { color: getCSSVar('--' + a.kind), weight: 4, opacity: 1, interactive: false })
   ]).addTo(map);
+  if (!allWeather && a.kind === 'ride') loadWeather().then(w => {  // the first ride clicked: its weather when it comes
+    const el = document.querySelector('.leaflet-popup .act-weather');
+    if (el && w[a.id]) el.innerHTML = '<br>' + weatherText(w[a.id]);
+  });
   L.popup({ maxWidth: 260 }).setLatLng(ll).setContent(`<b>${sportEmoji[a.kind]} ${escapeHTML(a.name)}</b><br>` +
     `<small>${escapeHTML(a.sport)} · ${fmtDate(a.date)} · ${fmtDist(a.distance, 1)}` +
-    `${a.elevation ? ` · ↑${fmtHeight(a.elevation)}` : ''}</small>`).on('remove', () => {
+    `${a.elevation ? ` · ↑${fmtHeight(a.elevation)}` : ''}</small><small class="act-weather">${allWeather?.[a.id] ? '<br>' + weatherText(allWeather[a.id]) : ''}</small>`).on('remove', () => {
     if (activityHighlight) map.removeLayer(activityHighlight);
     activityHighlight = null;
   }).openOn(map);
@@ -575,7 +693,7 @@ function locateMe() {
 
 const flagOf = cc => /^[A-Z]{2}$/.test(cc || '') ? String.fromCodePoint(...[...cc].map(c => 0x1F1E6 + c.charCodeAt(0) - 65)) + ' ' : '';
 
-// Contrail counts the days per town (cities.js); asked again when the period changes, drawn when the answer comes
+// Cairn counts the days per town (cities.js); asked again when the period changes, drawn when the answer comes
 function drawCities() {
   const q = new URLSearchParams({ from: win.from, to: win.to }).toString();
   if (q === citiesAsked) return paintCities();
@@ -659,6 +777,14 @@ function computeJourneys() {
     const names = [...new Set(j.flights.map(f => allAirports[f.to]?.country).filter(c => c && !homeCountries.has(c)))];
     return { ...j, name: names.slice(0, 3).join(' · ') + (names.length > 3 ? ' …' : '') || 'Trip' };
   }).reverse();
+  // the trips Cairn finds in all its data (trips.js), when they have loaded: the map's trip choice lists them instead
+  if (typeof loadTrips === 'function') loadTrips().then(list => {
+    const sel = document.getElementById('p-trip');
+    if (!list.length || sel?.value) return;  // (not while a flight-made trip is chosen)
+    journeys = list.map(t => ({ start: t.start, end: t.end, name: t.name, id: t.id }));
+    if (sel) sel.innerHTML = `<option value="">all trips</option>` +
+      journeys.map((j, i) => `<option value="${i}">${j.start.slice(0, 7)} · ${escapeHTML(j.name)}</option>`).join('');
+  });
 }
 
 // The map's view of the period: its flights' airports, ground trips and stays
@@ -703,7 +829,8 @@ function addPeriodControl() {
         `<label>Years <select id="p-from">${opt('', 'first')}${ys.map(y => opt(y, y)).join('')}</select>` +
         `– <select id="p-to">${opt('', 'last')}${ys.map(y => opt(y, y)).join('')}</select></label>` +
         `<label>Trip <select id="p-trip">${opt('', 'all trips')}` +
-        journeys.map((j, i) => opt(i, `${j.start.slice(0, 7)} · ${escapeHTML(j.name)}`)).join('') + `</select></label>` +
+        journeys.map((j, i) => opt(i, `${j.start.slice(0, 7)} · ${escapeHTML(j.name)}`)).join('') + `</select>` +
+        ` <a href="#" id="p-trip-open" hidden title="The trip's page">page →</a></label>` +
         `<label>Where on <input type="date" id="p-day"></label>` + stravaRow();
       return box;
     }
@@ -721,9 +848,15 @@ function addPeriodControl() {
     const j = journeys[$('p-trip').value];
     $('p-from').value = $('p-to').value = '';
     win = j ? { from: j.start, to: j.end } : { from: '', to: '' };
+    $('p-trip-open').hidden = !j?.id;
     redrawMap();
     const b = j && windowBounds();
     if (b) map.fitBounds(b, { padding: [40, 40], maxZoom: 9 });
+  });
+  $('p-trip-open').addEventListener('click', e => {
+    e.preventDefault();
+    const j = journeys[$('p-trip').value];
+    if (j?.id) openTrip(j.id);
   });
   $('p-day').addEventListener('change', () => whereOn($('p-day').value));
   $('p-strava')?.addEventListener('click', e => {

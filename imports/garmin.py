@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Your Garmin activities in Contrail (the map's activities and explored tiles, the Sports tab), free of charge:
+"""Your Garmin activities in Cairn (the map's activities and explored tiles, the Sports tab), free of charge:
 
   export   your whole history, from Garmin's data export (garmin.com > Account > Data Management > Export Your Data:
            a zip, emailed within a few days); give the zip as it came, or its unpacked folder:
@@ -16,11 +16,13 @@
 
 The sync uses the unofficial login (the python-garminconnect library), which Garmin does not sanction and which stops
 working for a while when Garmin changes its sign-in; the export then still brings everything.
-Writes data/garmin.json: {"activities": [...], "last_sync", "last_full"}, each activity as Contrail keeps Strava's
+Writes data/garmin.json: {"activities": [...], "last_sync", "last_full"}, each activity as Cairn keeps Strava's
 (id, name, sport, date, start, distance km, moving_time, elapsed_time, elevation, heartrate, trainer, path, at, tiles),
 its route from the activity's own file, simplified to about 20 m, its explored tiles from the full track; "profile"
-(FTP, weight). Outdoor rides also get a timed track, data/tracks/<id>.json.gz (a point every 5 s with time, height,
-power and heart rate), from which Contrail times the climbs you rode.
+(FTP, weight). Every day's sleep, resting heart rate, steps, stress and Body Battery go to data/wellness.json
+({"days": {"YYYY-MM-DD": {"rhr", "steps", "stress", "bb_max", "bb_min", "sleep" s, "deep", "light", "rem", "awake",
+"bed", "wake" (UTC), "score"}}, "last_sync"}): the export brings them all, each sync the last days. Outdoor rides also get a timed track, data/tracks/<id>.json.gz (a point every 5 s with time, height,
+power and heart rate), from which Cairn times the climbs you rode.
 """
 import argparse
 import fcntl
@@ -47,7 +49,7 @@ FULL_EVERY = timedelta(days=1)
 RECENT = timedelta(days=30)  # a plain sync fetches the files of unknown activities this far back from the newest known
 PAUSE = 1.0            # seconds between Garmin Connect requests
 
-# Garmin's activity types (typeKey, or a FIT file's sport/sub_sport) -> (Strava's names, which Contrail groups by;
+# Garmin's activity types (typeKey, or a FIT file's sport/sub_sport) -> (Strava's names, which Cairn groups by;
 # indoor: no route to expect)
 SPORTS = [
     (r"virtual|indoor_cycling|spin", "VirtualRide", True), (r"gravel", "GravelRide", False),
@@ -69,13 +71,16 @@ def sport_of(*keys):
     return (keys[0] or "Workout").replace("_", " ").title().replace(" ", ""), False
 
 
+MAX_CLIMB_M_PER_KM = 250  # more climbing than this per km is a wrong unit, not a route (the steepest roads are 30-40%)
+
+
 def tile_of(lat, lon):
     r = math.radians(lat)
     return math.floor((lon + 180) / 360 * TILES) * TILES + math.floor((1 - math.log(math.tan(r) + 1 / math.cos(r)) / math.pi) / 2 * TILES)
 
 
 def tiles_of(pts):
-    """Zoom-14 tiles a route passes through, as Contrail counts them (strava.js tilesOf): a point every ~200 m."""
+    """Zoom-14 tiles a route passes through, as Cairn counts them (strava.js tilesOf): a point every ~200 m."""
     out = set()
     for i, b in enumerate(pts):
         a = pts[max(0, i - 1)]
@@ -167,7 +172,7 @@ def summaries(paths):
                     yield a
 
 
-# --- one activity as Contrail keeps it ---
+# --- one activity as Cairn keeps it ---
 
 def ftp_of(summary):
     """The FTP set when the activity was done: Garmin's intensity factor is normalized power over it."""
@@ -246,7 +251,7 @@ def send_discord(text):
         url = None
     if url:
         req = urllib.request.Request(url, json.dumps({"content": text[:1900]}).encode(), method="POST",
-                                     headers={"Content-Type": "application/json", "User-Agent": "contrail-garmin"})
+                                     headers={"Content-Type": "application/json", "User-Agent": "cairn-garmin"})
         urllib.request.urlopen(req, timeout=20).close()
 
 
@@ -258,7 +263,7 @@ def vehicle_alert(act):
             f"Trim it in Garmin Connect: https://connect.garmin.com/modern/activity/{act['id']}")
 
 
-# --- timed tracks of rides: when you passed where, for climbs (Contrail's climbs.js times each way up you rode) ---
+# --- timed tracks of rides: when you passed where, for climbs (Cairn's climbs.js times each way up you rode) ---
 
 TRACK_STEP = 5  # seconds between the points kept
 
@@ -346,9 +351,13 @@ def from_export(paths, log=print, tracks=None):
         local = f.get("local") or ((ms_time(a["startTimeLocal"]) - start) if a.get("startTimeLocal") else None)
         val = lambda fk, sk: f.get(fk) if f.get(fk) is not None else (a[sk] * med[sk] if a.get(sk) is not None else None)  # noqa: E731
         moving = f.get("moving") if f.get("moving") is not None else (a["movingDuration"] * med["duration"] if a.get("movingDuration") else None)
+        ascent = val("ascent", "elevationGain")
+        km = (val("distance", "distance") or 0) / 1000
+        if ascent and km > 1 and ascent / km > MAX_CLIMB_M_PER_KM:  # some files give it in centimetres: 41,737 m on a 149 km ride
+            ascent = a["elevationGain"] * med["elevationGain"] if a.get("elevationGain") and a["elevationGain"] * med["elevationGain"] / km <= MAX_CLIMB_M_PER_KM else ascent / 100
         out.append(to_activity(aid if aid > 0 else -aid, a.get("name"), type_key or f.get("sport"), start, local,
                                 val("distance", "distance"), moving or val("elapsed", "duration"), val("elapsed", "duration"),
-                                val("ascent", "elevationGain"), f.get("hr") or a.get("avgHr"), f.get("pts", []), f.get("sub_sport", ""),
+                                ascent, f.get("hr") or a.get("avgHr"), f.get("pts", []), f.get("sub_sport", ""),
                                 ftp_of(a), f.get("vehicle")))
     return out
 
@@ -490,6 +499,88 @@ def weights(g, since="2000-01-01"):
     return sorted([d, kg] for d, kg in days.items())
 
 
+# --- days: sleep, resting heart rate, steps, stress and Body Battery (data/wellness.json) ---
+
+def _day(uds=None, sleep=None):
+    """One day as Cairn keeps it, from Garmin's daily summary (export UDSFile or Connect's user summary) and sleep."""
+    out = {}
+    if uds:
+        stress = uds.get("allDayStress") or {}
+        total = next((a for a in stress.get("aggregatorList", []) if a.get("type") == "TOTAL"), {}) if isinstance(stress, dict) else {}
+        bb = {b.get("bodyBatteryStatType"): b.get("statsValue") for b in ((uds.get("bodyBattery") or {}).get("bodyBatteryStatList") or [])}
+        out.update(rhr=uds.get("restingHeartRate"), steps=uds.get("totalSteps"),
+                   stress=total.get("averageStressLevel", uds.get("averageStressLevel")),
+                   bb_max=bb.get("HIGHEST", uds.get("bodyBatteryHighestValue")), bb_min=bb.get("LOWEST", uds.get("bodyBatteryLowestValue")))
+    if sleep and (sleep.get("sleepStartTimestampGMT") or sleep.get("sleepTimeSeconds")):
+        stages = {k: sleep.get(f"{k}SleepSeconds") for k in ("deep", "light", "rem", "awake")}
+        asleep = sleep.get("sleepTimeSeconds") or sum(v or 0 for k, v in stages.items() if k != "awake")
+        score = sleep.get("sleepScores") or {}
+        score = score.get("overallScore") or (score.get("overall") or {}).get("value")
+        gmt = lambda v: (datetime.fromtimestamp(v / 1000, timezone.utc).strftime("%Y-%m-%dT%H:%M") if isinstance(v, (int, float))  # noqa: E731
+                         else str(v)[:16]) if v else None
+        out.update(sleep=asleep or None, deep=stages["deep"], light=stages["light"], rem=stages["rem"], awake=stages["awake"],
+                   bed=gmt(sleep.get("sleepStartTimestampGMT")), wake=gmt(sleep.get("sleepEndTimestampGMT")), score=score)
+    return {k: v for k, v in out.items() if v is not None}
+
+
+def wellness_from_export(paths):
+    """{"YYYY-MM-DD": day} from the export's daily summaries (DI-Connect-Aggregator/UDSFile_*.json) and sleep
+    (DI-Connect-Wellness/*_sleepData.json)."""
+    uds, sleep = {}, {}
+
+    def take(name, data):
+        rows = json.loads(data)
+        if "UDSFile_" in name:
+            uds.update({r["calendarDate"]: r for r in rows if r.get("calendarDate")})
+        elif name.endswith("_sleepData.json"):
+            sleep.update({r["calendarDate"]: r for r in rows if r.get("calendarDate")})
+    wanted = lambda n: "UDSFile_" in n or n.endswith("_sleepData.json")  # noqa: E731
+    for p in map(Path, paths):
+        if p.is_dir():
+            for f in p.rglob("*.json"):
+                if wanted(f.name):
+                    take(f.name, f.read_bytes())
+        elif zipfile.is_zipfile(p):
+            with zipfile.ZipFile(p) as z:
+                for n in z.namelist():
+                    if wanted(n):
+                        take(n, z.read(n))
+    days = {d: _day(uds.get(d), sleep.get(d)) for d in set(uds) | set(sleep)}
+    return {d: v for d, v in days.items() if v}
+
+
+def wellness_from_connect(g, known, log=print, most=14):
+    """The days since the last one known (at most `most`, today included) from Garmin Connect: two requests a day."""
+    today = datetime.now().date()
+    last = max(known, default=None)
+    start = max(today - timedelta(days=most - 1), (datetime.strptime(last, "%Y-%m-%d").date() - timedelta(days=1)) if last else today - timedelta(days=most - 1))
+    out, d = {}, start
+    while d <= today:
+        day = d.isoformat()
+        try:
+            summary = g.get_user_summary(day) or {}
+            sleep = (g.get_sleep_data(day) or {}).get("dailySleepDTO") or {}
+            got = _day(summary, sleep)
+            if got:
+                out[day] = got
+        except Exception as e:  # one day missing is no reason to lose the others
+            log(f"wellness {day} not read: {e.__class__.__name__}: {e}")
+        d += timedelta(days=1)
+    return out
+
+
+def save_wellness(file, days, synced=False):
+    data = json.loads(file.read_text()) if file.exists() else {"days": {}}
+    data["days"].update(days)
+    data["days"] = dict(sorted(data["days"].items()))
+    if synced:
+        data["last_sync"] = datetime.now(timezone.utc).isoformat()
+    tmp = file.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, separators=(",", ":")))
+    tmp.replace(file)
+    return len(data["days"])
+
+
 def login():
     import getpass
     from garminconnect import Garmin
@@ -514,6 +605,7 @@ def main(argv=None):
         return login()
     out = Path(args.out)
     tracks = out.parent / "tracks"  # timed tracks of rides, for climbs
+    wellness = out.parent / "wellness.json"  # sleep, resting heart rate, steps, stress, Body Battery per day
     data = json.loads(out.read_text()) if out.exists() else {"activities": []}
     stamp = lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S")  # noqa: E731
     log = lambda m: print(f"{stamp()} {m}", flush=True)  # noqa: E731
@@ -534,6 +626,9 @@ def main(argv=None):
         acts.update({a["id"]: a for a in fresh})
         data["activities"] = sorted(acts.values(), key=lambda a: -a["start"])
         log(f"{len(fresh)} activities from the export, {len(acts)} in all")
+        days = wellness_from_export(args.paths)
+        if days:
+            log(f"{len(days)} days of sleep and resting heart rate from the export, {save_wellness(wellness, days)} in all")
     else:
         # one sync at a time: a nightly run that meets a long --all one (or the reverse) leaves it be
         lock = open(out.with_suffix(".lock"), "w")
@@ -550,6 +645,12 @@ def main(argv=None):
                 log(f"profile: {data['profile'].get('ftp')} W, {data['profile'].get('weight')} kg")
             else:
                 data = sync(data, args.all, log, save, tracks)
+                try:  # the last days' sleep and resting heart rate (nice to have: the activities matter more)
+                    known = json.loads(wellness.read_text()).get("days", {}) if wellness.exists() else {}
+                    days = wellness_from_connect(connect(), known, log)
+                    log(f"{len(days)} days of sleep and resting heart rate, {save_wellness(wellness, days, synced=True)} in all")
+                except Exception as e:
+                    log(f"wellness not read: {e.__class__.__name__}: {e}")
         except Exception as e:  # signed out, Garmin's sign-in changed, rate limit: logged; the next hour tries again
             log(f"sync failed: {e.__class__.__name__}: {e}")
             data["error"] = f"{e.__class__.__name__}: {e}"[:300]

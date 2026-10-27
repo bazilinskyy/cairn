@@ -397,8 +397,10 @@ app.get('/api/ground', (_req, res) => {
 app.post('/api/ground', (req, res) => {
   const t = req.body;
   if (!t.mode || !t.from || !t.to || !t.date) return res.status(400).json({ error: 'mode, from, to and date are required' });
+  // the same trip again: by its calendar event, or the same departure minute (not for ones added by hand with only a
+  // year or a month known: several trips can share it)
   const same = trips.find(x => (t.event_id && x.event_id === t.event_id)
-    || (x.mode === t.mode && (x.date || '').slice(0, 16) === t.date.slice(0, 16)));
+    || (!t.approx && !x.approx && x.mode === t.mode && (x.date || '').slice(0, 16) === t.date.slice(0, 16)));
   if (same) {
     const { id, ...changes } = t;
     ground.forget(same, changes);
@@ -488,6 +490,22 @@ app.delete('/api/stays/:id', (req, res) => {
 });
 
 app.get('/api/photos', (_req, res) => res.json(readImport(PHOTOS_FILE, [])));
+
+// Every photo with its place and time (photos.js): [[id, unix time, lat, lon, video 1/0]], gzipped, with an ETag
+const photoIndex = require('./photos').create({ file: path.join(DATA_DIR, 'photo_points.json'), cache: path.join(DATA_DIR, 'photo_cache'), readImport });
+app.get('/api/photos/points', (req, res) => {
+  const { json, gz, etag } = photoIndex.payload();
+  res.set({ ETag: etag, 'Cache-Control': 'no-cache', Vary: 'Accept-Encoding', 'Content-Type': 'application/json' });
+  if (req.headers['if-none-match'] === etag) return res.status(304).end();
+  if (/\bgzip\b/.test(req.headers['accept-encoding'] || '')) return res.set('Content-Encoding', 'gzip').send(gz);
+  res.send(json);
+});
+// one photo: a thumbnail (/thumb) or the whole of it (/full), from the file on this Mac
+app.get('/api/photos/:id/:size(thumb|full)', async (req, res) => {
+  const made = await (req.params.size === 'thumb' ? photoIndex.thumb(req.params.id) : photoIndex.full(req.params.id));
+  if (!made) return res.status(404).json({ error: 'no such photo here (or it could not be converted)' });
+  res.set('Cache-Control', 'max-age=604800').type(made.type).sendFile(made.file);
+});
 app.get('/api/timeline', (_req, res) => res.json(readImport(TIMELINE_FILE, { visits: [], paths: [] })));
 
 // --- Strava ---
@@ -511,10 +529,14 @@ app.get('/api/activities/status', (_req, res) => res.json(activities.status()));
 // Famous cycling climbs and which your rides went over (climbs.js); [] when there are no rides
 const climbs = require('./climbs').create({
   activities: () => activities.list(), key: () => activities.payload().etag, file: path.join(DATA_DIR, 'climb_ascents.json'),
-  profile: () => readImport(GARMIN_FILE, NO_GARMIN).profile, trackDir: path.join(DATA_DIR, 'tracks'),
+  profile: () => readImport(GARMIN_FILE, NO_GARMIN).profile, trackDir: path.join(DATA_DIR, 'tracks'), photos: () => photoIndex.list(),
   towns: () => (towns === undefined ? (towns = cities.load(path.join(DATA_DIR, 'cities1000.txt'))) : towns)
 });
 app.get('/api/climbs', (_req, res) => res.json(climbs.list()));
+app.get('/api/climbs/:id/photos', (req, res) => {
+  const list = climbs.photos(req.params.id);
+  return list ? res.json(list) : res.status(404).json({ error: 'no such climb' });
+});
 // one effort up a climb, point by point: /api/climbs/Q209064/efforts/<activity id>?from=Bédoin
 app.get('/api/climbs/:id/efforts/:ride', (req, res) => {
   const e = climbs.effort(req.params.id, req.params.ride, req.query.from || '');
@@ -570,6 +592,7 @@ function placesAndDays(from, to, { stays: withStays = true } = {}) {
     if (!change(f, fl[i + 1])) add(at(f.to), f.date.slice(0, 10), airports[f.to].city);
   });
   trips.forEach(t => {
+    if (t.approx) return;  // only its year or month known: no day
     if (t.from_lat != null) add([t.from_lat, t.from_lon], (t.date || '').slice(0, 10));
     if (t.to_lat != null) add([t.to_lat, t.to_lon], (t.date || '').slice(0, 10));
   });
@@ -715,8 +738,74 @@ app.get('/api/city/:id', (req, res) => {
     stays: staysHere.sort(sortBy('start')), flights: flightsHere.sort(sortBy('date')), ground: groundHere.sort(sortBy('date')),
     activities: activitiesHere.sort(sortBy('date')),
     photos: [...photoDays].map(([day, n]) => ({ day, count: Math.max(1, Math.round(n)) })).sort(sortBy('day')),
-    timeline: timelineHere.sort(sortBy('start'))
+    timeline: timelineHere.sort(sortBy('start')),
+    music: music.top({ days: new Set(days) })
   });
+});
+
+// --- Weather on the rides (weather.js) and the days' sleep and resting heart rate (Garmin, data/wellness.json) ---
+
+const weather = require('./weather').create({ activities: () => activities.list(), file: path.join(DATA_DIR, 'weather.json'), log: m => console.log(m) });
+app.get('/api/weather', (_req, res) => res.json(weather.all()));
+const WELLNESS_FILE = path.join(DATA_DIR, 'wellness.json');
+const wellnessDays = () => readImport(WELLNESS_FILE, { days: {} }).days || {};
+app.get('/api/wellness', (req, res) => {
+  const from = req.query.from || '', to = req.query.to || '';
+  res.json(Object.fromEntries(Object.entries(wellnessDays()).filter(([d]) => (!from || d >= from) && (!to || d <= to))));
+});
+
+// --- Music (lastfm.js): your Last.fm scrobbles, for the towns' and trips' pages ---
+
+const music = require('./lastfm').create({
+  file: path.join(DATA_DIR, 'lastfm.json'), log: m => console.log(m),
+  keys: () => {  // read each time, so adding them needs no restart
+    let s = secret;
+    try { s = JSON.parse(fs.readFileSync(path.join(__dirname, 'secret'), 'utf8')); } catch (_) {}
+    return { key: s.lastfm_api_key || '', user: s.lastfm_user || config.lastfm_user || '' };
+  }
+});
+app.get('/api/music/status', (_req, res) => res.json(music.status()));
+app.post('/api/music/sync', (_req, res) => { music.sync(); res.json(music.status()); });
+app.get('/api/music', (req, res) => res.json(music.top({ from: req.query.from || '', to: req.query.to || '' })));
+
+// --- Trips (trips.js): the runs of days away, each with its story and its moves ---
+
+const tripStore = require('./trips').create({
+  towns: () => { if (towns === undefined) towns = cities.load(path.join(DATA_DIR, 'cities1000.txt')); return towns; },
+  cities, days: (from, to) => placesAndDays(from, to), flights: () => flights, airports: () => airports, groundTrips: () => trips,
+  stays: () => stays, activities: () => activities.list(), photos: () => photoIndex.list(),
+  homeAirports: () => config.flightmail?.home_airports || ['AMS', 'EIN', 'RTM'], file: path.join(DATA_DIR, 'drives.json'),
+  wellness: wellnessDays, weather: () => weather.all(),
+  log: m => console.log(m)
+});
+app.get('/api/trips', (_req, res) => res.json(tripStore.list()));
+
+// Curiosities (stats.js): days by the sea and up in the mountains, the extremes, capitals, distances, beds, ...
+const curiosities = require('./stats').create({
+  days: (from, to) => placesAndDays(from, to), towns: () => (towns === undefined ? (towns = cities.load(path.join(DATA_DIR, 'cities1000.txt'))) : towns),
+  cities, activities: () => activities.list(), stays: () => stays, flights: () => flights, airports: () => airports, groundTrips: () => trips,
+  trips: () => tripStore.list(), weather: () => weather.all(), wellness: wellnessDays,
+  homeAirports: () => config.flightmail?.home_airports || ['AMS', 'EIN', 'RTM'],
+  heightsFile: path.join(DATA_DIR, 'heights.json'), coastFile: path.join(DATA_DIR, 'coastline.geojson'), download: httpsGet, log: m => console.log(m)
+});
+// --- Suggestions (suggestions.js): journeys your photos show and nothing else does ---
+const suggestions = require('./suggestions').create({
+  towns: () => (towns === undefined ? (towns = cities.load(path.join(DATA_DIR, 'cities1000.txt'))) : towns), cities,
+  photos: () => photoIndex.list(), flights: () => flights, airports: () => airports, groundTrips: () => trips, activities: () => activities.list(),
+  stays: () => stays, homeAirports: () => config.flightmail?.home_airports || ['AMS', 'EIN', 'RTM'],
+  dismissedFile: path.join(DATA_DIR, 'suggestions.dismissed.json')
+});
+app.get('/api/suggestions', (_req, res) => res.json(suggestions.list()));
+app.post('/api/suggestions/dismiss', (req, res) => {
+  if (!req.body?.key) return res.status(400).json({ error: 'key is required' });
+  suggestions.dismiss(String(req.body.key));
+  res.json({ ok: true });
+});
+
+app.get('/api/curiosities', (_req, res) => res.json(curiosities.get() || { pending: true }));
+app.get('/api/trips/:id', (req, res) => {
+  const t = tripStore.get(req.params.id);
+  return t ? res.json({ ...t, music: music.top({ from: t.start, to: t.end }) }) : res.status(404).json({ error: 'no such trip' });
 });
 
 app.get('/api/cities', (req, res) => {
@@ -902,9 +991,16 @@ app.get('/auth/tripit/callback', async (req, res) => {
 
 init().then(() => {
   const server = app.listen(config.port, config.host, () => {
-    console.log(`Contrail running at http://${config.host}:${config.port}`);
+    console.log(`Cairn running at http://${config.host}:${config.port}`);
     lookUpTrips();
     setInterval(lookUpTrips, 3600e3).unref();  // retries what a service that was down left over
+    // the slow lists worked out now, not while the first page waits for them
+    setTimeout(() => { try { activities.payload(); climbs.list(); tripStore.list(); } catch (e) { console.warn('[warm-up]', e.message); } }, 500);
+    setTimeout(() => weather.fill(), 60e3);
+    setTimeout(() => curiosities.get(), 90e3);
+    setTimeout(() => music.sync(), 120e3);
+    setInterval(() => music.sync(), 6 * 3600e3).unref();
+    setInterval(() => weather.fill(), 6 * 3600e3).unref();  // new rides, once the weather history has them
     if (strava.connected()) strava.sync();
     setInterval(() => { if (strava.connected()) strava.sync(); }, 3600e3).unref();
   });

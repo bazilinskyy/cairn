@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Contrail</title>
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%230f172a'/%3E%3Cg transform='rotate(-35 32 32)'%3E%3Cellipse cx='32' cy='32' rx='5' ry='3' fill='%23e2e8f0'/%3E%3Crect x='37' y='30.5' width='18' height='3' rx='1.5' fill='%23e2e8f0'/%3E%3Crect x='29' y='23' width='2.5' height='9' rx='1.2' fill='%23e2e8f0'/%3E%3Crect x='29.5' y='36' width='2' height='6' rx='1' fill='%23e2e8f0'/%3E%3C/g%3E%3Cpath d='M8 52 Q20 44 36 46 Q50 48 58 40' stroke='%2338bdf8' stroke-width='1.5' fill='none' stroke-dasharray='3 2' opacity='0.7'/%3E%3C/svg%3E">
+  <title>Cairn</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230f172a'/%3E%3Cellipse cx='32' cy='51' rx='21' ry='7' fill='%2394a3b8'/%3E%3Cellipse cx='31' cy='38.5' rx='16' ry='6.5' fill='%23cbd5e1'/%3E%3Cellipse cx='33' cy='27' rx='11.5' ry='5.5' fill='%2394a3b8'/%3E%3Cellipse cx='32' cy='17' rx='7.5' ry='4.5' fill='%2338bdf8'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css">
@@ -14,6 +14,9 @@
   <script src="layers.js"></script>
   <script src="sports.js"></script>
   <script src="city.js"></script>
+  <script src="trips.js"></script>
+  <script src="curiosities.js"></script>
+  <script src="add.js"></script>
   <script src="terrain.js"></script>
   <script src="climb.js"></script>
   <style>
@@ -110,7 +113,11 @@
     .modal {
       background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
       padding: 28px; width: 480px; max-width: calc(100vw - 40px);
+      max-height: calc(100vh - 40px); overflow-y: auto;  /* a long dialog (the settings) scrolls on a small screen */
     }
+    #settings-modal .modal { width: 560px; padding-bottom: 0; }
+    #settings-modal .modal-actions { position: sticky; bottom: 0; background: var(--surface); padding: 14px 0 20px; margin-top: 4px;
+      border-top: 1px solid var(--border); }
     .modal h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; }
     .modal p  { font-size: 13px; color: var(--text2); margin-bottom: 18px; line-height: 1.5; }
     .modal input {
@@ -134,21 +141,21 @@
     /* --- Map --- */
     #map { flex: 1; }
     .leaflet-container { background: #1a1a2e !important; }
-    #map[data-basemap="auto"] .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(0.85) saturate(0.6); }
+    :is(#map, .mini-map)[data-basemap="auto"] .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(0.85) saturate(0.6); }
     /* Re-invert controls so they stay readable */
     .leaflet-control { filter: invert(1) hue-rotate(180deg); }
 
     [data-theme="light"] .leaflet-container { background: #e8eff4 !important; }
-    [data-theme="light"] #map[data-basemap="auto"] .leaflet-tile-pane { filter: none; }
+    :is([data-theme="light"] #map, [data-theme="light"] .mini-map)[data-basemap="auto"] .leaflet-tile-pane { filter: none; }
     [data-theme="light"] .leaflet-control   { filter: none; }
     /* Base maps chosen in the settings (layers.js BASEMAPS) */
-    #map[data-basemap="grey"] .leaflet-tile-pane { filter: grayscale(1) contrast(0.8) brightness(1.08); }
-    #map[data-basemap="grey"].leaflet-container { background: #e6e6e6 !important; }
-    #map[data-basemap="grey-dark"] .leaflet-tile-pane { filter: grayscale(1) invert(1) contrast(0.75) brightness(0.8); }
-    #map[data-basemap="grey-dark"].leaflet-container { background: #262626 !important; }
-    [data-theme="dark"] #map[data-basemap="satellite"] .leaflet-tile-pane,
-    [data-theme="dark"] #map[data-basemap="topo"] .leaflet-tile-pane,
-    [data-theme="dark"] #map[data-basemap="colour"] .leaflet-tile-pane { filter: brightness(0.85); }
+    :is(#map, .mini-map)[data-basemap="grey"] .leaflet-tile-pane { filter: grayscale(1) contrast(0.8) brightness(1.08); }
+    :is(#map, .mini-map)[data-basemap="grey"].leaflet-container { background: #e6e6e6 !important; }
+    :is(#map, .mini-map)[data-basemap="grey-dark"] .leaflet-tile-pane { filter: grayscale(1) invert(1) contrast(0.75) brightness(0.8); }
+    :is(#map, .mini-map)[data-basemap="grey-dark"].leaflet-container { background: #262626 !important; }
+    [data-theme="dark"] :is(#map, .mini-map)[data-basemap="satellite"] .leaflet-tile-pane,
+    [data-theme="dark"] :is(#map, .mini-map)[data-basemap="topo"] .leaflet-tile-pane,
+    [data-theme="dark"] :is(#map, .mini-map)[data-basemap="colour"] .leaflet-tile-pane { filter: brightness(0.85); }
 
     /* Popup */
     .leaflet-popup-content-wrapper, .leaflet-popup-tip {
@@ -181,7 +188,14 @@
     #map3d { position: absolute; inset: 0; z-index: 1000; background: #000; }
     #map3d[hidden] { display: none; }
     #map3d-canvas { position: absolute; inset: 0; }
-    #map3d .map3d-close { position: absolute; top: 12px; left: 12px; z-index: 2; background: var(--surface); color: var(--text); box-shadow: 0 2px 8px rgba(0,0,0,0.3); }
+    #map3d-panel { position: absolute; top: 12px; left: 12px; z-index: 2; display: flex; flex-direction: column; gap: 8px; max-height: calc(100% - 24px); overflow-y: auto; }
+    #map3d-panel .map3d-back { font-size: 15px; padding: 10px 18px; box-shadow: 0 2px 10px rgba(0,0,0,0.4); }
+    #map3d-panel .map3d-trip select { max-width: 220px; }
+    #map3d-panel .map3d-layers label { display: block; padding: 2px 0; }
+    #map3d-panel { background: color-mix(in srgb, var(--surface) 92%, transparent); border: 1px solid var(--border); border-radius: 10px; padding: 10px; color: var(--text); }
+    #map3d-panel .map3d-views { display: flex; gap: 6px; }
+    #map3d-panel .map3d-views .btn { padding: 6px 10px; font-size: 12px; }
+    #map3d-panel .map3d-note { margin: 0; font-size: 11px; line-height: 1.35; color: var(--text2); max-width: 190px; }
     .maplibregl-popup-content { background: var(--surface); color: var(--text); }
     .map-legend .group { font-weight: 600; margin-top: 2px; }
     .map-legend .child { padding-left: 18px; }
@@ -254,9 +268,46 @@
     .sp-table td small { display: block; color: var(--text2); font-size: 11px; }
     .sp-table td .sp-link { display: block; color: var(--accent); text-decoration: none; }
     .sp-table td .sp-link:hover { text-decoration: underline; }
+    .sp-table td .sp-link.inline { display: inline; }
     .sp-table tr.sp-hi { background: color-mix(in srgb, var(--accent) 8%, transparent); }
     .sp-rank { color: var(--text2); width: 20px; }
     .country-fill { shape-rendering: crispEdges; }
+    .sp-more { margin-top: 10px; }
+    /* photos (layers.js drawPhotos) */
+    .photo-dot { background: var(--photo); border: 1.5px solid var(--surface); border-radius: 50%; }
+    .photo-cluster { background: color-mix(in srgb, var(--photo) 75%, transparent); border: 2px solid var(--surface); border-radius: 50%;
+      display: flex; align-items: center; justify-content: center; color: #001018; font-size: 11px; font-weight: 700; }
+    .curio-cards .stat-card .value { font-size: 22px; }
+    .curio-cards .stat-card .sub a { color: inherit; }
+    .curio-bars { display: grid; grid-template-columns: 40px 1fr 36px; gap: 3px 8px; align-items: center; font-size: 12px; max-width: 520px; }
+    .curio-bars div.bar { height: 10px; border-radius: 0 4px 4px 0; background: var(--accent); }
+    .curio-bars span:last-child { color: var(--text2); }
+    .music-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px 24px; }
+    .music-cols h4 { margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--text2); }
+    .music-list { margin: 0; padding-left: 20px; font-size: 13px; }
+    .music-list li { padding: 2px 0; }
+    .music-list small { color: var(--text2); }
+    .story-day a, .chart-section p a.sp-link, .curio-cards a.sp-link { color: var(--accent); text-decoration: none; }
+    .story-day a:hover, .chart-section p a.sp-link:hover, .curio-cards a.sp-link:hover { text-decoration: underline; }
+    .story-day { border-top: 1px solid var(--border); padding: 12px 0 4px; }
+    .story-day:first-of-type { border-top: none; padding-top: 0; }
+    .story-day h4 { margin: 0 0 8px; font-size: 14px; display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; }
+    .story-day h4 span { font-weight: 400; }
+    .story-day h4 small { color: var(--text2); font-weight: 400; margin-left: auto; }
+    .story-day ul { list-style: none; margin: 0; padding: 0; }
+    .story-day li { display: flex; gap: 10px; padding: 4px 0; align-items: baseline; font-size: 13px; }
+    .story-day li small { color: var(--text2); }
+    .story-time { flex: 0 0 44px; color: var(--text2); font-variant-numeric: tabular-nums; font-size: 12px; }
+    .story-photos { align-items: flex-start !important; }
+    .story-strip { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    .story-strip a { position: relative; display: block; }
+    .story-strip img { height: 84px; width: 112px; object-fit: cover; border-radius: 5px; display: block; background: var(--surface2); }
+    .story-strip span { position: absolute; left: 4px; bottom: 4px; font-size: 12px; }
+    .climb-photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+    .climb-photos a { position: relative; display: block; }
+    .climb-photos img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 6px; display: block; background: var(--surface2); }
+    .climb-photos span { position: absolute; left: 6px; bottom: 6px; font-size: 14px; }
+    .photo-pop img { border-radius: 6px; display: block; max-width: 240px; height: auto; background: var(--surface2); min-height: 120px; }
     .popup-link { display: inline-block; margin-top: 6px; color: var(--accent); font-weight: 600; text-decoration: none; }
     .popup-link:hover { text-decoration: underline; }  /* no hairlines between a country's provinces */
     .country-stats th[data-sort] { cursor: pointer; white-space: nowrap; }
@@ -297,6 +348,18 @@
     /* --- Add flight --- */
     .add-page { padding: 36px 28px; max-width: 600px; margin: 0 auto; width: 100%; }
     .add-page h2 { font-size: 18px; font-weight: 600; margin-bottom: 6px; }
+    .add-page.wide { max-width: 860px; }
+    .add-kinds { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+    .add-page select, .add-page input[type="number"] { width: 100%; }
+    .sugg-group { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; margin-bottom: 12px; }
+    .sugg-group h4 { margin: 0 0 10px; font-size: 13px; display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+    .sugg { display: grid; grid-template-columns: 76px 1fr auto; gap: 10px; align-items: center; padding: 8px 0; border-top: 1px solid var(--border); font-size: 13px; }
+    .sugg:first-of-type { border-top: none; }
+    .sugg .pics { display: flex; gap: 2px; }
+    .sugg .pics img { width: 36px; height: 36px; object-fit: cover; border-radius: 4px; background: var(--surface2); }
+    .sugg small { color: var(--text2); display: block; }
+    .sugg .acts { display: flex; gap: 6px; align-items: center; }
+    .sugg .acts select { width: auto; }
     .add-page .subtitle { color: var(--text2); margin-bottom: 28px; font-size: 13px; }
 
     .form-step { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 24px; margin-bottom: 16px; }
@@ -305,11 +368,11 @@
     .form-row:last-child { margin-bottom: 0; }
     .form-group { display: flex; flex-direction: column; flex: 1; }
     .form-group label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--text2); margin-bottom: 6px; }
-    .form-group input {
+    .form-group input, .form-group select {
       background: var(--surface2); border: 1px solid var(--border); border-radius: 6px;
       padding: 9px 12px; color: var(--text); font-size: 14px;
     }
-    .form-group input:focus { outline: none; border-color: var(--accent); }
+    .form-group input:focus, .form-group select:focus { outline: none; border-color: var(--accent); }
     .form-group input::placeholder { color: var(--text2); opacity: 0.6; }
     .form-group input.readonly { opacity: 0.7; cursor: default; }
 
@@ -348,13 +411,14 @@
 <body>
 
 <nav>
-  <div class="logo">✈ Contrail</div>
+  <div class="logo"><svg width='20' height='20' style='vertical-align:-4px;margin-right:6px' xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='none'/><ellipse cx='32' cy='51' rx='21' ry='7' fill='#94a3b8'/><ellipse cx='31' cy='38.5' rx='16' ry='6.5' fill='#cbd5e1'/><ellipse cx='33' cy='27' rx='11.5' ry='5.5' fill='#94a3b8'/><ellipse cx='32' cy='17' rx='7.5' ry='4.5' fill='#38bdf8'/></svg>Cairn</div>
   <div class="tabs">
     <button class="tab active" data-tab="map">Map</button>
     <button class="tab" data-tab="stats">Stats</button>
     <button class="tab" data-tab="sports">Sports</button>
+    <button class="tab" data-tab="trips">Trips</button>
     <button class="tab" data-tab="flights">Flights</button>
-    <button class="tab tab-add" data-tab="add">+ Add Flight</button>
+    <button class="tab tab-add" data-tab="add">+ Add</button>
   </div>
   <div class="nav-right">
     <button class="theme-btn" onclick="openSettings()" title="Settings" aria-label="Settings">⚙️</button>
@@ -368,7 +432,7 @@
   <!-- MAP -->
   <div id="tab-map" class="tab-content active">
     <div id="map" data-basemap="auto"></div>
-    <div id="map3d" hidden><div id="map3d-canvas"></div><button class="btn btn-ghost map3d-close" onclick="close3D()">← 2D map</button></div>
+    <div id="map3d" hidden><div id="map3d-canvas"></div><div id="map3d-panel" class="map-legend"></div></div>
   </div>
 
   <!-- STATS -->
@@ -425,6 +489,7 @@
         </div>
       </div>
 
+      <div id="curiosities"></div>
       <div class="chart-section" style="margin-top:24px">
         <h3>Countries</h3>
         <div class="sp-scroll"><table class="sp-table country-stats" id="country-stats"></table></div>
@@ -450,6 +515,26 @@
       <div id="sports-body"></div>
     </div>
     <div id="sp-tip" class="sp-tip"></div>
+  </div>
+
+  <!-- TRIPS (trips.js): the list, and a page per trip -->
+  <div id="tab-trips" class="tab-content">
+    <div class="stats-page">
+      <div class="sp-head"><h2>Trips</h2></div>
+      <p class="sp-note" style="margin: -12px 0 20px">Runs of days away from home, found in your flights, trains, stays, activities, photos and Timeline.</p>
+      <div id="trips-body"></div>
+    </div>
+  </div>
+  <div id="tab-trip" class="tab-content">
+    <div class="stats-page">
+      <div class="sp-head">
+        <button class="btn btn-ghost" onclick="closeTrip()">← Trips</button>
+        <h2 id="trip-title"></h2>
+        <button class="btn btn-ghost" onclick="tripOnMap()">Show on the map</button>
+      </div>
+      <p class="sp-note" id="trip-sub" style="margin: -12px 0 20px"></p>
+      <div id="trip-body"></div>
+    </div>
   </div>
 
   <!-- CITY REPORT (city.js), opened from a city on the map -->
@@ -508,8 +593,16 @@
   <!-- ADD FLIGHT -->
   <div id="tab-add" class="tab-content">
     <div class="add-page">
-      <h2>Add Flight</h2>
-      <p class="subtitle">Enter a flight number and date to auto-fill details, or fill everything manually.</p>
+      <h2>Add to Cairn</h2>
+      <p class="subtitle">What your emails, Garmin and photos do not know: a flight, a train, bus or ferry, a stay, with the date as well as you remember it. Or start from what your photos show.</p>
+      <div class="add-kinds" role="tablist">
+        <button class="btn btn-primary" data-add="flight">✈️ Flight</button>
+        <button class="btn btn-ghost" data-add="ground">🚆 Train, bus or ferry</button>
+        <button class="btn btn-ghost" data-add="stay">🏨 Stay</button>
+        <button class="btn btn-ghost" data-add="suggest">💡 From your photos</button>
+      </div>
+      <div id="add-other"></div>
+      <div id="add-flight">
 
       <div class="form-step">
         <h3>Step 1 — Lookup</h3>
@@ -567,6 +660,7 @@
           <button class="btn btn-ghost" id="btn-reset">Reset</button>
         </div>
       </div>
+      </div>
     </div>
   </div>
 
@@ -594,6 +688,12 @@
     </fieldset>
     <fieldset class="settings-group" id="set-lines-group">
       <legend>Lines and markers</legend>
+    </fieldset>
+    <fieldset class="settings-group">
+      <legend>Photos on the map</legend>
+      <label><input type="radio" name="set-photos" value="clusters"> Every photo, grouped when zoomed out; click one to see it</label>
+      <label><input type="radio" name="set-photos" value="heat"> Heatmap: where you take the most photos</label>
+      <label><input type="radio" name="set-photos" value="places"> Places: a dot per place, sized by the number of photos</label>
     </fieldset>
     <fieldset class="settings-group">
       <legend>Countries</legend>
@@ -673,6 +773,7 @@ document.querySelectorAll('.tab[data-tab]').forEach(btn => {
     document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
     if (btn.dataset.tab === 'map' && map) setTimeout(() => map.invalidateSize(), 50);
     if (btn.dataset.tab === 'sports') renderSports();
+    if (btn.dataset.tab === 'stats') renderCuriosities();
   });
 });
 
@@ -739,6 +840,7 @@ function openSettings() {
   document.querySelector(`input[name="set-tiles"][value="${prefs.tileZoom}"]`).checked = true;
   document.getElementById('set-grid').checked = prefs.grid;
   document.querySelector(`input[name="set-countries"][value="${prefs.countries}"]`).checked = true;
+  document.querySelector(`input[name="set-photos"][value="${prefs.photos || 'clusters'}"]`).checked = true;
   document.getElementById('settings-modal').classList.add('open');
 }
 function closeSettings() {
@@ -751,7 +853,8 @@ function saveSettings() {
     grid: document.getElementById('set-grid').checked,
     countries: document.querySelector('input[name="set-countries"]:checked').value,
     basemap: document.querySelector('input[name="set-basemap"]:checked')?.value || prefs.basemap,
-    lines: document.querySelector('input[name="set-lines"]:checked')?.value || prefs.lines
+    lines: document.querySelector('input[name="set-lines"]:checked')?.value || prefs.lines,
+    photos: document.querySelector('input[name="set-photos"]:checked')?.value || prefs.photos
   });
   if (map) setBasemap();
   closeSettings();
@@ -946,7 +1049,7 @@ function drawRoutes() {
   });
 }
 
-// Encoded polyline, 6 decimals (as Contrail keeps the tracks of ground trips)
+// Encoded polyline, 6 decimals (as Cairn keeps the tracks of ground trips)
 function decodePath(str) {
   const pts = [];
   let i = 0, lat = 0, lon = 0;
@@ -964,7 +1067,7 @@ function decodePath(str) {
 
 const escapeHTML = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
-// Trains, buses and ferries: one line per route and mode, along the track Contrail found (dashed when it is a
+// Trains, buses and ferries: one line per route and mode, along the track Cairn found (dashed when it is a
 // straight line between the two places)
 function drawGround() {
   Object.values(groundLayer).forEach(l => l.clearLayers());
@@ -977,12 +1080,14 @@ function drawGround() {
     r.trips.push(t);
     if (!r.best || (!r.best.path && t.path)) r.best = t;
   });
-  const how = { transitous: 'timetable track (Transitous)', osrm: 'road route (OSRM)', straight: 'straight line: no track found' };
+  const how = { transitous: 'timetable track (Transitous)', osrm: 'road route (OSRM)', rail: 'likeliest railway line, a best guess (BRouter)', straight: 'straight line: no track found' };
   Object.values(routes).forEach(({ trips, best }) => {
     const pts = best.path ? decodePath(best.path) : [[best.from_lat, best.from_lon], [best.to_lat, best.to_lon]];
-    const dates = trips.map(t => (t.date || '').slice(0, 10)).sort().reverse();
+    // a trip added by hand may know only its year or month, and stand for several
+    const when = t => (t.approx === 'year' ? t.date.slice(0, 4) : t.approx === 'month' ? t.date.slice(0, 7) : (t.date || '').slice(0, 10)) + (t.times > 1 ? ` (×${t.times})` : '');
+    const dates = trips.map(when).sort().reverse(), count = trips.reduce((n, t) => n + (t.times || 1), 0);
     const popup = `<b>${groundModes[best.mode].split(' ')[0]} ${escapeHTML(best.from)} → ${escapeHTML(best.to)}</b><br>` +
-      `<small>${trips.length} trip${trips.length !== 1 ? 's' : ''} · ${fmtDist(best.distance || 0)} · ` +
+      `<small>${count} trip${count !== 1 ? 's' : ''} · ${fmtDist(best.distance || 0)} · ` +
       `${how[best.path_source] || 'looking up the track…'}</small><br>` +
       `<small>${dates.slice(0, 6).join(', ')}${dates.length > 6 ? ', …' : ''}</small>`;
     L.polyline(pts, {

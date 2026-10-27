@@ -58,6 +58,32 @@ function efforts(track, foot, top) {
   return out;
 }
 
+// The climb a ride actually did to a top, from its own heights: from passing the top, back down the track as long as
+// it keeps going down (a short rise of under 25 m on the way is part of it) and is not flat for long (the last 1.5 km
+// before it dropped less than 1.5%): [{ from, to }] (track indexes), one per time the ride went up to that top
+function waysUp(track, top) {
+  if (!track || !track.alt || !track.pts) return [];
+  const pts = track.pts, alt = track.alt, out = [];
+  for (let k = 0; k < pts.length; k++) {
+    if (metres(pts[k], top) >= NEAR_M || alt[k] == null) continue;
+    while (k + 1 < pts.length && metres(pts[k + 1], top) < metres(pts[k], top)) k++;  // the nearest point to the top
+    let i = k, low = k, along = 0;
+    const back = [];  // [metres back from the top, height]
+    while (i > 0 && alt[i - 1] != null) {
+      along += metres(pts[i - 1], pts[i]);
+      i--;
+      back.push([along, alt[i]]);
+      if (alt[i] < alt[low]) low = i;
+      else if (alt[i] - alt[low] > 25) break;  // it climbed back: the foot was the low point
+      const old = back.find(b => b[0] >= along - 1500);  // flat for 1.5 km: the climb started before
+      if (along > 1500 && old && old[1] - alt[i] < 0.015 * (along - old[0])) break;
+    }
+    if (alt[k] - alt[low] >= 30 && track.t[k] - track.t[low] > 60) out.push({ from: low, to: k });
+    while (k + 1 < pts.length && metres(pts[k + 1], top) < NEAR_M * 3) k++;  // past this passage
+  }
+  return out;
+}
+
 // One effort point by point, for the climb page's map and profile: { lat, lon, d (m from the foot), alt (m), t (s),
 // speed (km/h), vam (m/h), grade (%), power (W), wkg, hr }, speed and VAM over the half minute around each point,
 // gradient over the 100 m around it
@@ -114,4 +140,16 @@ function onDay(list, day) {
   return found;
 }
 
-module.exports = { tracks, efforts, series, predict, onDay, sustainable, PRO, metres };
+// The time, power and heart rate of a stretch of a track (indexes from..to)
+function effortOf(track, from, to) {
+  const avg = list => {
+    const v = (list || []).slice(from, to + 1).filter(x => x != null && x > 0);
+    return v.length > (to - from + 1) * 0.8 ? Math.round(v.reduce((a, x) => a + x, 0) / v.length) : null;
+  };
+  let km = 0;
+  for (let i = from + 1; i <= to; i++) km += metres(track.pts[i - 1], track.pts[i]) / 1000;
+  return { seconds: track.t[to] - track.t[from], power: avg(track.pw), hr: avg(track.hr), startAt: track.start + track.t[from], from, to,
+    length: Math.round(km * 10) / 10, gain: track.alt[to] != null && track.alt[from] != null ? Math.round(track.alt[to] - track.alt[from]) : null };
+}
+
+module.exports = { tracks, efforts, waysUp, effortOf, series, predict, onDay, sustainable, PRO, metres };

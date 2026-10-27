@@ -125,7 +125,7 @@ def test_bewelcome_accepted():
     s = mail("message@bewelcome.org", "Re: Ukrainian living in Holland, coming to Palermo for 2 nights (accepted)", body)
     assert s.place == "Palermo", s
     s = mail("message@bewelcome.org", "Re: Last minute request. Plane rerouted ;( (Accepted)", body)
-    assert s.place == "BeWelcome host Host_Porto", s  # Contrail places it by the rest of your data
+    assert s.place == "BeWelcome host Host_Porto", s  # Cairn places it by the rest of your data
     assert mail("message@bewelcome.org", "Re: Coming to Palermo (Tentatively accepted)", body) is None
 
 

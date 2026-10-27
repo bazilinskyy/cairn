@@ -320,7 +320,7 @@ def _couchsurfing(subject, lines, html, received):
 
 def _bewelcome(subject, lines, html, received):
     """'... has replied to your hosting request' with the request (accepted): the dates, not the host's town; the town
-    is what the subject names, else Contrail puts the stay where the rest of your data has you then."""
+    is what the subject names, else Cairn puts the stay where the rest of your data has you then."""
     text = re.sub(r"\s+", " ", " ".join(lines))
     if not re.search(r"(?i)replied to your hosting request", text) or not re.search(r"(?i)(?<!tentatively )\baccepted\)", subject):
         return None

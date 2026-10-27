@@ -1,5 +1,5 @@
 {
-  "name": "contrail",
+  "name": "cairn",
   "version": "1.0.0",
   "description": "Personal flight tracker \u2014 localhost replacement for openflights.org",
   "main": "app.js",

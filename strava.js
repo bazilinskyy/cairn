@@ -1,5 +1,5 @@
 'use strict';
-// Strava activities for the map, as statshunters shows them. Contrail signs in once (OAuth, read-only), then keeps
+// Strava activities for the map, as statshunters shows them. Cairn signs in once (OAuth, read-only), then keeps
 // data/strava.json in step with the list of activities, each with its route (Strava's summary polyline): new ones
 // every hour, the whole list once a day (so renamed, made private or deleted activities follow).
 // Made for thousands of activities: the explored tiles of each are worked out here, once, not in the browser, and
@@ -57,7 +57,7 @@ function create({ tokenFile, dataFile, keys, redirectUri, log = console.log }) {
   const read = (f, empty) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch (_) { return empty; } };
   const write = (f, v, mode) => { fs.writeFileSync(f, JSON.stringify(v), mode ? { mode } : undefined); if (mode) fs.chmodSync(f, mode); };
   let data = read(dataFile, { activities: [] }), syncing = null, lastError = '', payload = null;
-  (data.activities || []).forEach(a => {  // kept by an older Contrail: add what the map now expects
+  (data.activities || []).forEach(a => {  // kept by an older Cairn: add what the map now expects
     if (a.tiles && a.at !== undefined) return;
     const pts = a.path ? ground.decode(a.path) : [];
     a.at = pts.length ? pts[0].map(x => Math.round(x * 1e5) / 1e5) : null;
