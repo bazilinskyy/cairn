@@ -313,6 +313,23 @@ def test_ground_legs_are_tracked_for_busy_blocks():
     run(booking(bus()), state, FakeCalendar(foreign_at={start}), con)
     assert len(state["ground"]) == 1
 
+def test_reminder_with_a_new_time_is_a_schedule_change():
+    seen = {"KL1234@2026-11-16": {"flight": "KL1234", "dep": "AMS", "arr": "LIS", "dep_local": "2026-11-16T16:10:00",
+                                  "arr_local": "2026-11-16T17:55:00", "codes": ["ABC123", "999"], "checkin_url": ""}}
+    remind = Parsed("other", [leg(dep_local=D(2026, 11, 17, 9, 5), arr_local=None)], [], True)
+    moved = sync.moved(remind, seen, NOW)
+    assert moved.kind == "change" and moved.legs[0].arr_local == D(2026, 11, 17, 10, 50)  # same length as before
+    assert set(moved.legs[0].codes) == {"ABC123", "999"}
+    state = {"seen": dict(seen)}
+    run(moved, state, FakeCalendar(), FakeContrail())
+    assert list(state["seen"]) == ["KL1234@2026-11-17"]  # blocks, to-dos and trip docs follow the new day
+    assert sync.moved(remind, {}, NOW) is remind  # a flight flightmail does not know: left alone
+    same = Parsed("other", [leg(arr_local=None)], [], True)
+    assert sync.moved(same, seen, NOW) is same  # same time: nothing new
+    other_booking = Parsed("other", [leg(dep_local=D(2026, 11, 17, 9, 5), codes=("XYZ789",))], [], True)
+    assert sync.moved(other_booking, seen, NOW) is other_booking
+
+
 if __name__ == "__main__":
     tests = [f for n, f in sorted(globals().items()) if n.startswith("test_")]
     for t in tests:

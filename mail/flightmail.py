@@ -656,6 +656,7 @@ def run(args, cfg, sec):
             note_stay(work, s, now())
         if msg is not None and not s:
             parsed = parse_email(msg, airports, airlines, places, cfg.get("home_timezone", "Europe/Amsterdam"))
+            parsed = sync.moved(parsed, work.get("seen", {}), now())  # e.g. a check-in mail with a new time
             if parsed.kind != "other" or parsed.legs:
                 name, addr = parseaddr(msg.get("From", ""))
                 sender = str(make_header(decode_header(name))) if name else addr.rsplit("@", 1)[-1]

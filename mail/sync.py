@@ -47,6 +47,26 @@ def enrich(parsed, lookup, cache, now, limit):
     return replace(parsed, legs=legs)
 
 
+def moved(parsed, seen, now):
+    """An "other" email (a reminder or check-in mail) that gives a flight in `seen` (same flight, booking code and
+    route) another departure is a schedule change: it comes back as kind "change" with those legs. An arrival the
+    email lacks keeps the flight's length."""
+    if parsed.kind != "other":
+        return parsed
+    legs = []
+    for leg in parsed.legs:
+        if leg.mode != "flight" or not leg.dep_local or not leg.codes or leg.dep_local.date() < now.date():
+            continue
+        row = next((r for r in seen.values() if r["flight"] == leg.key and set(r["codes"]) & set(leg.codes)
+                    and (not leg.dep or leg.dep == r["dep"]) and (not leg.arr or leg.arr == r["arr"])), None)
+        if not row or row["dep_local"] == leg.dep_local.isoformat():
+            continue
+        length = datetime.fromisoformat(row["arr_local"]) - datetime.fromisoformat(row["dep_local"])
+        legs.append(replace(leg, dep=row["dep"], arr=row["arr"], arr_local=leg.arr_local or leg.dep_local + length,
+                            codes=tuple(dict.fromkeys(list(leg.codes) + row["codes"]))))
+    return replace(parsed, kind="change", legs=legs) if legs else parsed
+
+
 def apply(parsed, sender, subject, received, state, cal, con, names, now, airports):
     """Apply one email; returns alert lines (empty when there is nothing to report)."""
     legs = state.setdefault("legs", [])
