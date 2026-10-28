@@ -1,18 +1,40 @@
 'use strict';
-// Curiosities (stats.js): the distance to the coast; music (lastfm.js): the top artists and tracks of some days
+// Curiosities (stats.js): the distance to the coast, commutes; music (lastfm.js): the top artists and tracks of some days
 
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { coastIndex, coastKm } = require('../stats');
+const { coastIndex, coastKm, stayKind, groundKind, commuteSince } = require('../stats');
 const lastfm = require('../lastfm');
 
 test('the distance to a coast, in km', () => {
   const coast = coastIndex({ features: [{ geometry: { type: 'LineString', coordinates: [[4.0, 52.0], [4.0, 53.0]] } }] });  // a north-south coast at 4°E
   assert.ok(Math.abs(coastKm(coast, 52.5, 4.01) - 0.68) < 0.02);
   assert.ok(coastKm(coast, 52.5, 6.0) > 2);  // 135 km inland, its cell's neighbours hold no coast: far
+});
+
+test('a train between the towns you live and work in is a commute, either way, from the first month of four; others stay trains', () => {
+  const places = { residence: { lat: 52.38, lon: 4.64 }, work: { lat: 52.09, lon: 5.12 } };  // Haarlem, Utrecht
+  const train = (a, b, date = '2024-03-04') => ({ mode: 'train', date, from_lat: a[0], from_lon: a[1], to_lat: b[0], to_lon: b[1] });
+  const haarlem = [52.387, 4.638], utrecht = [52.089, 5.110], leiden = [52.166, 4.482];
+  const trips = [train(haarlem, utrecht, '2023-05-02'), ...['04', '05', '11', '12'].map(d => train(haarlem, utrecht, `2024-03-${d}`))];
+  const since = commuteSince(trips, places);
+  assert.strictEqual(since, '2024-03');  // one in May 2023, then four in March 2024
+  assert.strictEqual(groundKind(train(haarlem, utrecht), places, since), 'commute');
+  assert.strictEqual(groundKind(train(utrecht, haarlem, '2025-01-07'), places, since), 'commute');
+  assert.strictEqual(groundKind(trips[0], places, since), 'train');  // before the job
+  assert.strictEqual(groundKind(train(haarlem, leiden), places, since), 'train');
+  assert.strictEqual(groundKind({ ...train(haarlem, utrecht), mode: 'bus' }, places, since), 'bus');
+  assert.strictEqual(commuteSince(trips, {}), null);  // no places set
+});
+
+test("a night at a friend's place is its own kind, apart from family; a friendly hostel stays a hostel", () => {
+  assert.strictEqual(stayKind({ type: 'with a friend', provider: 'trip doc' }), "Friend's place");
+  assert.strictEqual(stayKind({ type: 'friends', provider: '' }), "Friend's place");
+  assert.strictEqual(stayKind({ type: 'family', provider: '' }), 'Family');
+  assert.strictEqual(stayKind({ type: 'Hostel', hotel: 'Friends guest house', provider: 'Booking.com' }), 'Hostel');
 });
 
 test('music: the top of the days asked, per day its most played track', () => {

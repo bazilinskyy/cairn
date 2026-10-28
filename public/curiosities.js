@@ -49,7 +49,7 @@ async function renderCuriosities() {
     '</div>';
 
   // how far by each means, and the sea by year, as bars
-  const names = { flight: '✈️ Flown', train: '🚆 Train', bus: '🚌 Bus', ferry: '⛴️ Ferry', hitch: '👍 Hitchhiked', ride: '🚴 Cycled', run: '🏃 Run', walk: '🥾 Walked' };
+  const names = { flight: '✈️ Flown', train: '🚆 Train', commute: '🔁 Commute', bus: '🚌 Bus', ferry: '⛴️ Ferry', hitch: '👍 Hitchhiked', drive: '🚙 By car', ride: '🚴 Cycled', run: '🏃 Run', walk: '🥾 Walked' };
   const max = Math.max(...Object.values(d.by));
   html += '<div class="music-cols" style="margin-top:16px"><div><h4>How far, by each means</h4><div class="curio-bars" style="grid-template-columns: 90px 1fr 80px">' +
     Object.entries(d.by).sort((a, b) => b[1] - a[1]).map(([k, km]) => `<span>${names[k] || k}</span><div class="bar" style="width:${Math.max(1, km / max * 100)}%"></div><span>${fmtDist(km)}</span>`).join('') + '</div></div>';
@@ -73,7 +73,7 @@ async function renderSpending() {
   const eur = n => `€${Math.round(n).toLocaleString()}`;
   const card = (label, value, sub = '') => `<div class="stat-card"><div class="label">${label}</div><div class="value">${value}</div>${sub ? `<div class="sub">${sub}</div>` : ''}</div>`;
   const night = x => `${escapeHTML(x.hotel || x.place || '')}, ${escapeHTML(x.place || '')} · ${fmtDate(x.start)}`;
-  const bars = (rows, label) => { const max = Math.max(...rows.map(r => r.eur)); return `<div class="curio-bars" style="grid-template-columns: 90px 1fr 120px">` +
+  const bars = (rows, label) => { const max = Math.max(...rows.map(r => r.eur)); return `<div class="curio-bars" style="grid-template-columns: minmax(0, max-content) 1fr max-content">` +
     rows.map(r => `<span>${label(r)}</span><div class="bar" style="width:${Math.max(1, r.eur / max * 100)}%"></div><span>${eur(r.eur)} · ${eur(r.perNight)}/night</span>`).join('') + '</div>'; };
   box.innerHTML = '<div class="chart-section" style="margin-top:24px"><h3>Spending on stays</h3><div class="stat-cards curio-cards">' +
     card('Spent on stays', eur(d.eur), `${d.nights.toLocaleString()} nights${d.ahead ? ` · ${eur(d.ahead)} booked ahead` : ''}`) +

@@ -77,7 +77,7 @@ async function lookUpHeights(cells, known, save, log) {
 }
 
 // sources: getters; days() = [{ at, day, city }] from every source; towns() the town grid (cities.js)
-function create({ days, towns, cities, activities, stays, flights, airports, groundTrips, trips, weather, wellness, homeAirports,
+function create({ days, towns, cities, activities, stays, flights, airports, groundTrips, trips, weather, wellness, homeAirports, places = () => ({}), drives = () => [],
   heightsFile, coastFile, download, log = console.log }) {
   let memo = { key: null, value: null }, working = null, coast = null, heights = null;
   const loadHeights = () => {
@@ -176,7 +176,9 @@ function create({ days, towns, cities, activities, stays, flights, airports, gro
     // how far by each means
     const fl = flights().filter(f => past(f.date)), gt = groundTrips().filter(t => past(t.date)), tr = trips().filter(t => past(t.start));
     const by = { flight: fl.reduce((n, f) => n + (f.distance || 0), 0) };
-    for (const t of gt) by[t.mode] = (by[t.mode] || 0) + (t.distance || 0) * (t.times || 1);  // a trip added by hand can stand for several
+    const mine = places(), since = commuteSince(groundTrips(), mine);
+    for (const t of gt) { const k = groundKind(t, mine, since); by[k] = (by[k] || 0) + (t.distance || 0) * (t.times || 1); }  // a trip added by hand can stand for several
+    for (const d of drives()) if (past(d.date)) by.drive = (by.drive || 0) + d.distance;  // and the drives with a rental car
     const kind = s => (/Ride|Velomobile|Handcycle/.test(s || '') ? 'ride' : /Run/.test(s || '') ? 'run' : /Walk|Hike/.test(s || '') ? 'walk' : null);
     for (const a of acts) { const k = kind(a.sport); if (k && !a.trainer) by[k] = (by[k] || 0) + (a.distance || 0); }
     Object.keys(by).forEach(k => { by[k] = Math.round(by[k]); });
@@ -238,13 +240,36 @@ function create({ days, towns, cities, activities, stays, flights, airports, gro
   return { get };
 }
 
-// The kind of bed a stay was, for counting nights: with friends or family (a trip doc's "with a friend", the form's
-// friends or family; by its kind only, so a "Friends guest house" stays a hostel), Couchsurfing, BeWelcome, a hostel,
-// an Airbnb, camping, else a hotel or other
+// The kind of bed a stay was, for counting nights: at a friend's place (a trip doc's "with a friend", the form's
+// friends), with family (the form's family, a relative), both by its kind only, so a "Friends guest house" stays a
+// hostel; Couchsurfing, BeWelcome, a hostel, an Airbnb, camping, else a hotel or other
+// A train between the town you live in and the one you work in (data/home.json: residence, work) is a commute, counted
+// apart from the other trains: from the first month with COMMUTE_MONTH of them on (the job's start; the odd one before
+// it, to the airport there, stays a train)
+const COMMUTE_KM = 15, COMMUTE_MONTH = 4;
+function homeWork(t, home) {
+  const r = home.residence, w = home.work;
+  if (t.mode !== 'train' || !r || !w || t.from_lat == null || t.to_lat == null) return false;
+  const near = (lat, lon, p) => ground.km([lat, lon], [p.lat, p.lon]) < COMMUTE_KM;
+  return (near(t.from_lat, t.from_lon, r) && near(t.to_lat, t.to_lon, w)) || (near(t.from_lat, t.from_lon, w) && near(t.to_lat, t.to_lon, r));
+}
+
+// the month ('2022-10') commuting began, or null
+function commuteSince(trips, home = {}) {
+  const months = new Map();
+  for (const t of trips) if (homeWork(t, home)) months.set(t.date.slice(0, 7), (months.get(t.date.slice(0, 7)) || 0) + 1);
+  return [...months].filter(([, n]) => n >= COMMUTE_MONTH).map(([m]) => m).sort()[0] || null;
+}
+
+function groundKind(t, home = {}, since = null) {
+  return since && (t.date || '').slice(0, 7) >= since && homeWork(t, home) ? 'commute' : t.mode;
+}
+
 function stayKind(s) {
   const kind = `${s.type || ''} ${s.hotel || ''}`;
-  return /couchsurf/i.test(s.provider) ? 'Couchsurfing' : /bewelcome/i.test(s.provider) ? 'BeWelcome' : /friend|family|relative/i.test(s.type || '') ? 'Friends and family'
+  return /couchsurf/i.test(s.provider) ? 'Couchsurfing' : /bewelcome/i.test(s.provider) ? 'BeWelcome'
+    : /friend/i.test(s.type || '') ? "Friend's place" : /family|relative/i.test(s.type || '') ? 'Family'
     : /hostel/i.test(kind) ? 'Hostel' : /airbnb/i.test(s.provider) ? 'Airbnb' : /camp/i.test(kind) ? 'Camping' : 'Hotel and other';
 }
 
-module.exports = { create, coastIndex, coastKm, stayKind };
+module.exports = { create, coastIndex, coastKm, stayKind, groundKind, commuteSince };

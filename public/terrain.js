@@ -131,7 +131,7 @@ async function open3D() {
           paint: { 'line-color': ['match', ['get', 'kind'], 'ride', col('ride'), 'run', col('run'), 'walk', col('walk'), col('sport')],
             'line-width': ['interpolate', ['linear'], ['zoom'], 5, 1 * st.w, 12, 2.5 * st.w, 16, 4 * st.w], 'line-opacity': Math.min(1, 0.85 * st.o) } },
         { id: 'ground', type: 'line', source: 'ground', layout: { 'line-join': 'round' },
-          paint: { 'line-color': ['match', ['get', 'mode'], 'train', col('train'), 'bus', col('bus'), 'hitch', col('hitch'), col('ferry')], 'line-width': 2.5 * st.w, 'line-opacity': 0.9 } },
+          paint: { 'line-color': ['match', ['get', 'mode'], 'train', col('train'), 'bus', col('bus'), 'hitch', col('hitch'), 'drive', col('drive'), col('ferry')], 'line-width': 2.5 * st.w, 'line-opacity': 0.9 } },
         { id: 'flightLines', type: 'line', source: 'flightLines', paint: { 'line-color': col('accent'), 'line-width': 1.5, 'line-opacity': 0.7 } },
         { id: 'climbLines', type: 'line', source: 'climbLines', paint: { 'line-color': col('climb'), 'line-width': 4 * st.w, 'line-opacity': 0.9 } },
         { id: 'stays', type: 'circle', source: 'stays', paint: { 'circle-radius': 5 * st.r, 'circle-color': ['match', ['get', 'what'], 'car', col('car'), col('stay')],
@@ -218,7 +218,7 @@ function refresh3D() {
 function draw3dPanel() {
   const box = document.getElementById('map3d-panel');
   const trip = document.getElementById('p-trip');
-  const labels = { flight: '✈️ Flights', train: '🚆 Trains', bus: '🚌 Buses', ferry: '⛴️ Ferries', hitch: '👍 Hitchhiking', stay: '🏨 Stays', car: '🚗 Rental cars',
+  const labels = { flight: '✈️ Flights', train: '🚆 Trains', bus: '🚌 Buses', ferry: '⛴️ Ferries', hitch: '👍 Hitchhiking', drive: '🚙 By car', stay: '🏨 Stays', car: '🚗 Rental cars',
     photo: '📷 Photos', ride: '🚴 Cycling', run: '🏃 Running', walk: '🥾 Walks & hikes', sport: '🏅 Other sports', climb: '⛰️ Climbs',
     country: '🌍 Countries', city: '🏙️ Cities' };
   box.innerHTML = `<button class="btn btn-primary map3d-back" onclick="close3D()" title="Back to the 2D map (Esc)">← 2D map</button>` +

@@ -1,5 +1,5 @@
 'use strict';
-// Ground trips (trains, buses, ferries) for the map: where their stations are and the track between them; and where
+// Ground trips (trains, buses, ferries, by car) for the map: where their stations are and the track between them; and where
 // stays and rental cars are. Places come from Photon (OpenStreetMap), biased towards where the traveller was just
 // before; tracks from Transitous (timetabled trains and coaches), else for a train the likeliest railway line (BRouter),
 // for a bus the roads (OSRM); else a straight line.
@@ -348,6 +348,26 @@ async function osrmPoints(a, b) {
   return d?.code === 'Ok' && d.routes?.[0] ? decode(d.routes[0].geometry, 6) : null;
 }
 
+// A car journey's likeliest road: through the places your photos (and Timeline) put you on the way. Of the clues
+// ([lat, lon] in time order, from leaving until arriving), those that lie roughly between the two ends (a detour of
+// at most DETOUR), at least VIA_KM from the ends and from each other, at most VIA_MAX of them, evenly spread
+const VIA_KM = 10, VIA_MAX = 20, DETOUR = 1.5;
+function viaPoints(a, b, clues) {
+  const direct = km(a, b), out = [];
+  for (const p of clues) {
+    if (km(p, a) < VIA_KM || km(p, b) < VIA_KM || km(a, p) + km(p, b) > direct * DETOUR + 30) continue;
+    if (out.length && km(out[out.length - 1], p) < VIA_KM) continue;
+    out.push(p);
+  }
+  return out.length > VIA_MAX ? Array.from({ length: VIA_MAX }, (_, i) => out[Math.round(i * (out.length - 1) / (VIA_MAX - 1))]) : out;
+}
+
+async function osrmVia(pts) {
+  const d = await getJSON(`${OSRM}${pts.map(p => `${p[1]},${p[0]}`).join(';')}?overview=full&geometries=polyline6`);
+  const path = d.code === 'Ok' && d.routes?.[0] ? decode(d.routes[0].geometry, 6) : [];
+  return plausible(path, pts[0], pts[pts.length - 1]) ? path : null;
+}
+
 async function osrm(a, b) {
   const d = await getJSON(`${OSRM}${a[1]},${a[0]};${b[1]},${b[0]}?overview=full&geometries=polyline6`);
   const pts = d.code === 'Ok' && d.routes?.[0] ? decode(d.routes[0].geometry, 6) : [];
@@ -449,7 +469,7 @@ async function place(trip, flights, trips, airports, known = () => null) {
 const STATION_TAGS = { train: 'railway:station', bus: 'amenity:bus_station', ferry: 'amenity:ferry_terminal' };
 const ROUTE_VERSION = 10;  // straight lines from before the station retry, the railway guess and the ferry lines are tried once more
 
-async function route(trip) {
+async function route(trip, clues = null) {
   if (trip.mode === 'ferry' && !trip.ports) {  // from port to port, not between the middles of the places
     const pr = await ports(at(trip, 'from'), at(trip, 'to'));
     if (pr) [[trip.from_lat, trip.from_lon], [trip.to_lat, trip.to_lon]] = pr;
@@ -462,7 +482,11 @@ async function route(trip) {
     if (!(sa && sb && km(sa, a) < 15 && km(sb, b) < 15)) sa = sb = null;
     if (sa) pts = await transitous(sa, sb, trip.mode, trip.date);
   }
-  if (!pts && (trip.mode === 'bus' || trip.mode === 'hitch')) pts = await osrm(a, b), source = 'osrm';  // hitchhiking: along the roads
+  if (!pts && trip.mode === 'drive' && clues) {  // by car: through where your photos put you on the way
+    const via = viaPoints(a, b, clues(trip, a, b));
+    if (via.length) { pts = await osrmVia([a, ...via, b]); if (pts) source = 'clues', trip.via = via.length; }
+  }
+  if (!pts && ['bus', 'hitch', 'drive'].includes(trip.mode)) pts = await osrm(a, b), source = 'osrm';  // hitchhiking and by car: along the roads
   if (!pts && trip.mode === 'ferry') pts = await seaRoute(a, b), source = 'sea';
   if (!pts && trip.mode === 'train') {  // from stations: BRouter starts on a track (the nearest may be a park railway: then the next)
     const [as, bs] = [await placesNear('railway:station', a, 3), await placesNear('railway:station', b, 3)];
@@ -525,7 +549,7 @@ async function enrich(store, log = console.log) {
         || (trip.mode === 'ferry' && trip.ports === undefined)  // ferries from before the ports: once more
         || (trip.path_source === 'road' && !(resting['brouter.de'] > Date.now()) && (trip.road_tries || 0) < 3))) {  // a train put on the road: the railway again, a few times
         if (trip.path_source === 'road') trip.road_tries = (trip.road_tries || 0) + 1;
-        await route(trip);
+        await route(trip, store.clues);
         store.save();
       }
     } catch (e) {
@@ -567,7 +591,7 @@ function forget(trip, changes) {
   }
   const moved = ['from', 'to', 'from_lat', 'from_lon', 'to_lat', 'to_lon', 'mode', 'date']
     .some(k => k in changes && changes[k] !== trip[k]);
-  if (moved) delete trip.unplaced, delete trip.path, delete trip.path_source, delete trip.route_v, delete trip.ports;
+  if (moved) delete trip.unplaced, delete trip.path, delete trip.path_source, delete trip.route_v, delete trip.ports, delete trip.via;
 }
 
 // A bike route through the points ([lat, lon], in order) along OpenStreetMap's roads and paths: { path, km }, or null
@@ -577,4 +601,4 @@ async function bikeRoute(points) {
   return route ? { path: route.geometry.coordinates.map(([lon, lat]) => [lat, lon]), km: route.distance / 1000 } : null;
 }
 
-module.exports = { bikeRoute, setCoast, km, decode, encode, simplify, plausible, gappy, planTime, startNear, forget, forgetStay, enrich, pick, similar, geocode, placeStay };
+module.exports = { viaPoints, bikeRoute, setCoast, km, decode, encode, simplify, plausible, gappy, planTime, startNear, forget, forgetStay, enrich, pick, similar, geocode, placeStay };

@@ -45,6 +45,7 @@
       --checkin:  #ffd180;
       --stay:     #f06292;
       --car:      #ffd54f;
+      --drive:    #64b5f6;
       --photo:    #4dd0e1;
       --timeline: #b0bec5;
       --country:  #7c4dff;
@@ -62,7 +63,7 @@
        dark outline, as the photos underneath are both dark and light */
     [data-theme="sat"] {
       --surface: #111111; --surface2: #222222; --text: #ffffff; --text2: #dddddd; --accent: #00e5ff; --accent2: #d500f9;
-      --train: #ffab00; --bus: #76ff03; --ferry: #ea80fc; --hitch: #ff9e80; --checkin: #ffe57f; --stay: #ff4081; --car: #ffea00; --photo: #18ffff;
+      --train: #ffab00; --bus: #76ff03; --ferry: #ea80fc; --hitch: #ff9e80; --checkin: #ffe57f; --stay: #ff4081; --car: #ffea00; --drive: #40c4ff; --photo: #18ffff;
       --timeline: #ffffff; --country: #b388ff; --ride: #ff6e40; --run: #b388ff; --walk: #ff80ab; --sport: #ffd740;
       --tile: #69f0ae; --city: #ffffff; --home: #ffc400; --climb: #eeff41;
     }
@@ -86,6 +87,7 @@
       --checkin:   #6d4c41;
       --stay:      #c2185b;
       --car:       #9a7d0a;
+      --drive:     #1565c0;
       --photo:     #00838f;
       --timeline:  #455a64;
       --country:   #5c35cc;
@@ -320,6 +322,7 @@
     .curio-bars { display: grid; grid-template-columns: 40px 1fr 36px; gap: 3px 8px; align-items: center; font-size: 12px; max-width: 520px; }
     .curio-bars div.bar { height: 10px; border-radius: 0 4px 4px 0; background: var(--accent); }
     .curio-bars span:last-child { color: var(--text2); }
+    .curio-bars > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }  /* a name on one line ("United States") */
     .prep-trip { border-top: 1px solid var(--border); padding: 12px 0; }
     .prep-trip:first-of-type { border-top: none; padding-top: 0; }
     .prep-trip h4 { margin: 0 0 6px; font-size: 14px; }
@@ -956,14 +959,15 @@ function toggleTheme() {
 let airportLayer = null;
 let clusterMode  = localStorage.getItem('clusterMode') === '1';  // remembered in this browser
 const routeLayer  = L.layerGroup();  // flights
-const groundModes = { train: '🚆 Trains', bus: '🚌 Buses', ferry: '⛴️ Ferries', hitch: '👍 Hitchhiking' };
+const groundModes = { train: '🚆 Trains', bus: '🚌 Buses', ferry: '⛴️ Ferries', hitch: '👍 Hitchhiking', drive: '🚙 By car' };
 const groundLayer = Object.fromEntries(Object.keys(groundModes).map(m => [m, L.layerGroup()]));
 
 applyTheme(localStorage.getItem('theme') || 'dark');
 
 let allFlights  = [];
 let allAirports = {};
-let allTrips    = []; // trains, buses and ferries
+let allTrips    = []; // trains, buses, ferries and car journeys
+let allDrives   = []; // the drives with a rental car Cairn worked out (/api/drives), drawn as car journeys
 let map, chartYear;
 let sortCol = 'date', sortDir = -1; // -1 = desc
 
@@ -1226,7 +1230,7 @@ function initMap() {
   new Legend().addTo(map);
   drawLegend = () => {
     const n = { flight: allFlights.filter(f => inWin(f.date)).length, ...extraCounts() };
-    allTrips.forEach(t => { if (inWin(t.date)) n[t.mode] = (n[t.mode] || 0) + 1; });
+    [...allTrips, ...allDrives].forEach(t => { if (inWin(t.date)) n[t.mode] = (n[t.mode] || 0) + 1; });
     // the tiles row stays while there are activities: hiding every type empties it, and the group must reach it again
     const rows = Object.entries(layers).filter(([k]) => k === 'flight' || n[k] || (k === 'tile' && allActivities.length));
     const on = rows.filter(([, [, layer]]) => map.hasLayer(layer)).length;
@@ -1332,12 +1336,12 @@ function decodePath(str) {
 
 const escapeHTML = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
-// Trains, buses and ferries: one line per route and mode, along the track Cairn found (dashed when it is a
+// Trains, buses, ferries and car journeys (also the drives with a rental car): one line per route and mode, along the track Cairn found (dashed when it is a
 // straight line between the two places)
 function drawGround() {
   Object.values(groundLayer).forEach(l => l.clearLayers());
   const routes = {};
-  allTrips.forEach(t => {
+  [...allTrips, ...allDrives].forEach(t => {
     if (t.from_lat == null || t.to_lat == null || !groundLayer[t.mode] || !inWin(t.date)) return;
     const ends = [[t.from_lat, t.from_lon], [t.to_lat, t.to_lon]].map(p => p.map(x => x.toFixed(2)).join(',')).sort();
     const key = t.mode + '|' + ends.join('|');
@@ -1345,7 +1349,7 @@ function drawGround() {
     r.trips.push(t);
     if (!r.best || (!r.best.path && t.path)) r.best = t;
   });
-  const how = { transitous: 'timetable track (Transitous)', osrm: 'road route (OSRM)', sea: 'the ferry line (OpenStreetMap, OSRM)', direct: 'straight across the water', road: 'along the roads: no railway found, a guess', rail: 'likeliest railway line, a best guess (BRouter)', straight: 'straight line: no track found' };
+  const how = { transitous: 'timetable track (Transitous)', osrm: 'road route (OSRM)', clues: 'the likeliest road through your photos on the way (OSRM)', sea: 'the ferry line (OpenStreetMap, OSRM)', direct: 'straight across the water', road: 'along the roads: no railway found, a guess', rail: 'likeliest railway line, a best guess (BRouter)', straight: 'straight line: no track found' };
   Object.values(routes).forEach(({ trips, best }) => {
     const pts = best.path ? decodePath(best.path) : [[best.from_lat, best.from_lon], [best.to_lat, best.to_lon]];
     // a trip added by hand may know only its year or month, and stand for several
@@ -1519,7 +1523,7 @@ async function renderCountryStats(fetchAgain = true) {
   if (fetchAgain) countryStats = await fetch(`/api/countries?scheme=${prefs.countries}`).then(r => r.ok ? r.json() : []).catch(() => []);
   const names = new Intl.DisplayNames(['en'], { type: 'region' }), name = c => { try { return c.name || names.of(c.country) || c.country; } catch (_) { return c.country; } };
   const cols = [['country', 'Country'], ['days', 'Days'], ['visits', 'Visits'], ['nights', 'Nights in stays'], ['flights', 'Flights in'],
-    ['train', 'Trains'], ['bus', 'Buses'], ['ferry', 'Ferries'], ['hitch', 'Hitchhiked'], ['cars', 'Rental cars'], ['activities', 'Activities'], ['km', DU()],
+    ['train', 'Trains'], ['bus', 'Buses'], ['ferry', 'Ferries'], ['hitch', 'Hitchhiked'], ['drive', 'By car'], ['cars', 'Rental cars'], ['activities', 'Activities'], ['km', DU()],
     ['photos', 'Photos'], ['towns', 'Towns'], ['first', 'First'], ['last', 'Last']];
   const [key, dir] = countrySort;
   const rows = [...countryStats].sort((a, b) => key === 'country' ? dir * name(a).localeCompare(name(b))
@@ -1721,6 +1725,7 @@ async function init() {
 
   initMap();
   loadStrava();  // thousands of activities: after the rest of the map is up
+  fetch('/api/drives').then(r => (r.ok ? r.json() : [])).then(d => { allDrives = d; drawGround(); }).catch(() => {});  // takes a few seconds the first time
   renderStats();
   renderTopCities();
   renderCountryStats();

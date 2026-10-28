@@ -10,6 +10,7 @@ Run hourly on mini through that app (see mail/install.sh).
   tripmail.py --dry-run    read and log what would change; writes nothing, state untouched
   tripmail.py calendars    list the calendars EventKit can see
   tripmail.py history [--days N] [--dry-run]   past stays, rental cars, trains, buses and ferries into Cairn
+  tripmail.py events [--days N]   the Travel calendar's events as JSON in its folder (events.json), changing nothing
 Never exits non-zero: failures are logged and posted to Discord (an applet that fails shows a blocking dialog).
 """
 import argparse
@@ -788,9 +789,29 @@ def history(args, cfg, sec):
     log(f"sent {len(found)} stays and rental cars and {len(rides)} trains, buses and ferries to Cairn")
 
 
+def dump_events(args, cfg):
+    """The Travel calendar's events of the last --days days as JSON in ~/.flightmail/events.json (title, start, end,
+    location, notes, id), to read them where EventKit's permission is only this app's. Changes nothing."""
+    cal = EventKitCalendar(cfg.get("calendar_account", "Google"), cfg.get("calendar_title", "Travel"), {})
+    end, out = datetime.now() + timedelta(days=400), []
+    start = end - timedelta(days=args.days + 400)
+    while start < end:  # EventKit answers at most about four years at a time
+        stop = min(start + timedelta(days=1400), end)
+        pred = cal.store.predicateForEventsWithStartDate_endDate_calendars_(cal._ns(start), cal._ns(stop), [cal.cal])
+        for ev in cal.store.eventsMatchingPredicate_(pred) or []:
+            when = lambda d: datetime.fromtimestamp(d.timeIntervalSince1970()).isoformat(timespec="minutes")
+            out.append({"id": str(ev.calendarItemExternalIdentifier() or ev.eventIdentifier()), "title": str(ev.title() or ""),
+                        "start": when(ev.startDate()), "end": when(ev.endDate()), "all_day": bool(ev.isAllDay()),
+                        "location": str(ev.location() or ""), "notes": str(ev.notes() or "")})
+        start = stop
+    out = list({(e["id"], e["start"]): e for e in out}.values())
+    (home() / "events.json").write_text(json.dumps(sorted(out, key=lambda e: e["start"]), ensure_ascii=False, indent=1))
+    log(f"wrote {len(out)} Travel calendar events to {home() / 'events.json'}")
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("command", nargs="?", choices=["run", "calendars", "history"], default="run")
+    p.add_argument("command", nargs="?", choices=["run", "calendars", "history", "events"], default="run")
     p.add_argument("--days", type=int, default=6000, metavar="N", help="history: how far back to read (default 6000)")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--query", help="history: a Gmail search instead of all travel mail (from:couchsurfing.com OR ...)")
@@ -806,6 +827,8 @@ def main(argv=None):
                 print(f"account: {c.source().title()!r:30} calendar: {c.title()!r}")
         elif args.command == "history":
             history(args, cfg, sec)
+        elif args.command == "events":
+            dump_events(args, cfg)
         else:
             run(args, cfg, sec)
     except Exception as e:

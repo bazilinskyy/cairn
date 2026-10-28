@@ -203,6 +203,21 @@ function readImport(file, empty) {
 
 // Places and tracks of new ground trips and places of stays, one pass at a time, when ground_lookups is on
 let lookingUp = false, lookAgain = false;
+// Where your photos and Timeline put you during a car journey, in time order (ground.js routes it through them): from
+// leaving until arriving, or with no arrival time as long as the road would take and two hours more; a journey that
+// knows only its day (noon, no arrival) the whole day. Up to the first one at the far end.
+function journeyClues(t, a, b) {
+  const unix = (s, lon) => { const m = /^(\d{4}-\d\d-\d\d)[ T](\d\d:\d\d)/.exec(s || ''); return m ? Date.parse(`${m[1]}T${m[2]}:00Z`) / 1000 - Math.round(lon / 15) * 3600 : null; };
+  const dayOnly = !t.arrival && /12:00:00$/.test(t.date || ''), start = unix(dayOnly ? `${t.date.slice(0, 10)} 00:00` : t.date, a[1]);
+  if (start == null) return [];
+  const end = t.arrival ? unix(t.arrival, b[1]) : start + (dayOnly ? 30 : ground.km(a, b) / 50 + 2) * 3600;
+  const seen = ownPlacePhotos().filter(p => p[1] >= start && p[1] <= end).map(p => [p[1], p[2], p[3]]);
+  (readImport(TIMELINE_FILE, {}).visits || []).forEach(v => { const s = unix(v.start, v.lon); if (s >= start && s <= end) seen.push([s, v.lat, v.lon]); });
+  const out = [];
+  for (const [, lat, lon] of seen.sort((x, y) => x[0] - y[0])) { out.push([lat, lon]); if (ground.km([lat, lon], b) < 10) break; }
+  return out;
+}
+
 function lookUpTrips() {
   if (!config.ground_lookups) return;
   if (lookingUp) { lookAgain = true; return; }
@@ -211,7 +226,7 @@ function lookUpTrips() {
   const seen = (from, to) => placesAndDays(from, to, { stays: false }).map(p => p.at);
   if (towns === undefined) towns = cities.load(path.join(DATA_DIR, 'cities1000.txt'));
   const known = name => (towns ? cities.biggestNamed(towns, name) : null);
-  const store = { trips, stays, flights: () => flights, airports: () => airports, save: saveTrips, saveStays, seen, known };
+  const store = { trips, stays, flights: () => flights, airports: () => airports, save: saveTrips, saveStays, seen, known, clues: journeyClues };
   ground.enrich(store).then(r => { if (r?.later) setTimeout(lookUpTrips, 31 * 60e3).unref(); })  // trains waiting for BRouter
     .catch(e => console.warn('[ground]', e.message)).finally(() => {
     lookingUp = false;
@@ -429,6 +444,15 @@ app.post('/api/ground', (req, res) => {
   saveTrips();
   lookUpTrips();
   res.json(t);
+});
+
+// The car journeys' roads again (after new photos or Timeline came in): { mode: 'drive' } by default
+app.post('/api/ground/reroute', (req, res) => {
+  const mode = (req.body && req.body.mode) || 'drive', again = trips.filter(t => t.mode === mode && t.path_source);
+  again.forEach(t => ground.forget(t, { from_lat: null }));
+  saveTrips();
+  lookUpTrips();
+  res.json({ rerouting: again.length });
 });
 
 app.put('/api/ground/:id', (req, res) => {
@@ -713,7 +737,7 @@ app.get('/api/countries', async (req, res) => {
     if (!place) return null;
     const id = scheme ? place.id : place.cc;
     return all[id] = all[id] || { country: id, name: scheme ? place.name : undefined, days: new Set(), towns: new Set(), nights: 0,
-      flights: 0, train: 0, bus: 0, ferry: 0, hitch: 0, cars: 0, activities: 0, km: 0, photos: 0 };
+      flights: 0, train: 0, bus: 0, ferry: 0, hitch: 0, drive: 0, cars: 0, activities: 0, km: 0, photos: 0 };
   };
   placesAndDays(from, to).forEach(p => {
     const v = of(p.at, p.city), t = townOf(p.at, p.city);
@@ -724,7 +748,7 @@ app.get('/api/countries', async (req, res) => {
     if (ap && inPeriod((f.date || '').slice(0, 10))) { const v = of([ap.lat, ap.lon], ap.city); if (v) v.flights++; }
   });
   trips.forEach(t => {
-    if (!inPeriod((t.date || '').slice(0, 10)) || !['train', 'bus', 'ferry', 'hitch'].includes(t.mode)) return;
+    if (!inPeriod((t.date || '').slice(0, 10)) || !['train', 'bus', 'ferry', 'hitch', 'drive'].includes(t.mode)) return;
     new Set([of(t.from_lat != null && [t.from_lat, t.from_lon]), of(t.to_lat != null && [t.to_lat, t.to_lon])]).forEach(v => { if (v) v[t.mode]++; });
   });
   stays.forEach(s => {
@@ -938,12 +962,24 @@ const tripStore = require('./trips').create({
 });
 app.get('/api/trips', (_req, res) => res.json(tripStore.list()));
 
+// The drives Cairn worked out (trips.js: along the roads, on the days of a rental car) as car journeys for the map,
+// from town to town; not on a day that has a car journey of your own
+function derivedDrives(list = tripStore.drives()) {
+  if (towns === undefined) towns = cities.load(path.join(DATA_DIR, 'cities1000.txt'));
+  const own = new Set(trips.filter(t => t.mode === 'drive').map(t => (t.date || '').slice(0, 10)));
+  const name = at => (towns && cities.townAt(towns, at[0], at[1])?.name) || `${at[0].toFixed(2)}, ${at[1].toFixed(2)}`;
+  return list.filter(d => !own.has(d.day)).map((d, i) => ({ id: `drive-${i}`, mode: 'drive', derived: true, date: `${d.day} 12:00:00`,
+    from: name(d.from), to: name(d.to), from_lat: d.from[0], from_lon: d.from[1], to_lat: d.to[0], to_lon: d.to[1],
+    path: d.path || '', distance: Math.round(d.km), path_source: d.path ? 'osrm' : 'straight' }));
+}
+app.get('/api/drives', async (_req, res) => res.json(derivedDrives(await tripStore.drivesReady())));
+
 // Curiosities (stats.js): days by the sea and up in the mountains, the extremes, capitals, distances, beds, ...
 const curiosities = require('./stats').create({
   days: (from, to) => placesAndDays(from, to), towns: () => (towns === undefined ? (towns = cities.load(path.join(DATA_DIR, 'cities1000.txt'))) : towns),
   cities, activities: () => activities.list(), stays: () => stays, flights: () => flights, airports: () => airports, groundTrips: () => trips,
   trips: () => tripStore.list(), weather: () => weather.all(), wellness: wellnessDays,
-  homeAirports,
+  homeAirports, places: homePlaces, drives: () => derivedDrives(),
   heightsFile: path.join(DATA_DIR, 'heights.json'), coastFile: path.join(DATA_DIR, 'coastline.geojson'), download: httpsGet, log: m => console.log(m)
 });
 // --- Backup (backup.js): everything you imported or added, out as one .tar.gz and back in ---
@@ -1094,7 +1130,7 @@ const yearReview = require('./review').create({
   townOf: p => { if (towns === undefined) towns = cities.load(path.join(DATA_DIR, 'cities1000.txt')); return towns && ((p.city && cities.townNamed(towns, p.city, p.at[0], p.at[1])) || cities.townAt(towns, p.at[0], p.at[1])); },
   trips: () => tripStore.list(), flights: () => flights, groundTrips: () => trips, stays: () => stays, activities: () => activities.list(),
   climbs: () => climbs.list(), photos: datedPhotos, music: range => music.top(range), wellness: wellnessDays, weather: () => weather.all(),
-  spending: () => spending.summary()
+  spending: () => spending.summary(), places: homePlaces, drives: () => derivedDrives()
 });
 app.get('/api/review/years', (_req, res) => res.json(yearReview.years()));
 app.get('/api/review/by-year', (_req, res) => res.json(yearReview.byYear()));  // every year side by side

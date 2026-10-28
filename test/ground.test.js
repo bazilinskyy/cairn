@@ -1,5 +1,6 @@
 'use strict';
-// ground.js without the network: polylines, simplification, timetable dates, starting points, stale fields.
+// ground.js without the network: polylines, simplification, timetable dates, starting points, stale fields, a car's way
+// through the photos.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const g = require('../ground');
@@ -141,4 +142,11 @@ test('activities: an activity in Garmin and in Strava (started within two minute
   const garmin = [{ id: 1, sport: 'Ride', start: 1000000 }, { id: 2, sport: 'Run', start: 2000000 }];
   const strava = [{ id: 10, sport: 'Ride', start: 1000090 }, { id: 11, sport: 'Run', start: 1000000 }, { id: 12, sport: 'Ride', start: 3000000 }];
   assert.deepStrictEqual(merge(garmin, strava).map(a => a.id), [12, 2, 1, 11]);
+});
+
+test('a car journey goes through the photos on the way: between the ends, spread out, not a detour', () => {
+  const lyon = [45.76, 4.84], valence = [44.93, 4.89];
+  const photos = [[45.75, 4.85], [45.52, 4.87], [45.51, 4.87], [45.27, 4.83], [44.0, 6.5], [44.94, 4.89]];  // Lyon, Vienne twice, Saint-Vallier, the Alps, Valence
+  assert.deepStrictEqual(g.viaPoints(lyon, valence, photos), [[45.52, 4.87], [45.27, 4.83]]);
+  assert.deepStrictEqual(g.viaPoints(lyon, valence, []), []);
 });

@@ -5,7 +5,7 @@
 
 let addKind = 'flight';
 const rand = () => Math.random().toString(36).slice(2, 10);
-const MODES = { train: '🚆 Train', bus: '🚌 Bus', ferry: '⛴️ Ferry', hitch: '👍 Hitchhiking' };
+const MODES = { train: '🚆 Train', bus: '🚌 Bus', ferry: '⛴️ Ferry', hitch: '👍 Hitchhiking', drive: '🚙 By car' };
 
 function showAddKind(kind) {
   addKind = kind;

@@ -355,7 +355,7 @@ function drawTripMap(d, keepView = false) {
   const gids = new Set(d.ground.map(g => g.id));
   allTrips.filter(g => gids.has(g.id) && g.from_lat != null && g.to_lat != null).forEach(g => {
     const pts = g.path ? decodePath(g.path) : [[g.from_lat, g.from_lon], [g.to_lat, g.to_lon]];
-    L.polyline(pts, { color: col(['train', 'bus', 'ferry', 'hitch'].includes(g.mode) ? g.mode : 'bus'), weight: 3 * st.w, opacity: 0.9, dashArray: g.path ? null : '6 6' })
+    L.polyline(pts, { color: col(['train', 'bus', 'ferry', 'hitch', 'drive'].includes(g.mode) ? g.mode : 'bus'), weight: 3 * st.w, opacity: 0.9, dashArray: g.path ? null : '6 6' })
       .bindPopup(`<b>${(groundModes[g.mode] || '🚌').split(' ')[0]} ${escapeHTML(g.from)} → ${escapeHTML(g.to)}</b><br><small>${fmtDate(g.date)}</small>`).addTo(tripMap);
     pts.forEach(p => { bounds.push(p); local.push(p); });
   });

@@ -245,7 +245,41 @@ function create({ towns, cities, days, flights, airports, groundTrips, stays, ac
       .map(e => e.title).filter((t, i, all) => t && all.indexOf(t) === i).slice(0, 3);
   }
 
-  return { list, get };
+  // Every drive of every trip with a rental car (its moves along the roads on the car's days), for the distance by car
+  // and the map. Working them out takes a minute: done in the background, a trip at a time (the server answers
+  // meanwhile), again when the data changed or ten minutes passed (the road routes come in meanwhile); until then
+  // the last ones
+  let driveMemo = { at: 0, key: null, list: [] }, driving = null;
+  const driveKey_ = () => `${memo.key}|${stays().filter(s => s.what === 'car').length}`;
+  function refreshDrives() {
+    if (driving) return driving;
+    driving = (async () => {
+      try {
+        list();
+        const key = driveKey_(), cars = stays().filter(s => s.what === 'car' && s.start), out = [];
+        for (const t of list()) {
+          if (!cars.some(c => c.start <= t.end && (c.end || c.start) >= t.start)) continue;
+          await new Promise(r => setImmediate(r));
+          for (const m of get(t.id)?.moves || []) if (m.kind === 'drive') out.push({ day: dayOf(m.t0), from: m.from, to: m.to, km: m.km, path: m.path || null });
+        }
+        driveMemo = { at: Date.now(), key, list: out };
+      } catch (e) {
+        log(`[trips] drives: ${e.message}`);
+      } finally {
+        driving = null;
+      }
+      return driveMemo.list;
+    })();
+    return driving;
+  }
+  function allDrives() {
+    if (driveMemo.key !== driveKey_() || Date.now() - driveMemo.at > 10 * 60e3) refreshDrives();
+    return driveMemo.list;
+  }
+  // the drives, waiting for the first working out
+  const drivesReady = () => (driveMemo.key ? Promise.resolve(allDrives()) : refreshDrives());
+
+  return { list, get, drives: allDrives, drivesReady };
 }
 
 module.exports = { create, localToUnix };
