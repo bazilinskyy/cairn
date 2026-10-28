@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- Cairn server on mini. mail/install.sh fills in __REPO__, __NODE__ and __HOME__. -->
+<!-- Cairn server on mini. mail/install.sh fills in __REPO__, __NODE__ and __DIR__ (tripmail's folder). -->
 <plist version="1.0">
 <dict>
   <key>Label</key><string>nl.tue.cairn</string>
@@ -12,7 +12,7 @@
   <key>WorkingDirectory</key><string>__REPO__</string>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
-  <key>StandardOutPath</key><string>__HOME__/.flightmail/cairn.log</string>
-  <key>StandardErrorPath</key><string>__HOME__/.flightmail/cairn.log</string>
+  <key>StandardOutPath</key><string>__DIR__/cairn.log</string>
+  <key>StandardErrorPath</key><string>__DIR__/cairn.log</string>
 </dict>
 </plist>

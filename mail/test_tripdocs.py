@@ -332,7 +332,7 @@ def test_suggestions_are_written_then_replaced_when_the_doc_changes():
     assert "https://" not in asked[0]
     got = [(t, s, b) for t, s, b in g.paras()]
     assert got[:2] == [("Information", "HEADING_1", False), ("Bring a towel", "NORMAL_TEXT", False)], got
-    assert got[2] == ("Suggestions", "HEADING_1", False) and got[3][0].startswith("By flightmail on 01.11.26"), got
+    assert got[2] == ("Suggestions", "HEADING_1", False) and got[3][0].startswith("By tripmail on 01.11.26"), got
     assert got[4:] == [("Things to do", "HEADING_2", False), ("Faro", "NORMAL_TEXT", False),
                        ("Walk the old town walls.", "NORMAL_TEXT", True), ("Take the boat to Ilha Deserta.", "NORMAL_TEXT", True),
                        ("Itinerary", "HEADING_2", False), ("Thu 12.11, Faro: Arrive, walk the old town.", "NORMAL_TEXT", True),

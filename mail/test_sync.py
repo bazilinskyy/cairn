@@ -308,7 +308,7 @@ def test_ground_legs_are_tracked_for_busy_blocks():
     assert row["mode"] == "bus" and row["tz"] == ["Europe/Lisbon", "Europe/Lisbon"] and row["dep_local"] == bus().dep_local.isoformat()
     run(Parsed("cancel", [], [], False, [], date(2026, 11, 1), ("3000000001",)), state, cal, con)
     assert state["ground"] == {}
-    start = bus().instants(AIRPORTS)[0]  # also when the event was not made by flightmail
+    start = bus().instants(AIRPORTS)[0]  # also when the event was not made by tripmail
     state = {}
     run(booking(bus()), state, FakeCalendar(foreign_at={start}), con)
     assert len(state["ground"]) == 1

@@ -54,6 +54,14 @@ def test_ns_international_train():
     assert (l.dep_tz, l.arr_tz, l.codes, l.arr_guess) == ("Europe/Amsterdam", "Europe/Brussels", ("TRAIN12",), False)
 
 
+def test_ns_international_older_layout():
+    # 'Outward' / route / 'Departure: <date> at HH:MM': not the payment date nor 'Travel time: 01:30' / 'Changes:'
+    p = parsed("ns_train_old")
+    assert legs(p) == [("train", "", "Breda", "Bruxelles Central/Brussel Centraal", D(2026, 12, 21, 16, 42), D(2026, 12, 21, 18, 12)),
+                       ("train", "", "Bruxelles Central/Brussel Centraal", "Breda", D(2026, 12, 24, 12, 50), D(2026, 12, 24, 14, 18))]
+    assert p.legs[1].arr_tz == "Europe/Amsterdam"
+
+
 def test_sncf_journey_without_arrival():
     p = parsed("sncf_ground")
     assert legs(p) == [("train", "", "Chambéry", "Grenoble", D(2026, 12, 11, 9, 14), D(2026, 12, 11, 10, 14))]

@@ -1,17 +1,17 @@
 """Trip documents in a Google Drive folder: one Google Doc per trip with an Information heading, a Plan table
 (Place | Dates | Accommodation | Price | Comments) and a Transport table (Transport | Date | Price | Comments).
 
-flightmail fills them from the bookings it reads: a hotel or Airbnb goes into the Plan row for that place and dates
+tripmail fills them from the bookings it reads: a hotel or Airbnb goes into the Plan row for that place and dates
 (empty cells only) or a new row in date order; a rental car into the Comments of the row of its pick-up day; each
 flight into a Transport row. A cancelled stay empties the Accommodation and Price cells. A trip without a doc gets
 a new one, named like "Portugal 2026". Text the user wrote is never changed.
 
-Suggestions: when the doc of a trip that is not over yet changes (the user's edits or flightmail's), Claude (`claude
+Suggestions: when the doc of a trip that is not over yet changes (the user's edits or tripmail's), Claude (`claude
 -p`) is asked for things to do in each place and a day-by-day itinerary, written into a "Suggestions" section that is
-flightmail's own and replaced every time.
+tripmail's own and replaced every time.
 
 Google access: OAuth "Desktop app" client (google_client.json) and a refresh token (google_token.json) in
-~/.flightmail, made once with `python mail/tripdocs.py auth`. Standard library only.
+~/.tripmail, made once with `python mail/tripdocs.py auth`. Standard library only.
 """
 import hashlib
 import json
@@ -85,7 +85,7 @@ class Google:
 
     def create(self, folder, name, html=TEMPLATE):
         """A new Google Doc in the folder, converted from html by Drive."""
-        boundary = "flightmail-boundary"
+        boundary = "tripmail-boundary"
         meta = {"name": name, "mimeType": "application/vnd.google-apps.document", "parents": [folder]}
         data = (f"--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n{json.dumps(meta)}\r\n"
                 f"--{boundary}\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n{html}\r\n--{boundary}--").encode()
@@ -115,7 +115,7 @@ def authorize(client_file, token_file, port=8765):
             got.update(urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query))
             self.send_response(200)
             self.end_headers()
-            self.wfile.write(b"flightmail: signed in, you can close this tab." if "code" in got else b"no code")
+            self.wfile.write(b"tripmail: signed in, you can close this tab." if "code" in got else b"no code")
 
         def log_message(self, *a):
             pass
@@ -521,7 +521,7 @@ class TripDocs:
 
     def suggest(self, state, now, ask, limit=3):
         """Suggestions in the docs of trips not over yet that changed since the last look, but not in the last half
-        hour (the user may still be typing; flightmail's own edits of this run wait an hour too). At most limit
+        hour (the user may still be typing; tripmail's own edits of this run wait an hour too). At most limit
         questions to Claude per run; the rest wait for the next."""
         reg = state.setdefault("docs", {}).setdefault("suggested", {})
         today, asked = now.date(), 0
@@ -558,9 +558,9 @@ class TripDocs:
             reg[f["id"]] = {"modified": self.g.modified(f["id"]), "hash": digest}
 
 
-# --- suggestions: things to do and an itinerary by Claude, in a section of the doc that is flightmail's own ---
+# --- suggestions: things to do and an itinerary by Claude, in a section of the doc that is tripmail's own ---
 
-SUGGESTIONS, MARK = "Suggestions", "By flightmail"
+SUGGESTIONS, MARK, MARKS = "Suggestions", "By tripmail", ("By tripmail", "By flightmail")  # and as docs written before the rename have it
 QUIET = timedelta(minutes=30)
 PROMPT = """You help plan a trip. Today is {today}. Below is the trip's document: notes under Information, the Plan
 table (places, dates, where we sleep, comments) and the Transport table (flights, trains, buses, rental cars, with
@@ -582,7 +582,7 @@ Reply with JSON only, no other text:
 
 
 def _local(stamp):
-    """Drive's '2026-10-24T23:02:30.441Z' as a naive local datetime, like flightmail's now()."""
+    """Drive's '2026-10-24T23:02:30.441Z' as a naive local datetime, like tripmail's now()."""
     return datetime.fromisoformat(stamp.replace("Z", "+00:00")).astimezone().replace(tzinfo=None)
 
 
@@ -595,14 +595,14 @@ def _pstyle(el):
 
 
 def section(doc):
-    """(start, end, at_end) of flightmail's Suggestions section: its heading (followed by the "By flightmail" line) up
+    """(start, end, at_end) of tripmail's Suggestions section: its heading (followed by the "By tripmail" line) up
     to the next top-level heading, or to the end of the doc (at_end); None when the doc has none."""
     body = doc["body"]["content"]
     for k, el in enumerate(body):
         if "paragraph" not in el or _ptext(el) != SUGGESTIONS or not _pstyle(el).startswith("HEADING"):
             continue
         nxt = next((e for e in body[k + 1:] if "paragraph" in e and _ptext(e)), None)
-        if not nxt or not _ptext(nxt).startswith(MARK):
+        if not nxt or not _ptext(nxt).startswith(MARKS):
             continue
         for e in body[k + 1:]:
             if "paragraph" in e and _pstyle(e) == "HEADING_1":
@@ -612,10 +612,10 @@ def section(doc):
 
 
 def without_suggestions(md):
-    """The doc's Markdown without flightmail's Suggestions section."""
+    """The doc's Markdown without tripmail's Suggestions section."""
     lines = md.splitlines()
     for i, line in enumerate(lines):
-        if re.fullmatch(r"#\s*\**Suggestions\**", line.strip()) and any(MARK in x for x in lines[i + 1:i + 4]):
+        if re.fullmatch(r"#\s*\**Suggestions\**", line.strip()) and any(m in x for m in MARKS for x in lines[i + 1:i + 4]):
             end = next((j for j in range(i + 1, len(lines)) if re.match(r"#\s", lines[j])), len(lines))
             return "\n".join(lines[:i] + lines[end:]).strip()
     return md.strip()
@@ -663,7 +663,7 @@ def suggestion_lines(data, today):
 
 
 def suggestion_requests(doc, lines):
-    """Requests that replace flightmail's Suggestions section with lines, or add one at the end of the doc."""
+    """Requests that replace tripmail's Suggestions section with lines, or add one at the end of the doc."""
     out, sec, body = [], section(doc), doc["body"]["content"]
     if sec:
         at, end, at_end = sec
@@ -704,7 +704,8 @@ def suggestion_requests(doc, lines):
 
 if __name__ == "__main__":
     if sys.argv[1:] == ["auth"]:
-        d = Path.home() / ".flightmail"
+        d = Path.home() / ".flightmail"  # tripmail's folder: by its older name for an install from before the rename
+        d = d if d.is_dir() else Path.home() / ".tripmail"
         authorize(d / "google_client.json", d / "google_token.json")
     else:
         sys.exit("usage: python mail/tripdocs.py auth")

@@ -1,7 +1,7 @@
 """Decide what one parsed email changes in the Travel calendar and in Cairn.
 
 The calendar and Cairn are passed in as objects with has_flight / create|add / update / delete, so the rules
-can be tested without EventKit or a server. state["legs"] remembers the legs flightmail created. Trains, buses and
+can be tested without EventKit or a server. state["legs"] remembers the legs tripmail created. Trains, buses and
 ferries go to Cairn too (for the lines on its map), with the id of their calendar event.
 """
 from dataclasses import replace
@@ -50,7 +50,7 @@ def enrich(parsed, lookup, cache, now, limit):
 def apply(parsed, sender, subject, received, state, cal, con, names, now, airports):
     """Apply one email; returns alert lines (empty when there is nothing to report)."""
     legs = state.setdefault("legs", [])
-    seen = state.setdefault("seen", {})  # every future flight the owner is on, also ones flightmail did not create
+    seen = state.setdefault("seen", {})  # every future flight the owner is on, also ones tripmail did not create
     ground = state.setdefault("ground", {})  # the same for trains, buses and ferries (for busy blocks)
     if parsed.kind == "other" or not is_passenger(parsed.passengers, names):
         return []
@@ -123,7 +123,7 @@ def apply(parsed, sender, subject, received, state, cal, con, names, now, airpor
             if e:
                 remove(e)
             elif about_future:
-                alerts.append(f"Cancellation for {leg.flight} not applied, its event was not made by flightmail: {where}")
+                alerts.append(f"Cancellation for {leg.flight} not applied, its event was not made by tripmail: {where}")
         return alerts
 
     complete = [l for l in parsed.legs if l.complete]
@@ -168,7 +168,7 @@ def apply(parsed, sender, subject, received, state, cal, con, names, now, airpor
         else:  # trains, buses, ferries: any event starting at the same moment is this one; Cairn keeps one
             in_cal, in_con = cal.has_event_at(leg.instants(airports)[0]), False  # trip per minute and mode itself
         if parsed.kind == "change" and not notes and (in_cal or in_con or leg.mode != "flight"):
-            alerts.append(f"Change for {leg.key} on {day} not applied, its event was not made by flightmail: {where}")
+            alerts.append(f"Change for {leg.key} on {day} not applied, its event was not made by tripmail: {where}")
             continue
         event_id = None if in_cal else cal.create(leg, notes)
         contrail_id = None if in_con else con.add(leg, event_id)

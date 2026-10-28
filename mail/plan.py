@@ -1,5 +1,5 @@
 """What to keep in step with the flights the owner is on: a check-in to-do per flight, a busy block in the work
-calendar per flight, train, bus or ferry that falls in working hours, and an all-day banner per trip. Pure functions over rows of state["seen"]; flightmail.py
+calendar per flight, train, bus or ferry that falls in working hours, and an all-day banner per trip. Pure functions over rows of state["seen"]; tripmail.py
 applies the result to Things and the calendars."""
 from datetime import datetime, time, timedelta
 from urllib.parse import quote_plus

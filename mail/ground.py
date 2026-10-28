@@ -104,6 +104,8 @@ def _markup(html, mode, cities, home_tz):
 
 def _ns(lines, year_hint, cities, home_tz):
     """NS International: per journey a date, then time / station / (track) / train number / time / station."""
+    if any(re.match(r"(?i)^departure:.*\bat \d{1,2}:\d{2}$", l) for l in lines):
+        return _ns_tables(lines, year_hint, cities, home_tz)
     out, day, stops, service = [], None, [], ""
     for line in lines + ["Outward journey"]:
         if re.match(r"(?i)^(outward|return) journey$", line):
@@ -121,6 +123,31 @@ def _ns(lines, year_hint, cities, home_tz):
             stops[-1][1] = line
         elif re.fullmatch(r"[A-Z]{1,4} ?\d{2,5}", line) and not service:
             service = line
+    return out
+
+
+def _ns_tables(lines, year_hint, cities, home_tz):
+    """NS International's layout until 2023: per journey 'Outward' or 'Return', the route 'A - B', then 'Departure:
+    <date> at HH:MM' and 'Arrival: …' (the payment date and the travel time are not the journey's)."""
+    out, route, times = [], None, {}
+
+    def flush():
+        if route and "departure" in times:
+            out.append(_leg("train", "", route[0], route[1], times["departure"], times.get("arrival"), cities, home_tz))
+
+    for line in lines:
+        if re.fullmatch(r"(?i)outward|return", line):
+            flush()
+            route, times = None, {}
+        elif route is None and " - " in line and not re.search(r"\d", line):
+            a, b = (x.strip() for x in line.split(" - ", 1))
+            route = (a, b)
+        else:
+            m = re.match(r"(?i)^(departure|arrival):[\s|]*(.+?)\s+at\s+(\d{1,2}):(\d{2})$", line)
+            dates = _dates(m.group(2), year_hint) if m else []
+            if dates and m.group(1).lower() not in times:
+                times[m.group(1).lower()] = dates[0][1].replace(hour=int(m.group(3)), minute=int(m.group(4)))
+    flush()
     return out
 
 
