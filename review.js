@@ -1,4 +1,5 @@
 'use strict';
+const { stayKind } = require('./stats');
 // A year in review: the year's trips, the countries and towns you went to for the first time, how far you went by
 // each means, the nights per kind of bed, the climbs you rode for the first time, the music you played most, your
 // photos, sleep and resting heart rate, the weather's extremes on your rides and what your stays cost. Everything from
@@ -42,8 +43,7 @@ function create({ days, townOf, trips, flights, groundTrips, stays, activities, 
     const beds = {};
     stays().filter(s => s.what !== 'car' && inYear(s.start)).forEach(s => {
       const n = Math.max(1, Math.round((Date.parse(s.end || s.start) - Date.parse(s.start)) / 864e5));
-      const what = /couchsurf/i.test(s.provider) ? 'Couchsurfing' : /bewelcome/i.test(s.provider) ? 'BeWelcome' : /hostel/i.test(`${s.type} ${s.hotel}`) ? 'Hostel'
-        : /airbnb/i.test(s.provider) ? 'Airbnb' : /camp/i.test(`${s.type} ${s.hotel}`) ? 'Camping' : 'Hotel and other';
+      const what = stayKind(s);
       beds[what] = (beds[what] || 0) + n;
     });
 
@@ -115,8 +115,7 @@ function create({ days, townOf, trips, flights, groundTrips, stays, activities, 
     activities().filter(a => !a.trainer).forEach(a => add((a.date || '').slice(0, 4), kind(a.sport), a.distance || 0));
     stays().filter(s => s.what !== 'car' && s.start).forEach(s => {
       const n = Math.max(1, Math.round((Date.parse(s.end || s.start) - Date.parse(s.start)) / 864e5)), r = row(s.start.slice(0, 4));
-      const what = /couchsurf/i.test(s.provider) ? 'Couchsurfing' : /bewelcome/i.test(s.provider) ? 'BeWelcome' : /hostel/i.test(`${s.type} ${s.hotel}`) ? 'Hostel'
-        : /airbnb/i.test(s.provider) ? 'Airbnb' : /camp/i.test(`${s.type} ${s.hotel}`) ? 'Camping' : 'Hotel and other';
+      const what = stayKind(s);
       r.nights[what] = (r.nights[what] || 0) + n;
     });
     (photos() || []).forEach(p => { const y = new Date(p[1] * 1000).toISOString().slice(0, 4); row(y).photos++; });

@@ -186,8 +186,7 @@ function create({ days, towns, cities, activities, stays, flights, airports, gro
     const beds = {};
     for (const s of nightStays) {
       const n = Math.max(1, Math.round((Date.parse(s.end || s.start) - Date.parse(s.start)) / 864e5));
-      const what = /couchsurf/i.test(s.provider) ? 'Couchsurfing' : /bewelcome/i.test(s.provider) ? 'BeWelcome' : /hostel/i.test(s.type || s.hotel || '') ? 'Hostel'
-        : /airbnb/i.test(s.provider) ? 'Airbnb' : /camp/i.test(s.type || s.hotel || '') ? 'Camping' : 'Hotel and other';
+      const what = stayKind(s);
       beds[what] = (beds[what] || 0) + n;
     }
     const longest = nightStays.reduce((b, s) => {
@@ -239,4 +238,13 @@ function create({ days, towns, cities, activities, stays, flights, airports, gro
   return { get };
 }
 
-module.exports = { create, coastIndex, coastKm };
+// The kind of bed a stay was, for counting nights: with friends or family (a trip doc's "with a friend", the form's
+// friends or family; by its kind only, so a "Friends guest house" stays a hostel), Couchsurfing, BeWelcome, a hostel,
+// an Airbnb, camping, else a hotel or other
+function stayKind(s) {
+  const kind = `${s.type || ''} ${s.hotel || ''}`;
+  return /couchsurf/i.test(s.provider) ? 'Couchsurfing' : /bewelcome/i.test(s.provider) ? 'BeWelcome' : /friend|family|relative/i.test(s.type || '') ? 'Friends and family'
+    : /hostel/i.test(kind) ? 'Hostel' : /airbnb/i.test(s.provider) ? 'Airbnb' : /camp/i.test(kind) ? 'Camping' : 'Hotel and other';
+}
+
+module.exports = { create, coastIndex, coastKm, stayKind };
