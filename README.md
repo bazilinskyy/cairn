@@ -45,17 +45,26 @@ Two parts:
 | 🚴 **Sports and body**<br>Garmin or Strava: Eddington numbers, records, best efforts, explored tiles; sleep and resting heart rate per day; the weather on every ride. | 📊 **Stats and curiosities**<br>Per country and per year (a year in review), days by the sea and in the mountains, extremes, capitals, how far by each means, spending on stays. |
 | 📅 **Planning**<br>Coming trips: what is booked, what is missing (a check-in, a bed, the way there), the forecast, climbs and saved places nearby; a morning alert. A wish list of places, climbs and countries. | 🧹 **Your data, kept right**<br>Add what nothing knows (even with only the year), suggestions from photos, albums and to-dos, one-click fixes for duplicates and gaps, backups in one file. |
 
-<details>
+<details open>
 <summary><b>Screenshots</b></summary>
 
 | | |
 |---|---|
-| ![A trip's page: its map with the drives along the roads, and its numbers](docs/trip.jpg) | ![A trip day by day: rides with their weather, trains, where you slept, sleep and heart rate](docs/trip-story.jpg) |
-| ![The Trips tab: every trip found in all the data, by year](docs/trips.jpg) | ![A town's page with its own map](docs/city.jpg) |
-| ![A climb's page: the ways up, your ride up coloured by gradient, your times against your FTP, a top climber and the record](docs/climb.jpg) | ![The photos taken on the way up a climb](docs/climb-photos.jpg) |
-| ![3D: the globe with real terrain and every layer](docs/globe-3d.jpg) | ![3D: a flat, tilted map with flights along their rough path through the air](docs/flat-arcs-3d.jpg) |
-| ![Photos as a heatmap](docs/map-photos-heatmap.jpg) | ![A grey map with bold lines, countries counted as the Travelers' Century Club does](docs/map-grey-bold.jpg) |
-| ![The map in light mode](docs/map-screenshot.jpg) | ![Curiosities: days by the sea and above 1,000 m, the extremes, capitals, how far by each means](docs/curiosities.jpg) |
+| ![The map up close: the Randstad and Eindhoven, photos off](docs/map-randstad.jpg)<br><sub>The map up close: the Randstad and Eindhoven, with your places, photos off</sub> | ![The map in light mode](docs/map-screenshot.jpg)<br><sub>The map in light mode</sub> |
+| ![Photos as a heatmap](docs/map-photos-heatmap.jpg)<br><sub>Photos as a heatmap</sub> | ![A grey map with bold lines, countries counted as the Travelers' Century Club does](docs/map-grey-bold.jpg)<br><sub>Grey with bold lines; countries as the Travelers' Century Club counts them</sub> |
+| ![3D: the globe with real terrain and every layer](docs/globe-3d.jpg)<br><sub>3D: the globe with real terrain</sub> | ![3D: a flat, tilted map with flights along their rough path through the air](docs/flat-arcs-3d.jpg)<br><sub>3D: tilted, flights through the air</sub> |
+| ![The Stats tab: flights, airports, countries, airlines, flights per year](docs/stats.jpg)<br><sub>Stats: flights, airports, countries, per year</sub> | ![The Sports tab: activities, Eddington numbers, records, explored tiles](docs/sports.jpg)<br><sub>Sports</sub> |
+| ![The Flights tab: every flight, searchable and sortable](docs/flights.jpg)<br><sub>Flights: every flight, searchable</sub> | ![An airport's page: its routes, airlines and flights](docs/airport.jpg)<br><sub>An airport's page</sub> |
+| ![The Trips tab: every trip found in all the data, by year](docs/trips.jpg)<br><sub>Trips: every trip found in all the data</sub> | ![A trip's page: its map with the drives along the roads, and its numbers](docs/trip.jpg)<br><sub>A trip's page</sub> |
+| ![A trip day by day: rides with their weather, trains, where you slept, sleep and heart rate](docs/trip-story.jpg)<br><sub>A trip day by day</sub> | ![A year in review](docs/year.jpg)<br><sub>A year in review</sub> |
+| ![A town's page with its own map and photos](docs/city.jpg)<br><sub>A town's page</sub> | ![A country's page: its flag, its map with everything there, its towns](docs/country.jpg)<br><sub>A country's page</sub> |
+| ![A climb's page: the ways up, your ride up coloured by gradient, your times against your FTP, a top climber and the record](docs/climb.jpg)<br><sub>A climb's page: its ways up, your times, the record</sub> | ![The photos taken on the way up a climb](docs/climb-photos.jpg)<br><sub>Photos on the way up</sub> |
+
+<p align="center"><img src="docs/years.jpg" alt="The years side by side" width="900"><br><sub>The years side by side</sub></p>
+
+<p align="center"><img src="docs/curiosities.jpg" alt="Curiosities: days by the sea and above 1,000 m, the extremes, capitals, how far by each means" width="900"><br><sub>Curiosities</sub></p>
+
+<sub>Made from real data with the dates shifted, flight numbers, hotels and prices changed.</sub>
 
 </details>
 
