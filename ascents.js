@@ -15,6 +15,7 @@ const OSRM = 'https://router.project-osrm.org/route/v1/driving/';
 const DEM_Z = 12;
 const STEP_M = 50;          // ascents are compared every 50 m
 const NEAR_M = 60;          // a ride is on the ascent's road within this
+const TOP_M = 250;          // a ride reached the top within this
 const LAST_M = 2000;        // the last stretch a ride must follow to the summit (or half the ascent, when shorter)
 const MIN_GAIN = 40, MIN_LEN = 400;  // short Flemish and Dutch hills count too
 
@@ -175,41 +176,65 @@ async function ascentsOf(climb, towns, wait = ms => new Promise(r => setTimeout(
 
 // --- which ascents a ride took ---
 
+// metres from p to the segment a–b, and how far along it (0 to 1) the nearest point is
+function toSegment(p, a, b) {
+  const k = Math.cos(p[0] * Math.PI / 180), m = 111320;
+  const ax = (a[1] - p[1]) * k * m, ay = (a[0] - p[0]) * m, bx = (b[1] - p[1]) * k * m, by = (b[0] - p[0]) * m;
+  const dx = bx - ax, dy = by - ay, l = dx * dx + dy * dy, t = l ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / l)) : 0;
+  return { d: Math.hypot(ax + t * dx, ay + t * dy), t };
+}
+const farFrom = (p, a, b) => (a[0] - p[0] > 0.01 && b[0] - p[0] > 0.01) || (p[0] - a[0] > 0.01 && p[0] - b[0] > 0.01);
+
 // distance in metres from p to the nearest point of the ride, and that point's position along the ride
 function onRide(p, ride) {
   let best = Infinity, at = -1;
   for (let j = 1; j < ride.length; j++) {
-    const a = ride[j - 1], b = ride[j];
-    if ((a[0] - p[0] > 0.01 && b[0] - p[0] > 0.01) || (p[0] - a[0] > 0.01 && p[0] - b[0] > 0.01)) continue;
-    const k = Math.cos(p[0] * Math.PI / 180), m = 111320;
-    const ax = (a[1] - p[1]) * k * m, ay = (a[0] - p[0]) * m, bx = (b[1] - p[1]) * k * m, by = (b[0] - p[0]) * m;
-    const dx = bx - ax, dy = by - ay, l = dx * dx + dy * dy, t = l ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / l)) : 0;
-    const d = Math.hypot(ax + t * dx, ay + t * dy);
+    if (farFrom(p, ride[j - 1], ride[j])) continue;
+    const { d, t } = toSegment(p, ride[j - 1], ride[j]);
     if (d < best) { best = d; at = j - 1 + t; }
   }
   return { d: best, at };
 }
 
-// For each of a climb's ascents (decoded and resampled once: `samples`), whether the ride took it
+// the last time before position `until` the ride passed within NEAR_M of p: a ride that goes up a road and comes
+// back down it passes each point twice, and only the pass that leads to the top is the way up
+function lastPassBefore(p, ride, until) {
+  for (let j = Math.min(ride.length - 1, Math.ceil(until)); j >= 1; j--) {
+    if (farFrom(p, ride[j - 1], ride[j])) continue;
+    const { d, t } = toSegment(p, ride[j - 1], ride[j]);
+    if (d <= NEAR_M && j - 1 + t <= until) return { d, at: j - 1 + t };
+  }
+  return { d: Infinity, at: -1 };
+}
+
+// For each of a climb's ascents (decoded and resampled once: `samples`), whether the ride took it: for each time the
+// ride reached the top, whether the pass that led there followed the ascent's last stretch uphill (and, where the
+// ascent differs from the climb's other ways up, that part too)
 function ridden(ascents, ride) {
   return ascents.map((a, i) => {
-    const s = a.samples, n = s.length;
+    const s = a.samples, n = s.length, top = s[n - 1];
     const last = s.slice(Math.max(0, n - Math.min(Math.round(LAST_M / STEP_M), Math.ceil(n / 2))));
     // where it differs from the climb's other ways up
     const own = s.filter(p => ascents.every((o, j) => j === i || o.samples.every(q => metresBetween(p, q) > 150)));
-    const check = pts => {
-      const hits = pts.map(p => onRide(p, ride));
-      const on = hits.filter(h => h.d <= NEAR_M);
+    // each visit to the top: where the ride was last near it before going away again
+    const visits = [];
+    let near = false;
+    for (let j = 1; j < ride.length; j++) {
+      const now = !farFrom(top, ride[j - 1], ride[j]) && toSegment(top, ride[j - 1], ride[j]).d <= TOP_M;
+      if (now) { if (near) visits[visits.length - 1] = j; else visits.push(j); }
+      near = now;
+    }
+    const check = (pts, until) => {
+      const on = pts.map(p => lastPassBefore(p, ride, until)).filter(h => h.d <= NEAR_M);
       return { share: pts.length ? on.length / pts.length : 1, first: on[0]?.at, last: on[on.length - 1]?.at };
     };
-    const end = check(last);
-    if (end.share < 0.85) return false;
-    if (!(end.last > end.first)) return false;  // went down it, not up
-    if (own.length) {  // the part only this way up has: ridden too, uphill, on the way to that last stretch
-      const mine = check(own.slice(-Math.round(3000 / STEP_M)));
-      if (mine.share < 0.7 || !(mine.last > mine.first) || mine.last > end.last) return false;
-    }
-    return true;
+    return visits.some(until => {
+      const end = check(last, until);
+      if (end.share < 0.85 || !(end.last > end.first)) return false;  // not followed, or went down it
+      if (!own.length) return true;
+      const mine = check(own.slice(-Math.round(3000 / STEP_M)), until);  // the part only this way up has: ridden up too
+      return mine.share >= 0.7 && mine.last > mine.first && mine.last <= end.last;
+    });
   });
 }
 

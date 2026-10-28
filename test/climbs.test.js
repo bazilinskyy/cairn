@@ -24,6 +24,17 @@ test('up the east way: the east way only', () => {
   assert.deepStrictEqual(ridden(ascents, [...line(east, junction).slice(0, -1), ...shared]), [false, true]);
 });
 
+test('up the west way and back down it, then up the east way and back down it: both (each pass up is found)', () => {
+  const west2 = [...line(west, junction).slice(0, -1), ...shared], east2 = [...line(east, junction).slice(0, -1), ...shared];
+  const ride = [...west2, ...west2.slice().reverse().slice(1), ...line(west, east).slice(1), ...east2, ...east2.slice().reverse().slice(1)];
+  assert.deepStrictEqual(ridden(ascents, ride), [true, true]);
+});
+
+test('down the west way first, then up it: the west way', () => {
+  const west2 = [...line(west, junction).slice(0, -1), ...shared];
+  assert.deepStrictEqual(ridden(ascents, [...west2.slice().reverse(), ...west2.slice(1)]), [true, false]);
+});
+
 test('only down a way: none', () => {
   const down = [...shared.slice().reverse(), ...line(junction, west).slice(1)];
   assert.deepStrictEqual(ridden(ascents, down), [false, false]);
