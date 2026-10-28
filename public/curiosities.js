@@ -49,7 +49,7 @@ async function renderCuriosities() {
     '</div>';
 
   // how far by each means, and the sea by year, as bars
-  const names = { flight: '✈️ Flown', train: '🚆 Train', bus: '🚌 Bus', ferry: '⛴️ Ferry', ride: '🚴 Cycled', run: '🏃 Run', walk: '🥾 Walked' };
+  const names = { flight: '✈️ Flown', train: '🚆 Train', bus: '🚌 Bus', ferry: '⛴️ Ferry', hitch: '👍 Hitchhiked', ride: '🚴 Cycled', run: '🏃 Run', walk: '🥾 Walked' };
   const max = Math.max(...Object.values(d.by));
   html += '<div class="music-cols" style="margin-top:16px"><div><h4>How far, by each means</h4><div class="curio-bars" style="grid-template-columns: 90px 1fr 80px">' +
     Object.entries(d.by).sort((a, b) => b[1] - a[1]).map(([k, km]) => `<span>${names[k] || k}</span><div class="bar" style="width:${Math.max(1, km / max * 100)}%"></div><span>${fmtDist(km)}</span>`).join('') + '</div></div>';
@@ -65,4 +65,28 @@ async function renderCuriosities() {
   box.innerHTML = html;
 }
 
+// What the stays cost (spending.js): per year, country and town, the dearest and cheapest nights
+async function renderSpending() {
+  const box = document.getElementById('spending');
+  const d = await fetch('/api/spending').then(r => (r.ok ? r.json() : null)).catch(() => null);
+  if (!box || !d || !d.priced) return;
+  const eur = n => `€${Math.round(n).toLocaleString()}`;
+  const card = (label, value, sub = '') => `<div class="stat-card"><div class="label">${label}</div><div class="value">${value}</div>${sub ? `<div class="sub">${sub}</div>` : ''}</div>`;
+  const night = x => `${escapeHTML(x.hotel || x.place || '')}, ${escapeHTML(x.place || '')} · ${fmtDate(x.start)}`;
+  const bars = (rows, label) => { const max = Math.max(...rows.map(r => r.eur)); return `<div class="curio-bars" style="grid-template-columns: 90px 1fr 120px">` +
+    rows.map(r => `<span>${label(r)}</span><div class="bar" style="width:${Math.max(1, r.eur / max * 100)}%"></div><span>${eur(r.eur)} · ${eur(r.perNight)}/night</span>`).join('') + '</div>'; };
+  box.innerHTML = '<div class="chart-section" style="margin-top:24px"><h3>Spending on stays</h3><div class="stat-cards curio-cards">' +
+    card('Spent on stays', eur(d.eur), `${d.nights.toLocaleString()} nights${d.ahead ? ` · ${eur(d.ahead)} booked ahead` : ''}`) +
+    card('Per night', eur(d.perNight), `on average`) +
+    (d.dearest[0] ? card('Dearest night', eur(d.dearest[0].perNight), night(d.dearest[0])) : '') +
+    (d.cheapest[0] ? card('Cheapest night', eur(d.cheapest[0].perNight), night(d.cheapest[0])) : '') +
+    card('Stays with a price', `${d.priced} of ${d.stays}`, 'the others are not counted') + '</div>' +
+    `<div class="music-cols" style="margin-top:16px"><div><h4>By year</h4>${bars(d.byYear, r => r.id)}</div>` +
+    `<div><h4>By country</h4>${bars(d.byCountry.slice(0, 12), r => `${flagOf(r.id)}${escapeHTML(new Intl.DisplayNames(['en'], { type: 'region' }).of(r.id) || r.id)}`)}</div></div>` +
+    `<p style="margin-top:12px"><b>Towns:</b> ${d.byTown.map(t => `${flagOf(t.cc)}<a href="#" class="sp-link" onclick="event.preventDefault(); openCityReport(${t.id})">${escapeHTML(t.name)}</a> ${eur(t.eur)}`).join(' · ')}</p>` +
+    `<p class="sp-note">Only stays with a price in their booking email or trip doc (${d.priced} of ${d.stays}), in euros on the day of the stay ` +
+    '(ECB rates; for currencies the ECB does not publish, today\'s rate). Flights, trains and bank card spending are not in it yet.</p></div>';
+}
+
 window.addEventListener('load', () => setTimeout(renderCuriosities, 2000));
+window.addEventListener('load', () => setTimeout(renderSpending, 2500));

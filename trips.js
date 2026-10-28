@@ -12,6 +12,7 @@ const fs = require('fs');
 const ground = require('./ground');
 
 const OSRM = 'https://router.project-osrm.org/route/v1/driving/';
+const WORK = /conferen|congress|symposi|workshop|summit|seminar|colloqui|summer school|winter school|meeting|kick-?off|defen[cs]e|viva|keynote|invited talk|panel|committee|review|project|hackathon|expo\b|trade fair|training|course\b|lecture|visit to|site visit|retreat|plenary/i;
 const MIN_DAYS = 3, MAX_FLOWN_DAYS = 90, MOVE_KM = 1, ROAD_KM = 10, ROAD_MAX_KM = 900, CAR_KMH = 140;
 const regionName = (() => {
   try { const n = new Intl.DisplayNames(['en'], { type: 'region' }); return cc => { try { return n.of(cc); } catch (_) { return cc; } }; } catch (_) { return cc => cc; }
@@ -26,8 +27,9 @@ const localToUnix = (s, lon) => {
 
 // sources: getters for the server's lists; towns() the town grid (cities.js), or null without the town list
 // wellness: () => { day: { rhr, sleep, score, ... } } (Garmin); weather: () => { activity id: the ride's weather }
+// calendar: () => [{ start, end, title, location }] (imports/calendar_events.py): what a trip was for (workOf)
 function create({ towns, cities, days, flights, airports, groundTrips, stays, activities, photos, homeAirports, file,
-  wellness = () => ({}), weather = () => ({}), log = console.log }) {
+  wellness = () => ({}), weather = () => ({}), calendar = () => [], log = console.log }) {
   let memo = { key: null, list: [] };
   let drives = null;
   const loadDrives = () => {
@@ -44,7 +46,7 @@ function create({ towns, cities, days, flights, airports, groundTrips, stays, ac
     const grid = towns();
     if (!grid) return [];
     const fl = flights(), gt = groundTrips(), st = stays(), acts = activities(), ph = photos();
-    const key = [fl.length, gt.length, st.length, acts.length, ph.length, acts[0]?.id, st[st.length - 1]?.id].join('|');
+    const key = [fl.length, gt.length, st.length, acts.length, ph.length, acts[0]?.id, st[st.length - 1]?.id, (calendar() || []).length].join('|');
     if (memo.key === key) return memo.list;
     const home = homeCountries(grid), ap = airports();
     const cache = new Map(), townOf = (at, city) => {
@@ -91,7 +93,7 @@ function create({ towns, cities, days, flights, airports, groundTrips, stays, ac
       const name = countries.length ? countries.slice(0, 3).map(c => regionName(c.cc)).join(' · ') + (countries.length > 3 ? ' …' : '')
         : (townList[0]?.name || 'Trip');
       const inTrip = d => d && d.slice(0, 10) >= r.start && d.slice(0, 10) <= r.end;
-      return { id: r.start, start: r.start, end: r.end, name, days: r.days.length, countries,
+      return { id: r.start, start: r.start, end: r.end, name, days: r.days.length, countries, work: workOf(r.start, r.end, townList),
         towns: townList.slice(0, 6).map(t => ({ id: t.id, name: t.name, country: t.country, lat: t.lat, lon: t.lon, days: t.days })),
         nights: r.days.filter(d => nights.has(d)).length, flights: fl.filter(f => inTrip(f.date)).length,
         ground: gt.filter(t => inTrip(t.date)).length, activities: acts.filter(a => inTrip(a.date)).length,
@@ -231,6 +233,16 @@ function create({ towns, cities, days, flights, airports, groundTrips, stays, ac
       }
       running = false;
     })();
+  }
+
+  // The events of your calendars that say a trip was for work: during it, and either named so (a conference, a
+  // workshop, a project meeting) or of several days in one of its towns; their titles, the longest first
+  function workOf(start, end, townList) {
+    const names = townList.map(t => t.name.toLowerCase());
+    return (calendar() || []).filter(e => e.start <= end && e.end >= start && (WORK.test(`${e.title} ${e.location}`)
+      || (e.end > e.start && names.some(n => (e.location || '').toLowerCase().includes(n)))))
+      .sort((a, b) => (Date.parse(b.end) - Date.parse(b.start)) - (Date.parse(a.end) - Date.parse(a.start)))
+      .map(e => e.title).filter((t, i, all) => t && all.indexOf(t) === i).slice(0, 3);
   }
 
   return { list, get };

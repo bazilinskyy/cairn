@@ -1,5 +1,5 @@
 'use strict';
-// The map besides flights and ground trips: stays and rental cars (from flightmail), photos and Google Timeline (from
+// The map besides flights and ground trips: stays and rental cars (from tripmail), photos and Google Timeline (from
 // imports/), Strava activities and the map tiles they explored, the countries visited, trips, a time window over
 // everything, and "where was I on" a day.
 // Loaded before the page's own script; uses its globals (map, allFlights, allAirports, allTrips, ...) when called.
@@ -23,14 +23,35 @@ const OSM = ['https://tile.openstreetmap.org/{z}/{x}/{y}.png',
 // filter: how the tiles are tinted (#map[data-basemap] in the page's styles); auto follows the light or dark theme
 const BASEMAPS = {
   auto: { label: 'Follow the theme (dark or light)', tiles: OSM },
-  grey: { label: 'Light grey: lines and markers stand out, as on statshunters', tiles: OSM },
-  'grey-dark': { label: 'Dark grey', tiles: OSM },
-  colour: { label: 'OpenStreetMap in colour', tiles: OSM },
-  topo: { label: 'Topographic (OpenTopoMap)', tiles: ['https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
+  grey: { label: 'Light grey: lines and markers stand out, as on statshunters', tiles: OSM, tone: 'light' },
+  'grey-dark': { label: 'Dark grey', tiles: OSM, tone: 'dark' },
+  colour: { label: 'OpenStreetMap in colour', tiles: OSM, tone: 'light' },
+  topo: { label: 'Topographic (OpenTopoMap)', tone: 'light', tiles: ['https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
     'Map data &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, SRTM; style &copy; <a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA)', 17] },
-  satellite: { label: 'Satellite (Esri)', tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+  satellite: { label: 'Satellite (Esri)', tone: 'sat', tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
     'Imagery &copy; Esri, Maxar, Earthstar Geographics, and the GIS User Community'] }
 };
+// Lines and markers take the colours of the map's tone, not of the page's theme: dark on a light map, light on a dark
+// one, vivid with an outline on the satellite (data-theme on the map's panes; its popups and controls follow the page)
+const mapTone = () => (BASEMAPS[prefs.basemap] || BASEMAPS.auto).tone || document.documentElement.dataset.theme || 'dark';
+const toneProbes = {};
+function mapVar(name) {
+  const tone = mapTone();
+  if (!toneProbes[tone]) {
+    toneProbes[tone] = Object.assign(document.createElement('div'), { hidden: true });
+    toneProbes[tone].dataset.theme = tone;
+    document.body.append(toneProbes[tone]);
+  }
+  return getComputedStyle(toneProbes[tone]).getPropertyValue(name).trim() || getCSSVar(name);
+}
+function toneMap(m) {
+  if (!m) return;
+  const tone = mapTone();
+  Object.entries(m.getPanes()).forEach(([name, pane]) => {
+    if (!['mapPane', 'tilePane', 'popupPane'].includes(name)) pane.dataset.theme = tone;
+  });
+}
+
 let baseLayer = null;
 function setBasemap() {
   const b = BASEMAPS[prefs.basemap] || BASEMAPS.auto, [url, attribution, maxZoom = 19] = b.tiles;
@@ -96,6 +117,9 @@ const timelineLayer = L.layerGroup(), countryLayer = L.layerGroup(), activityLay
 const climbLayer = L.layerGroup();
 let allClimbs = [];  // famous cycling climbs and the rides over them (/api/climbs); none without rides
 const cityLayer = L.layerGroup();
+const homeLayer = L.layerGroup();  // your places: hometown, where you live, where you work
+const checkinLayer = L.layerGroup();  // check-ins, posts with a place, reviews and rides from data downloads
+let allCheckins = [];
 // Activities by type: a legend row each; the activity layer draws the types whose row is on
 const ACT_KINDS = { ride: '🚴 Cycling', run: '🏃 Running', walk: '🥾 Walks & hikes', sport: '🏅 Other sports' };
 const kindLayer = Object.fromEntries(Object.keys(ACT_KINDS).map(k => [k, L.layerGroup()]));
@@ -125,7 +149,8 @@ function extraLayers() {
     photo: ['📷 Photos', photoLayer, '--photo'], timeline: ['🧭 Timeline', timelineLayer, '--timeline'],
     ...Object.fromEntries(Object.entries(ACT_KINDS).map(([k, label]) => ['act-' + k, [label, kindLayer[k], '--' + k]])),
     tile: ['🟩 Explored tiles', tileLayer, '--tile'], climb: ['⛰️ Climbs', climbLayer, '--climb'],
-    country: ['🌍 Countries', countryLayer, '--country'], city: ['🏙️ Cities', cityLayer, '--city']
+    country: ['🌍 Countries', countryLayer, '--country'], city: ['🏙️ Cities', cityLayer, '--city'],
+    checkin: ['📍 Check-ins', checkinLayer, '--checkin'], home: ['🌱 Your places', homeLayer, '--home']
   };
 }
 
@@ -138,6 +163,8 @@ function extraCounts() {
     ...Object.fromEntries(Object.keys(ACT_KINDS).map(k => ['act-' + k, allActivities.filter(a => a.kind === k && inWin(a.date)).length])),
     tile: explored?.tiles.size ? `${explored.tiles.size.toLocaleString()} · ▢${explored.square.size}` : 0,
     city: topCities.length,
+    home: Object.values(settings.home || {}).filter(Boolean).length,
+    checkin: allCheckins.filter(c => inWin(new Date(c.t * 1000).toISOString())).length,
     climb: allClimbs.length ? `${allClimbs.filter(climbDone).length} / ${allClimbs.length}` : 0
   };
 }
@@ -146,15 +173,41 @@ function drawExtras() {
   drawStays();
   drawPhotos();
   drawTimeline();
+  drawCheckins();
   drawActivities();
   drawTiles();
   drawCountries();
   drawCities();
   drawClimbs();
+  drawHome();
   if (typeof map3d !== 'undefined' && map3d && !document.getElementById('map3d').hidden) refresh3D();  // the 3D view follows
 }
 
 // --- long tables: the first rows, and a button for more ---
+
+// Tables under root with headings marked <th data-sort="num"> or "text": a click on one sorts the rows by that column,
+// numbers and dates biggest or latest first, text from A, empty cells last; a second click turns it round. A cell's
+// data-v is what it is sorted by, else its text. Tables that are also paginated are paginated again from the top.
+function sortableTables(root) {
+  (typeof root === 'string' ? document.getElementById(root) : root)?.querySelectorAll('table.sp-table').forEach(t => {
+    t.querySelectorAll('thead th[data-sort]').forEach(th => th.addEventListener('click', () => {
+      const col = [...th.parentNode.children].indexOf(th), num = th.dataset.sort === 'num';
+      const desc = th.classList.contains('sort-desc') ? false : th.classList.contains('sort-asc') ? true : num;
+      const val = r => { const c = r.cells[col]; const v = c ? (c.dataset.v ?? c.textContent.trim()) : ''; return num ? (v === '' ? NaN : parseFloat(v)) : v; };
+      const rows = [...t.tBodies[0].rows].sort((a, b) => {
+        const x = val(a), y = val(b), ex = num ? isNaN(x) : !x, ey = num ? isNaN(y) : !y;
+        if (ex || ey) return ex - ey;
+        const d = num ? x - y : String(x).localeCompare(String(y));
+        return desc ? -d : d;
+      });
+      rows.forEach(r => t.tBodies[0].appendChild(r));
+      t.querySelectorAll('thead th').forEach(h => { h.classList.remove('sort-asc', 'sort-desc'); h.removeAttribute('aria-sort'); });
+      th.classList.add(desc ? 'sort-desc' : 'sort-asc');
+      th.setAttribute('aria-sort', desc ? 'descending' : 'ascending');
+      if (t.parentElement.querySelector(':scope > .sp-more')) paginateTables(t.parentElement);
+    }));
+  });
+}
 
 // Every table under root with more than `first` rows shows `first`, then a button that shows `step` more at a time
 function paginateTables(root, first = 20, step = 20) {
@@ -198,7 +251,7 @@ function refreshPages() {
 
 function drawClimbs() {
   climbLayer.clearLayers();
-  const color = getCSSVar('--climb'), ring = getCSSVar('--surface');
+  const color = mapVar('--climb'), ring = mapVar('--surface');
   // the ones not done first, so the done ones are drawn over them
   [...allClimbs].sort((a, b) => climbDone(a) - climbDone(b)).forEach(c => {
     const done = climbDone(c);
@@ -247,7 +300,7 @@ function drawStays() {
   });
   spots.forEach(list => {
     list.sort((a, b) => b.start.localeCompare(a.start));
-    const s = list[0], car = s.what === 'car', color = getCSSVar(car ? '--car' : '--stay');
+    const s = list[0], car = s.what === 'car', color = mapVar(car ? '--car' : '--stay');
     const total = list.reduce((t, x) => t + nights(x), 0);
     const count = n => (car ? `${n} day${n !== 1 ? 's' : ''}` : `${n} night${n !== 1 ? 's' : ''}`);
     const line = x => `${fmtDate(x.start)} – ${fmtDate(x.end || x.start)} · ${count(nights(x))}` +
@@ -282,24 +335,25 @@ function photoCells() {
 // Every photo (/api/photos/points: [id, unix time, lat, lon, video]), loaded once when the layer is first drawn.
 // As chosen in the settings: grouped into clusters (a photo: its thumbnail, a click away from the whole photo), a
 // heatmap, or the older places (counts per place, from the photo places import). Without the index: the places.
-let allPhotoPoints = null, photoPointsAsked = false;
+let allPhotoPoints = null, photoPointsAsked = null;
 const photoDay = p => new Date(p[1] * 1000).toISOString().slice(0, 10);
 
+// the photo index, asked once; resolves when it is there
 function loadPhotoPoints() {
-  if (photoPointsAsked) return;
-  photoPointsAsked = true;
-  fetch('/api/photos/points').then(r => (r.ok ? r.json() : [])).catch(() => []).then(list => {
+  return photoPointsAsked = photoPointsAsked || fetch('/api/photos/points').then(r => (r.ok ? r.json() : [])).catch(() => []).then(list => {
     allPhotoPoints = list;
     drawPhotos();
     drawLegend();
   });
 }
 
+// p: [id, time, lat, lon, video, how] (how: 'a' placed by its album, 'y' and only its year known)
 function photoPopup(p) {
   const when = new Date(p[1] * 1000);
+  const date = p[5] === 'y' ? `${when.getUTCFullYear()}` : `${fmtDate(photoDay(p))} ${when.toISOString().slice(11, 16)} UTC`;
   return `<div class="photo-pop"><a href="/api/photos/${p[0]}/full" target="_blank" rel="noopener" title="Open the whole ${p[4] ? 'video' : 'photo'}">` +
     `<img src="/api/photos/${p[0]}/thumb" alt="" loading="lazy" width="240"></a><br><small>${p[4] ? '🎬 ' : '📷 '}` +
-    `${fmtDate(photoDay(p))} ${when.toISOString().slice(11, 16)} UTC · <a href="/api/photos/${p[0]}/full" target="_blank" rel="noopener">open ${p[4] ? 'video' : 'full size'}</a></small></div>`;
+    `${date}${p[5] ? ' · placed by its album' : ''} · <a href="/api/photos/${p[0]}/full" target="_blank" rel="noopener">open ${p[4] ? 'video' : 'full size'}</a></small></div>`;
 }
 
 let heatLoading = null;
@@ -319,7 +373,7 @@ function shownPhotoPoints() {
 
 function drawPhotos() {
   photoLayer.clearLayers();
-  const color = getCSSVar('--photo'), mode = prefs.photos || 'clusters';
+  const color = mapVar('--photo'), mode = prefs.photos || 'clusters';
   if (mode !== 'places' && allPhotoPoints === null) loadPhotoPoints();
   if (mode === 'places' || !allPhotoPoints?.length) {  // counts per place (imports/photos.py without --points)
     photoCells().forEach(c => {
@@ -355,7 +409,7 @@ function drawPhotos() {
 
 function drawTimeline() {
   timelineLayer.clearLayers();
-  const color = getCSSVar('--timeline');
+  const color = mapVar('--timeline');
   allTimeline.paths.filter(p => inWin(p.date)).forEach(p => {
     L.polyline(decodePath(p.path), { renderer: canvasRenderer, color, weight: 1.5, opacity: 0.55, interactive: false })
       .addTo(timelineLayer);
@@ -364,6 +418,21 @@ function drawTimeline() {
     L.circleMarker([v.lat, v.lon], { renderer: canvasRenderer, radius: 2.5, color, fillColor: color, fillOpacity: 0.8, weight: 0 })
       .bindPopup(`<b>🧭 ${escapeHTML(v.name || 'Visit')}</b><br><small>${escapeHTML(v.start)} – ${escapeHTML(v.end.slice(day(v.end) === day(v.start) ? 11 : 0))}</small>`)
       .addTo(timelineLayer);
+  });
+}
+
+// Places you were at a known time from your data downloads (imports/checkins.py): Facebook and VK check-ins and
+// posts, Instagram posts, Google Maps reviews, Uber and Bolt pick-ups and drop-offs
+const CHECKIN_ICON = { facebook: '📘', instagram: '📸', vk: '💬', 'google reviews': '⭐', uber: '🚕', bolt: '🚕' };
+function drawCheckins() {
+  checkinLayer.clearLayers();
+  const color = mapVar('--checkin');
+  allCheckins.filter(c => inWin(new Date(c.t * 1000).toISOString())).forEach(c => {
+    const when = new Date(c.t * 1000);
+    L.circleMarker([c.lat, c.lon], { renderer: canvasRenderer, radius: 4, color: mapVar('--surface'), weight: 1, fillColor: color, fillOpacity: 0.9 })
+      .bindPopup(`<b>${CHECKIN_ICON[c.source] || '📍'} ${escapeHTML(c.name || (c.kind === 'ride' ? 'Ride' : 'Here'))}</b><br><small>${escapeHTML(c.source)} ${escapeHTML(c.kind || '')} · ` +
+        `${fmtDate(when.toISOString())} ${when.toISOString().slice(11, 16)} UTC</small>`)
+      .addTo(checkinLayer);
   });
 }
 
@@ -470,7 +539,7 @@ function bucketsAt(z) {
 // The grid of all tiles, as on statshunters, so the unexplored ones show: once the tiles are 6 pixels or more
 function drawTileGrid(ctx, coords, size) {
   const z = coords.z;
-  ctx.strokeStyle = getCSSVar('--tile');
+  ctx.strokeStyle = mapVar('--tile');
   ctx.globalAlpha = 0.35;
   ctx.lineWidth = 1;
   ctx.beginPath();
@@ -495,7 +564,7 @@ const ExploredCanvas = L.GridLayer.extend({
     c.width = size.x; c.height = size.y;
     if (prefs.grid) drawTileGrid(c.getContext('2d'), coords, size);
     if (!explored?.tiles.size) return c;
-    const ctx = c.getContext('2d'), color = getCSSVar('--tile');
+    const ctx = c.getContext('2d'), color = mapVar('--tile');
     ctx.fillStyle = color;
     const fill = (k, x, y, w) => {
       ctx.globalAlpha = explored.cluster.has(k) ? 0.38 : 0.16;
@@ -560,8 +629,8 @@ function activityPopup(a, ll) {
   const pts = [];
   for (let i = 0; i < a.pts.length; i += 2) pts.push([a.pts[i], a.pts[i + 1]]);
   activityHighlight = L.layerGroup([
-    L.polyline(pts, { color: getCSSVar('--text'), weight: 7, opacity: 0.9, interactive: false }),
-    L.polyline(pts, { color: getCSSVar('--' + a.kind), weight: 4, opacity: 1, interactive: false })
+    L.polyline(pts, { color: mapVar('--text'), weight: 7, opacity: 0.9, interactive: false }),
+    L.polyline(pts, { color: mapVar('--' + a.kind), weight: 4, opacity: 1, interactive: false })
   ]).addTo(map);
   if (!allWeather && a.kind === 'ride') loadWeather().then(w => {  // the first ride clicked: its weather when it comes
     const el = document.querySelector('.leaflet-popup .act-weather');
@@ -580,7 +649,7 @@ function drawActivities() {
   const kinds = shownKinds();
   kindsDrawn = kinds.join();
   actShown = allActivities.filter(a => a.pts && inWin(a.date) && kinds.includes(a.kind));
-  actColors = Object.fromEntries(Object.keys(ACT_KINDS).map(k => [k, getCSSVar('--' + k)]));
+  actColors = Object.fromEntries(Object.keys(ACT_KINDS).map(k => [k, mapVar('--' + k)]));
   if (kinds.length) activityLayer.addTo(map);
   else map.removeLayer(activityLayer);
   activityGrid.redraw();
@@ -629,7 +698,7 @@ function drawTiles() {
   squareLayer.clearLayers();
   if (!explored.tiles.size) return;
   const { x, y, size } = explored.square;
-  L.rectangle([[tileLat(y + size), tileLon(x)], [tileLat(y), tileLon(x + size)]], { color: getCSSVar('--text'), weight: 2, fill: false, dashArray: '6 4' })
+  L.rectangle([[tileLat(y + size), tileLon(x)], [tileLat(y), tileLon(x + size)]], { color: mapVar('--text'), weight: 2, fill: false, dashArray: '6 4' })
     .bindPopup(`<b>🟩 Explored ${TILE_Z === 14 ? 'tiles' : 'squadratinhos'}</b><br><small>${explored.tiles.size.toLocaleString()} · max square ${size}×${size} · ` +
       `max cluster ${explored.cluster.size.toLocaleString()}</small>`).addTo(squareLayer);
 }
@@ -677,11 +746,11 @@ function addLocateControl() {
 function locateMe() {
   if (!navigator.geolocation) return toast('This browser cannot tell where you are', 'error');
   navigator.geolocation.getCurrentPosition(p => {
-    const ll = [p.coords.latitude, p.coords.longitude], acc = Math.round(p.coords.accuracy), color = getCSSVar('--accent');
+    const ll = [p.coords.latitude, p.coords.longitude], acc = Math.round(p.coords.accuracy), color = mapVar('--accent');
     if (meLayer) map.removeLayer(meLayer);
     meLayer = L.layerGroup([
       L.circle(ll, { radius: acc, color, weight: 1, fillOpacity: 0.08, interactive: false }),
-      L.circleMarker(ll, { radius: 7, color: getCSSVar('--surface'), weight: 2, fillColor: color, fillOpacity: 1 })
+      L.circleMarker(ll, { radius: 7, color: mapVar('--surface'), weight: 2, fillColor: color, fillOpacity: 1 })
         .bindPopup(`<b>You are here</b><br><small>to within ${acc.toLocaleString()} m</small>`)
     ]).addTo(map);
     map.setView(ll, Math.max(map.getZoom(), acc > 2000 ? 11 : 14));
@@ -708,15 +777,83 @@ function drawCities() {
 
 function paintCities() {
   cityLayer.clearLayers();
-  const color = getCSSVar('--city'), most = topCities[0]?.days || 1;
+  const color = mapVar('--city'), most = topCities[0]?.days || 1;
   topCities.forEach((c, i) => {
     const m = L.circleMarker([c.lat, c.lon], {
       radius: 3 + 11 * Math.sqrt(c.days / most), color, weight: 1.5, fillColor: color, fillOpacity: 0.35
     }).bindPopup(`<b>🏙️ ${flagOf(c.country)}${escapeHTML(c.name)}</b> · #${i + 1}<br><small>${c.days} day${c.days !== 1 ? 's' : ''}, ` +
       `${c.visits} visit${c.visits !== 1 ? 's' : ''} · ${fmtDate(c.first)} – ${fmtDate(c.last)}</small>` +
       (c.id ? `<br><a href="#city=${c.id}" class="popup-link" onclick="event.preventDefault(); openCityReport(${c.id})">Open report →</a>` : ''));
-    if (i < 10) m.bindTooltip(`${i + 1}. ${escapeHTML(c.name)}`, { permanent: true, direction: 'right', className: 'city-label', offset: [6, 0] });
+    if (i < 10 && !homeIds().has(c.id)) m.bindTooltip(`${i + 1}. ${escapeHTML(c.name)}`, { permanent: true, direction: 'right', className: 'city-label', offset: [6, 0] });
     m.addTo(cityLayer);
+  });
+}
+
+// --- picking a town by name ---
+
+// Suggestions as you type a town's name (GeoNames, the biggest first) in a list after the input (made if missing);
+// onPick(town { id, name, cc, lat, lon, pop }) when one is chosen (click or Enter), onType() on every key typed
+function attachTownPicker(input, { onPick, onType = () => {} }) {
+  let list = input.nextElementSibling;
+  if (!list || !list.classList.contains('place-list')) {
+    list = Object.assign(document.createElement('div'), { className: 'place-list', hidden: true });
+    input.insertAdjacentElement('afterend', list);
+    input.parentElement.classList.add('place-pick');
+  }
+  let found = [], on = -1, timer = null, asked = '';
+  const paint = () => {
+    list.innerHTML = found.map((t, i) => `<div data-i="${i}" class="${i === on ? 'on' : ''}">${flagOf(t.cc)}${escapeHTML(t.name)}, ${t.cc}` +
+      `<small>${t.pop >= 1e6 ? (t.pop / 1e6).toFixed(1) + 'M' : t.pop >= 1e3 ? Math.round(t.pop / 1e3) + 'k' : t.pop}</small></div>`).join('');
+    list.hidden = !found.length;
+  };
+  const pick = t => { input.value = `${t.name}, ${t.cc}`; found = []; paint(); onPick(t); };
+  input.addEventListener('input', () => {
+    onType();
+    clearTimeout(timer);
+    const q = input.value.trim();
+    if (q.length < 2) { found = []; return paint(); }
+    timer = setTimeout(async () => {
+      asked = q;
+      const got = await fetch('/api/towns?q=' + encodeURIComponent(q)).then(r => (r.ok ? r.json() : [])).catch(() => []);
+      if (asked !== input.value.trim()) return;  // typed on meanwhile
+      found = got; on = got.length ? 0 : -1; paint();
+    }, 150);
+  });
+  input.addEventListener('keydown', e => {
+    if (list.hidden) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); on = (on + (e.key === 'ArrowDown' ? 1 : -1) + found.length) % found.length; paint(); }
+    else if (e.key === 'Enter' && found[on]) { e.preventDefault(); pick(found[on]); }
+    else if (e.key === 'Escape') { e.stopPropagation(); found = []; paint(); }
+  });
+  list.addEventListener('mousedown', e => { const d = e.target.closest('[data-i]'); if (d) { e.preventDefault(); pick(found[+d.dataset.i]); } });
+  input.addEventListener('blur', () => { found = []; paint(); });
+}
+
+// --- your places ---
+
+// The hometown, where you live and where you work (set in the settings), above everything else: the hometown
+// bigger, with a halo; one town in several roles gets one mark
+const HOME_ROLE = { hometown: ['🌱', 'Hometown', 'Your hometown'], residence: ['🏠', 'Home', 'Where you live'], work: ['💼', 'Work', 'Where you work'] };
+const homeIds = () => new Set(Object.values(settings.home || {}).filter(Boolean).map(t => t.id));  // their town keeps only this label
+function drawHome() {
+  homeLayer.clearLayers();
+  if (!map.getPane('home')) map.createPane('home').style.zIndex = 640;  // over the markers, under the popups
+  map.getPane('home').dataset.theme = mapTone();
+  const byTown = new Map();
+  Object.entries(settings.home || {}).forEach(([role, t]) => {
+    if (!t || !HOME_ROLE[role]) return;
+    if (!byTown.has(t.id)) byTown.set(t.id, { town: t, roles: [] });
+    byTown.get(t.id).roles.push(role);
+  });
+  byTown.forEach(({ town, roles }) => {
+    const big = roles.includes('hometown'), size = big ? 38 : 28;
+    const icon = L.divIcon({ className: '', iconSize: [size, size], iconAnchor: [size / 2, size / 2],
+      html: `<div class="home-pin${big ? ' hometown' : ''}">${roles.map(r => HOME_ROLE[r][0]).join('')}</div>` });
+    L.marker([town.lat, town.lon], { icon, pane: 'home', zIndexOffset: 1000, keyboard: false })
+      .bindTooltip(`${roles.map(r => HOME_ROLE[r][1]).join(' · ')}: ${escapeHTML(town.name)}`, { permanent: true, direction: 'right', offset: [size / 2 + 2, 0], className: 'home-label', pane: 'home' })
+      .bindPopup(`<b>${roles.map(r => HOME_ROLE[r][0]).join('')} ${flagOf(town.cc)}${escapeHTML(town.name)}</b><br><small>${roles.map(r => HOME_ROLE[r][2]).join(', ')}</small>` +
+        `<br><a href="#city=${town.id}" class="popup-link" onclick="event.preventDefault(); openCityReport(${town.id})">Open report →</a>`)
+      .addTo(homeLayer);
   });
 }
 
@@ -743,13 +880,14 @@ function drawCountries() {
   countryLayer.clearLayers();
   visitedCount = got.places.length;
   countryTotal = got.total;
-  const color = getCSSVar('--country');
+  const color = mapVar('--country');
   got.places.forEach(c => {
     const flag = String(c.id).length === 2 ? flagOf(c.id) : '';
     L.geoJSON(c.shape, { style: { stroke: false, fillColor: color, fillOpacity: /^grey/.test(prefs.basemap) ? 0.08 : 0.18, fillRule: 'nonzero', className: 'country-fill' } })
       .bindPopup(`<b>🌍 ${flag}${escapeHTML(c.name)}</b><br><small>${c.region ? escapeHTML(c.region.toLowerCase().replace(/\b\w/g, l => l.toUpperCase())) + '<br>' : ''}` +
         `${c.days} day${c.days !== 1 ? 's' : ''}${win.from || win.to ? ' in this period' : ''}, first ${fmtDate(c.first)}` +
-        `${c.last !== c.first ? ', last ' + fmtDate(c.last) : ''}<br>${COUNTRY_LISTS[prefs.countries]}: ${visitedCount} of ${countryTotal}</small>`)
+        `${c.last !== c.first ? ', last ' + fmtDate(c.last) : ''}<br>${COUNTRY_LISTS[prefs.countries]}: ${visitedCount} of ${countryTotal}</small>` +
+        (/^[A-Z]{2}$/.test(c.id) ? `<br><a href="#country=${c.id}" class="popup-link" onclick="event.preventDefault(); openCountry('${c.id}')">Country page →</a>` : ''))
       .addTo(countryLayer);
   });
   countryLayer.eachLayer(l => l.bringToBack());
@@ -821,11 +959,12 @@ function addPeriodControl() {
   const Period = L.Control.extend({
     options: { position: 'topleft' },
     onAdd() {
-      const box = L.DomUtil.create('div', 'map-legend map-period');
+      const box = L.DomUtil.create('div', 'map-legend map-period foldable');
       L.DomEvent.disableClickPropagation(box);
       L.DomEvent.disableScrollPropagation(box);
+      box.addEventListener('click', e => { if (e.target.closest('.panel-toggle')) box.classList.toggle('open'); });  // on a phone
       const ys = years(), opt = (v, t) => `<option value="${v}">${t}</option>`;
-      box.innerHTML =
+      box.innerHTML = '<button class="panel-toggle" type="button">Period ▾</button>' +
         `<label>Years <select id="p-from">${opt('', 'first')}${ys.map(y => opt(y, y)).join('')}</select>` +
         `– <select id="p-to">${opt('', 'last')}${ys.map(y => opt(y, y)).join('')}</select></label>` +
         `<label>Trip <select id="p-trip">${opt('', 'all trips')}` +
@@ -923,7 +1062,7 @@ function whereOn(d) {
     spot = last[1];
     lines.push(`<small>nothing that day; last known: ${last[2]} on ${fmtDate(last[0])}</small>`);
   }
-  whereMarker = L.circleMarker(spot, { radius: 9, color: getCSSVar('--text'), weight: 2, fillColor: getCSSVar('--accent2'), fillOpacity: 0.9 })
+  whereMarker = L.circleMarker(spot, { radius: 9, color: mapVar('--text'), weight: 2, fillColor: mapVar('--accent2'), fillOpacity: 0.9 })
     .bindPopup(`<b>${fmtDate(d)}</b><br>${lines.join('<br>')}`, { maxWidth: 280 }).addTo(map);
   map.setView(spot, Math.max(map.getZoom(), 6));
   whereMarker.openPopup();

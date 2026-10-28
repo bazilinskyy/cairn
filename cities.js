@@ -1,7 +1,7 @@
 'use strict';
 // Your most visited cities: every place you were on a day (an airport you landed at or left from, a station, a stay,
 // photos, a Timeline visit, the start of a Strava activity) is put in the town it belongs to, from GeoNames' towns
-// over 1,000 people (data/cities1000.txt, which flightmail downloads), and the days are counted per town.
+// over 1,000 people (data/cities1000.txt, which tripmail downloads), and the days are counted per town.
 
 const fs = require('fs');
 
@@ -23,7 +23,7 @@ function load(file) {
   for (const line of text.split('\n')) {
     const f = line.split('\t');
     if (f.length < 15 || SKIP.has(f[7])) continue;
-    const town = { id: +f[0], name: f[1], cc: f[8], lat: +f[4], lon: +f[5], pop: +f[14] || 1000, fc: f[7] };
+    const town = { id: +f[0], name: f[1], cc: f[8], lat: +f[4], lon: +f[5], pop: +f[14] || 1000, fc: f[7], own: [norm(f[1]), norm(f[2])] };
     // its names to match an airport's city by: other spellings only for towns over 50,000 ("Kiev" is Kyiv)
     town.names = new Set([f[1], f[2], ...(town.pop >= 50000 ? f[3].split(',') : [])].map(norm).filter(Boolean));
     const key = Math.floor(town.lat) + ',' + Math.floor(town.lon);
@@ -112,4 +112,40 @@ function starts(grid, activities) {
   return { towns: [...towns.values()].sort(order).slice(0, 200).map(round), countries: [...countries.values()].sort(order).map(round) };
 }
 
-module.exports = { load, townAt, townNamed, rank, starts };
+// A town by its GeoNames id, or null
+function byId(grid, id) {
+  for (const list of grid.values()) {
+    const t = list.find(x => x.id === id);
+    if (t) return t;
+  }
+  return null;
+}
+
+// Towns whose name (or, for towns over 50,000, another spelling) starts with q, the biggest first: for picking one
+// by name ("Chern" finds Chernihiv, Chernivtsi, ...)
+function search(grid, q, limit = 10) {
+  const n = norm(q);
+  if (n.length < 2) return [];
+  const hits = [];
+  for (const list of grid.values()) {
+    for (const t of list) {
+      if ([...t.names].some(x => x.startsWith(n))) hits.push(t);
+    }
+  }
+  const own = t => (norm(t.name).startsWith(n) ? 1 : 0);  // its own name before another spelling
+  return hits.sort((a, b) => own(b) - own(a) || b.pop - a.pop).slice(0, limit);
+}
+
+// The biggest town of exactly that name, or null; by another spelling (for towns over 50,000: "Kiev") only when no
+// town is called so itself ("Bethlehem" is Bethlehem, not Belém, whose other names include it)
+function biggestNamed(grid, name) {
+  const n = norm(name);
+  if (!n) return null;
+  let own = null, other = null;
+  for (const list of grid.values()) for (const t of list) {
+    if (t.own.includes(n)) { if (!own || t.pop > own.pop) own = t; } else if (t.names.has(n) && (!other || t.pop > other.pop)) other = t;
+  }
+  return own || other;
+}
+
+module.exports = { load, townAt, townNamed, rank, starts, byId, search, biggestNamed };

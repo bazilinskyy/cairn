@@ -146,6 +146,10 @@ function renderSports() {
   renderClimbs(kinds);
 }
 
+// A climb's popularity: in how many languages Wikipedia has an article about it (its Wikidata site links)
+const POPULAR_TH = '<th data-sort="num" title="In how many languages Wikipedia has an article about it">Popularity</th>';
+const popular = c => `<td data-v="${c.links || ''}" title="${c.links ? `Wikipedia articles in ${c.links} languages` : ''}">${c.links || ''}</td>`;
+
 // The famous cycling climbs (layers.js allClimbs): how many you rode over, by country, which, and the nearest ones
 // still to do from where your rides usually start. Only with cycling shown and climbs known.
 function renderClimbs(kinds) {
@@ -178,23 +182,27 @@ function renderClimbs(kinds) {
     (countries.length ? `<h4>By country</h4><table class="sp-table"><tbody>${countries.map(([cc, v]) =>
       `<tr><th>${flagOf(cc)}${escapeHTML(country(cc))}</th><td style="width:60%"><span class="sp-swatch" style="width:${Math.max(2, v.done / v.all * 100)}%;` +
       `background:var(--climb);height:8px"></span></td><td>${v.done} / ${v.all}</td></tr>`).join('')}</tbody></table>` : '') +
-    (done.length ? `<h4>Climbed</h4><div class="sp-scroll"><table class="sp-table"><thead><tr><th>Climb</th><th>Height</th><th>Ways up</th><th>Times</th><th>Last</th></tr></thead><tbody>` +
+    (done.length ? `<h4>Climbed</h4><div class="sp-scroll"><table class="sp-table"><thead><tr><th data-sort="text">Climb</th>${POPULAR_TH}` +
+      `<th data-sort="num">Height</th><th data-sort="num">Ways up</th><th data-sort="num" class="sort-desc" aria-sort="descending">Times</th><th data-sort="num">Last</th></tr></thead><tbody>` +
       [...done].sort((a, b) => b.times - a.times || (b.ele || 0) - (a.ele || 0)).map(c => {
         const r = ridden(c), last = (year ? r : c.rides)[0];
         const inYear = list => list.filter(x => !year || x.date.startsWith(year)).length;
         const ways = (c.ascents || []).map(a => [`from ${a.from}`, inYear(a.rides), `${fmtDist(a.length, 1)}, ${fmtHeight(a.gain)}, ${a.grade}%`])
           .concat((c.other || []).map(o => [o.via, inYear(o.rides), '']));
-        return `<tr><td>${climbName(c)}<small>${flagOf(c.country)}${escapeHTML(country(c.country))}</small></td><td>${c.ele ? fmtHeight(c.ele) : ''}</td>` +
-          `<td>${ways.map(([w, n, info]) => `<span title="${escapeHTML(info)}" style="display:block;${n ? '' : 'color:var(--text2)'}">${n ? '✓' : '✗'} ${escapeHTML(w)}${n > 1 ? ` ×${n}` : ''}</span>`).join('') ||
+        return `<tr><td data-v="${escapeHTML(c.name)}">${climbName(c)}<small>${flagOf(c.country)}${escapeHTML(country(c.country))}</small></td>${popular(c)}` +
+          `<td data-v="${c.ele || ''}">${c.ele ? fmtHeight(c.ele) : ''}</td>` +
+          `<td data-v="${ways.filter(w => w[1]).length}">${ways.map(([w, n, info]) => `<span title="${escapeHTML(info)}" style="display:block;${n ? '' : 'color:var(--text2)'}">${n ? '✓' : '✗'} ${escapeHTML(w)}${n > 1 ? ` ×${n}` : ''}</span>`).join('') ||
             (c.known ? '' : '<small>ways up still being worked out</small>')}</td>` +
-          `<td>${year ? r.length : c.times}</td><td>${last ? `${linkTo({ id: last.id, name: fmtDate(last.date) })}` : ''}</td></tr>`;
+          `<td>${year ? r.length : c.times}</td><td data-v="${last ? Date.parse(last.date) : ''}">${last ? `${linkTo({ id: last.id, name: fmtDate(last.date) })}` : ''}</td></tr>`;
       }).join('') + '</tbody></table></div>' : '') +
-    (next.length ? `<h4>Not yet, nearest to where you usually start</h4><div class="sp-scroll"><table class="sp-table"><tbody>` +
-      next.map(c => `<tr><td>${climbName(c)}<small>${flagOf(c.country)}${escapeHTML(country(c.country))}</small></td>` +
-        `<td>${c.ele ? fmtHeight(c.ele) : ''}</td><td>${fmtDist(away(c))} away</td></tr>`).join('') + '</tbody></table></div>' : '') +
+    (next.length ? `<h4>Not yet, nearest to where you usually start</h4><div class="sp-scroll"><table class="sp-table"><thead><tr><th data-sort="text">Climb</th>` +
+      `${POPULAR_TH}<th data-sort="num">Height</th><th data-sort="num" class="sort-asc" aria-sort="ascending">Away</th></tr></thead><tbody>` +
+      next.map(c => `<tr><td data-v="${escapeHTML(c.name)}">${climbName(c)}<small>${flagOf(c.country)}${escapeHTML(country(c.country))}</small></td>${popular(c)}` +
+        `<td data-v="${c.ele || ''}">${c.ele ? fmtHeight(c.ele) : ''}</td><td data-v="${away(c)}">${fmtDist(away(c))} away</td></tr>`).join('') + '</tbody></table></div>' : '') +
     `<p class="sp-note">The climbs in the cycle-racing categories of Wikipedia (English, French, Italian, Dutch, German, Catalan), each with its summit. ` +
     `A ride counts when its route passes within 150 m of the summit; for a way up (from Bédoin, from Malaucène) when it rode that way's last stretch up to the top, and the part that sets it apart from the other ways. Ways up are worked out from the roads and the terrain the first time a ride comes near a climb. On the map: the ⛰️ Climbs layer, filled when done, with the ways up you rode.</p>`;
   hookLinks('sp-climbs');
+  sortableTables('sp-climbs');
   paginateTables('sp-climbs');
 }
 

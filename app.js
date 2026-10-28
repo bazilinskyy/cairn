@@ -38,6 +38,9 @@ const config = { ...defaults, ...overrides };
 const secret = loadJSON(path.join(__dirname, 'secret'), 'secret');
 
 const DATA_DIR      = path.join(__dirname, config.data_dir);
+// tripmail's section of config and secret (called flightmail before, which still works)
+const mailSection = c => ({ ...(c?.flightmail || {}), ...(c?.tripmail || {}) });
+const homeAirports = () => mailSection(config).home_airports || ['AMS', 'EIN', 'RTM'];
 const AIRPORTS_FILE = path.join(__dirname, config.airports_file);
 const FLIGHTS_FILE  = path.join(__dirname, config.flights_file);
 const GROUND_FILE   = path.join(__dirname, config.ground_file);
@@ -154,8 +157,11 @@ function haversine(lat1, lon1, lat2, lon2) {
   return Math.round(6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
 }
 
+// bumped on every save: what is worked out from the data (placesAndDays) is worked out again
+let dataVersion = 0;
 function saveFlights() {
   fs.writeFileSync(FLIGHTS_FILE, JSON.stringify(flights, null, 2));
+  dataVersion++;
 }
 
 function nextId(list = flights) {
@@ -164,10 +170,12 @@ function nextId(list = flights) {
 
 function saveTrips() {
   fs.writeFileSync(GROUND_FILE, JSON.stringify(trips, null, 2));
+  dataVersion++;
 }
 
 function saveStays() {
   fs.writeFileSync(STAYS_FILE, JSON.stringify(stays, null, 2));
+  dataVersion++;
 }
 
 // Booking codes of stays you deleted (a cancelled booking, a plan that did not happen): a mail sending one again, such as
@@ -201,8 +209,11 @@ function lookUpTrips() {
   lookingUp = true;
   // seen: where everything but the stays puts you on those days, to place a stay by
   const seen = (from, to) => placesAndDays(from, to, { stays: false }).map(p => p.at);
-  const store = { trips, stays, flights: () => flights, airports: () => airports, save: saveTrips, saveStays, seen };
-  ground.enrich(store).catch(e => console.warn('[ground]', e.message)).finally(() => {
+  if (towns === undefined) towns = cities.load(path.join(DATA_DIR, 'cities1000.txt'));
+  const known = name => (towns ? cities.biggestNamed(towns, name) : null);
+  const store = { trips, stays, flights: () => flights, airports: () => airports, save: saveTrips, saveStays, seen, known };
+  ground.enrich(store).then(r => { if (r?.later) setTimeout(lookUpTrips, 31 * 60e3).unref(); })  // trains waiting for BRouter
+    .catch(e => console.warn('[ground]', e.message)).finally(() => {
     lookingUp = false;
     if (lookAgain) { lookAgain = false; lookUpTrips(); }
   });
@@ -397,10 +408,14 @@ app.get('/api/ground', (_req, res) => {
 app.post('/api/ground', (req, res) => {
   const t = req.body;
   if (!t.mode || !t.from || !t.to || !t.date) return res.status(400).json({ error: 'mode, from, to and date are required' });
-  // the same trip again: by its calendar event, or the same departure minute (not for ones added by hand with only a
-  // year or a month known: several trips can share it)
+  // the same trip again: by its calendar event, the same departure minute, or the same towns that day within three
+  // hours (a calendar's time and an email's, in two time zones); not for ones added by hand with only a year or a
+  // month known: several trips can share it
+  const town = n => (n || '').toLowerCase().replace(/\s*\(.*?\)/g, '').split(/[\s,-]+/)[0];
+  const hours = (a, b) => Math.abs(Date.parse(a.replace(' ', 'T')) - Date.parse(b.replace(' ', 'T'))) / 36e5;
   const same = trips.find(x => (t.event_id && x.event_id === t.event_id)
-    || (!t.approx && !x.approx && x.mode === t.mode && (x.date || '').slice(0, 16) === t.date.slice(0, 16)));
+    || (!t.approx && !x.approx && x.mode === t.mode && ((x.date || '').slice(0, 16) === t.date.slice(0, 16)
+      || ((x.date || '').slice(0, 10) === t.date.slice(0, 10) && town(x.from) === town(t.from) && town(x.to) === town(t.to) && hours(x.date, t.date) <= 3))));
   if (same) {
     const { id, ...changes } = t;
     ground.forget(same, changes);
@@ -435,7 +450,7 @@ app.delete('/api/ground/:id', (req, res) => {
   res.json({ deleted: t.id });
 });
 
-// --- Stays and rental cars (from flightmail), photos and Timeline (from the import scripts) ---
+// --- Stays and rental cars (from tripmail), photos and Timeline (from the import scripts) ---
 
 app.get('/api/stays', (_req, res) => {
   res.json(stays);
@@ -492,7 +507,13 @@ app.delete('/api/stays/:id', (req, res) => {
 app.get('/api/photos', (_req, res) => res.json(readImport(PHOTOS_FILE, [])));
 
 // Every photo with its place and time (photos.js): [[id, unix time, lat, lon, video 1/0]], gzipped, with an ETag
-const photoIndex = require('./photos').create({ file: path.join(DATA_DIR, 'photo_points.json'), cache: path.join(DATA_DIR, 'photo_cache'), readImport });
+// the photo index, with the photos of Google Photos albums that have no place of their own at the album's (albums.js)
+const photoIndex = require('./photos').create({ file: path.join(DATA_DIR, 'photo_points.json'), cache: path.join(DATA_DIR, 'photo_cache'), readImport,
+  extra: () => (typeof albums !== 'undefined' ? albums.photoEntries() : []) });
+// the photos as each use wants them: with a date of their own (not only an album's year: those make no day), and with
+// a place of their own (not their album's: for what needs the exact spot, the climbs and the photo suggestions)
+const photosBy = test => { let seen = null, out = []; return () => { const l = photoIndex.list(); if (l !== seen) { seen = l; out = l.filter(test); } return out; }; };
+const datedPhotos = photosBy(p => p[5] !== 'y'), ownPlacePhotos = photosBy(p => !p[5]);
 app.get('/api/photos/points', (req, res) => {
   const { json, gz, etag } = photoIndex.payload();
   res.set({ ETag: etag, 'Cache-Control': 'no-cache', Vary: 'Accept-Encoding', 'Content-Type': 'application/json' });
@@ -507,6 +528,9 @@ app.get('/api/photos/:id/:size(thumb|full)', async (req, res) => {
   res.set('Cache-Control', 'max-age=604800').type(made.type).sendFile(made.file);
 });
 app.get('/api/timeline', (_req, res) => res.json(readImport(TIMELINE_FILE, { visits: [], paths: [] })));
+// places you were at a known time from data downloads: Facebook, Instagram, VK, Maps reviews, Uber, Bolt
+const CHECKINS_FILE = path.join(DATA_DIR, 'checkins.json');
+app.get('/api/checkins', (_req, res) => res.json(readImport(CHECKINS_FILE, [])));
 
 // --- Strava ---
 
@@ -529,10 +553,33 @@ app.get('/api/activities/status', (_req, res) => res.json(activities.status()));
 // Famous cycling climbs and which your rides went over (climbs.js); [] when there are no rides
 const climbs = require('./climbs').create({
   activities: () => activities.list(), key: () => activities.payload().etag, file: path.join(DATA_DIR, 'climb_ascents.json'),
-  profile: () => readImport(GARMIN_FILE, NO_GARMIN).profile, trackDir: path.join(DATA_DIR, 'tracks'), photos: () => photoIndex.list(),
+  profile: () => readImport(GARMIN_FILE, NO_GARMIN).profile, trackDir: path.join(DATA_DIR, 'tracks'), photos: ownPlacePhotos,
   towns: () => (towns === undefined ? (towns = cities.load(path.join(DATA_DIR, 'cities1000.txt'))) : towns)
 });
 app.get('/api/climbs', (_req, res) => res.json(climbs.list()));
+// A ride to a climb's top and back (a GPX file for the bike computer): ?from=lat,lon (a stay), &name= its name. The
+// route is FOSSGIS's bicycle routing on OpenStreetMap; it does not know which side of the climb is the famous one
+const bikeRoutes = new Map();
+app.get('/api/climbs/:id/gpx', async (req, res) => {
+  const c = climbs.list().find(x => x.id === req.params.id), from = String(req.query.from || '').split(',').map(Number);
+  if (!c || from.length !== 2 || !from.every(Number.isFinite) || Math.abs(from[0]) > 90 || Math.abs(from[1]) > 180) return res.status(400).json({ error: 'climb and from=lat,lon needed' });
+  if (ground.km(from, [c.lat, c.lon]) > 150) return res.status(400).json({ error: 'too far for a ride' });
+  const key = `${c.id}|${from.map(n => n.toFixed(4)).join(',')}`;
+  try {
+    if (!bikeRoutes.has(key)) bikeRoutes.set(key, await ground.bikeRoute([from, [c.lat, c.lon], from]));
+  } catch (e) {
+    return res.status(502).json({ error: `no route now (${e.message})` });
+  }
+  const route = bikeRoutes.get(key);
+  if (!route) return res.status(404).json({ error: 'no route found' });
+  const x = s => String(s).replace(/[<>&"']/g, ch => `&#${ch.charCodeAt(0)};`), start = String(req.query.name || 'start').slice(0, 80);
+  const name = `${c.name} from ${start}`;
+  res.type('application/gpx+xml').set('Content-Disposition', `attachment; filename="${c.name.replace(/[^\w.-]+/g, '_').slice(0, 60)}.gpx"`).send(
+    `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Cairn" xmlns="http://www.topografix.com/GPX/1/1">\n` +
+    `<metadata><name>${x(name)}</name><desc>${x(`${Math.round(route.km)} km there and back; the top at ${c.ele ? `${c.ele} m` : 'its marker'}`)}</desc></metadata>\n` +
+    `<wpt lat="${c.lat}" lon="${c.lon}">${c.ele ? `<ele>${c.ele}</ele>` : ''}<name>${x(c.name)}</name></wpt>\n` +
+    `<trk><name>${x(name)}</name><trkseg>\n${route.path.map(([lat, lon]) => `<trkpt lat="${lat.toFixed(6)}" lon="${lon.toFixed(6)}"/>`).join('\n')}\n</trkseg></trk>\n</gpx>\n`);
+});
 app.get('/api/climbs/:id/photos', (req, res) => {
   const list = climbs.photos(req.params.id);
   return list ? res.json(list) : res.status(404).json({ error: 'no such climb' });
@@ -575,10 +622,33 @@ app.get('/auth/strava/callback', async (req, res) => {
 
 // --- Most visited cities ---
 
-let towns;  // GeoNames towns, read on first use (flightmail downloads data/cities1000.txt)
+let towns;  // GeoNames towns, read on first use (tripmail downloads data/cities1000.txt)
 
 // Each day and place you were somewhere, in the period ?from=YYYY-MM-DD&to=YYYY-MM-DD (both optional)
+// The town of a place (to about 1 km; an airport's by its city's name), and its ISO country: looked up once for every
+// request (the towns and the countries do not change while Cairn runs)
+const townMemo = new Map(), isoMemo = new Map();
+function townOfAt(at, city) {
+  if (!at) return null;
+  if (towns === undefined) towns = cities.load(path.join(DATA_DIR, 'cities1000.txt'));
+  if (!towns) return null;
+  const key = at[0].toFixed(2) + ',' + at[1].toFixed(2) + (city ? '|' + city : '');
+  if (!townMemo.has(key)) townMemo.set(key, (city && cities.townNamed(towns, city, at[0], at[1])) || cities.townAt(towns, at[0], at[1]));
+  return townMemo.get(key);
+}
+
+// Every place you were on every day, worked out once and kept until anything it comes from changes (a save, a file
+// read again, the photo index); a period is a cut of it
+const placesMemo = new Map();
 function placesAndDays(from, to, { stays: withStays = true } = {}) {
+  const refs = [dataVersion, flights.length, trips.length, stays.length, activities.list(), readImport(PHOTOS_FILE, []), readImport(TIMELINE_FILE, {}),
+    readImport(CHECKINS_FILE, []), datedPhotos()];
+  let m = placesMemo.get(withStays);
+  if (!m || m.refs.some((r, i) => r !== refs[i])) placesMemo.set(withStays, m = { refs, list: allPlacesAndDays(withStays) });
+  return from || to ? m.list.filter(p => (!from || p.day >= from) && (!to || p.day <= to)) : m.list.slice();
+}
+function allPlacesAndDays(withStays) {
+  const from = '', to = '';
   const pts = [], inPeriod = d => d && (!from || d >= from) && (!to || d <= to);
   const add = (at, d, city) => { if (at && inPeriod(d)) pts.push({ at, day: d, city }); };
   const eachDay = (a, b, fn) => {  // a stay or Timeline visit: every day from the first to the last, at most 90
@@ -601,7 +671,18 @@ function placesAndDays(from, to, { stays: withStays = true } = {}) {
     if (s.what === 'car') add([s.lat, s.lon], s.start);
     else eachDay(s.start, s.end, d => add([s.lat, s.lon], d));
   });
-  readImport(PHOTOS_FILE, []).forEach(c => (c.days || []).forEach(d => add([c.lat, c.lon], d)));
+  // photos: each from the photo index, where and when it was taken (once per place and day); without the index, the
+  // older photo places file
+  const shot = datedPhotos();
+  if (shot.length) {
+    const seen = new Set();
+    shot.forEach(p => {
+      const d = new Date(p[1] * 1000).toISOString().slice(0, 10), key = `${d}|${p[2].toFixed(2)}|${p[3].toFixed(2)}`;
+      if (!seen.has(key)) { seen.add(key); add([p[2], p[3]], d); }
+    });
+  } else readImport(PHOTOS_FILE, []).forEach(c => (c.days || []).forEach(d => add([c.lat, c.lon], d)));
+  // check-ins, posts with a place, reviews and rides (imports/checkins.py): where you were that day
+  readImport(CHECKINS_FILE, []).forEach(c => add([c.lat, c.lon], new Date(c.t * 1000).toISOString().slice(0, 10)));
   (readImport(TIMELINE_FILE, {}).visits || []).forEach(v => eachDay(v.start.slice(0, 10), v.end.slice(0, 10), d => add([v.lat, v.lon], d)));
   activities.list().forEach(a => add(a.at, (a.date || '').slice(0, 10)));
   return pts;
@@ -624,13 +705,7 @@ app.get('/api/countries', async (req, res) => {
   }
   const from = req.query.from || '', to = req.query.to || '';
   const inPeriod = d => d && (!from || d >= from) && (!to || d <= to);
-  const memo = new Map();
-  const townOf = (at, city) => {
-    if (!at) return null;
-    const key = at[0].toFixed(2) + ',' + at[1].toFixed(2) + (city ? '|' + city : '');
-    if (!memo.has(key)) memo.set(key, (city && cities.townNamed(towns, city, at[0], at[1])) || cities.townAt(towns, at[0], at[1]));
-    return memo.get(key);
-  };
+  const townOf = townOfAt;
   const all = {};
   const of = (at, city) => {
     if (!at) return null;
@@ -638,7 +713,7 @@ app.get('/api/countries', async (req, res) => {
     if (!place) return null;
     const id = scheme ? place.id : place.cc;
     return all[id] = all[id] || { country: id, name: scheme ? place.name : undefined, days: new Set(), towns: new Set(), nights: 0,
-      flights: 0, train: 0, bus: 0, ferry: 0, cars: 0, activities: 0, km: 0, photos: 0 };
+      flights: 0, train: 0, bus: 0, ferry: 0, hitch: 0, cars: 0, activities: 0, km: 0, photos: 0 };
   };
   placesAndDays(from, to).forEach(p => {
     const v = of(p.at, p.city), t = townOf(p.at, p.city);
@@ -649,7 +724,7 @@ app.get('/api/countries', async (req, res) => {
     if (ap && inPeriod((f.date || '').slice(0, 10))) { const v = of([ap.lat, ap.lon], ap.city); if (v) v.flights++; }
   });
   trips.forEach(t => {
-    if (!inPeriod((t.date || '').slice(0, 10)) || !['train', 'bus', 'ferry'].includes(t.mode)) return;
+    if (!inPeriod((t.date || '').slice(0, 10)) || !['train', 'bus', 'ferry', 'hitch'].includes(t.mode)) return;
     new Set([of(t.from_lat != null && [t.from_lat, t.from_lon]), of(t.to_lat != null && [t.to_lat, t.to_lon])]).forEach(v => { if (v) v[t.mode]++; });
   });
   stays.forEach(s => {
@@ -662,7 +737,9 @@ app.get('/api/countries', async (req, res) => {
     const v = inPeriod((a.date || '').slice(0, 10)) && of(a.at);
     if (v) { v.activities++; v.km += a.distance || 0; }
   });
-  readImport(PHOTOS_FILE, []).forEach(c => {
+  const dated = datedPhotos();  // the photo index, else the photos' grid cells
+  if (dated.length) dated.forEach(p => { const v = inPeriod(new Date(p[1] * 1000).toISOString().slice(0, 10)) && of([p[2], p[3]]); if (v) v.photos++; });
+  else readImport(PHOTOS_FILE, []).forEach(c => {
     const v = (c.days || []).some(inPeriod) && of([c.lat, c.lon]);
     if (v) v.photos += c.count || 0;
   });
@@ -685,6 +762,76 @@ app.get('/api/regions', async (req, res) => {
   }
 });
 
+// One country (ISO code), for its page: its days and visits, its towns, the trips that went there, flights in and
+// out, trains, buses and ferries, stays, sports, photos, the famous climbs in it you rode, music, and its outline
+app.get('/api/country/:cc', async (req, res) => {
+  const cc = String(req.params.cc || '').toUpperCase();
+  if (!/^[A-Z]{2}$/.test(cc)) return res.status(400).json({ error: 'a two-letter country code' });
+  try { await regions.ready(); } catch (e) { return res.status(503).json({ error: `no country map: ${e.message}` }); }
+  if (towns === undefined) towns = cities.load(path.join(DATA_DIR, 'cities1000.txt'));
+  const placeOf = at => {
+    if (!at || at[0] == null) return null;
+    const k = (+at[0]).toFixed(2) + ',' + (+at[1]).toFixed(2);
+    if (!isoMemo.has(k)) isoMemo.set(k, regions.placeNow('iso', +at[0], +at[1]));
+    return isoMemo.get(k);
+  };
+  const here = at => placeOf(at)?.id === cc;
+  const points = placesAndDays('', '').filter(p => here(p.at));
+  const place = points.length ? placeOf(points[0].at) : null;
+  const days = [...new Set(points.map(p => p.day))].sort(), visits = [];
+  days.forEach(d => {
+    const v = visits[visits.length - 1];
+    if (v && (Date.parse(d) - Date.parse(v.end)) / 864e5 <= 1) { v.end = d; v.days++; } else visits.push({ start: d, end: d, days: 1 });
+  });
+  const ap = code => airports[code] && [airports[code].lat, airports[code].lon];
+  const shape = points.length ? (await regions.visited('iso', [points[0]])).places[0]?.shape || null : null;
+  const climbsHere = climbs.list().filter(c => c.country === cc);
+  const acts = activities.list().filter(a => a.at && here(a.at));
+  const photosHere = datedPhotos().filter(p => here([p[2], p[3]]));
+  res.json({
+    cc, name: place?.name || cc, shape, days: days.length, first: days[0], last: days[days.length - 1], visits: visits.reverse(),
+    towns: towns ? cities.rank(towns, points).filter(t => t.country === cc).slice(0, 60) : [],
+    trips: tripStore.list().filter(t => t.countries.some(c => c.cc === cc))
+      .map(t => ({ id: t.id, name: t.name, start: t.start, end: t.end, days: t.days, here: t.countries.find(c => c.cc === cc).days, countries: t.countries })),
+    flights: flights.map(f => ({ f, into: here(ap(f.to)), out: here(ap(f.from)) })).filter(x => x.into || x.out)
+      .map(({ f, into }) => ({ date: f.date, flight_number: f.flight_number, airline: f.airline, from: f.from, to: f.to,
+        from_city: airports[f.from]?.city, to_city: airports[f.to]?.city, direction: into ? 'in' : 'out' })).sort((a, b) => b.date.localeCompare(a.date)),
+    ground: trips.filter(t => here([t.from_lat, t.from_lon]) || here([t.to_lat, t.to_lon]))
+      .map(t => ({ id: t.id, date: t.date, approx: t.approx, mode: t.mode, from: t.from, to: t.to, distance: t.distance })).sort((a, b) => b.date.localeCompare(a.date)),
+    stays: stays.filter(s => s.lat != null && here([s.lat, s.lon]))
+      .map(s => ({ id: s.id, what: s.what, start: s.start, end: s.end, place: s.place, hotel: s.hotel, type: s.type, provider: s.provider })).sort((a, b) => b.start.localeCompare(a.start)),
+    activities: { count: acts.length, km: Math.round(acts.reduce((n, a) => n + (a.distance || 0), 0)), ids: acts.map(a => a.id) },
+    photos: photosHere.length, photo_ids: photosHere.map(p => p[0]),
+    climbs: { total: climbsHere.length, done: climbsHere.filter(c => c.times).map(c => ({ id: c.id, name: c.name, ele: c.ele, times: c.times })) },
+    music: music.top({ days: new Set(days) })
+  });
+});
+
+// A town's flag (or its coat of arms when it has none), from Wikidata by its GeoNames id: the Wikimedia Commons file,
+// looked up once and kept in data/town_flags.json ({ id: { flag, arms } or null })
+const FLAGS_FILE = path.join(DATA_DIR, 'town_flags.json');
+let townFlags = null;
+app.get('/api/city/:id/flag', async (req, res) => {
+  const id = String(Number(req.params.id));
+  if (!townFlags) { try { townFlags = JSON.parse(fs.readFileSync(FLAGS_FILE, 'utf8')); } catch (_) { townFlags = {}; } }
+  if (!(id in townFlags)) {
+    const q = `SELECT ?flag ?arms WHERE { ?item wdt:P1566 "${id}" . OPTIONAL { ?item wdt:P41 ?flag } OPTIONAL { ?item wdt:P94 ?arms } } LIMIT 1`;
+    try {
+      const r = await fetch(`https://query.wikidata.org/sparql?format=json&query=${encodeURIComponent(q)}`,
+        { headers: { 'User-Agent': 'cairn (personal travel log; https://github.com/bazilinskyy/cairn)', Accept: 'application/sparql-results+json' }, signal: AbortSignal.timeout(20000) });
+      if (!r.ok) throw new Error(`Wikidata: HTTP ${r.status}`);
+      const b = (await r.json()).results.bindings[0] || {};
+      const file = u => (u ? decodeURIComponent(u.value.split('/').pop()) : null);
+      townFlags[id] = b.flag || b.arms ? { flag: file(b.flag), arms: file(b.arms) } : null;
+      fs.writeFileSync(FLAGS_FILE, JSON.stringify(townFlags));
+    } catch (e) {
+      return res.status(502).json({ error: e.message });
+    }
+  }
+  const f = townFlags[id];
+  res.json(f ? { ...f, url: `https://commons.wikimedia.org/wiki/Special:FilePath/${encodeURIComponent(f.flag || f.arms)}?width=160`, kind: f.flag ? 'flag' : 'coat of arms' } : null);
+});
+
 // One town, for its report page: the days and separate visits there, and everything done there in the period (?from=
 // &to=): stays and rental cars, flights in and out, trains, buses and ferries from or to it, sports activities that
 // started there, photos per day, Timeline places. A place belongs to a town as for the most visited cities.
@@ -692,18 +839,11 @@ app.get('/api/city/:id', (req, res) => {
   if (towns === undefined) towns = cities.load(path.join(DATA_DIR, 'cities1000.txt'));
   if (!towns) return res.status(503).json({ error: 'no town list (data/cities1000.txt)' });
   const id = Number(req.params.id);
-  let town = null;
-  for (const list of towns.values()) { town = list.find(t => t.id === id); if (town) break; }
+  const town = cities.byId(towns, id);
   if (!town) return res.status(404).json({ error: 'no such town' });
   const from = req.query.from || '', to = req.query.to || '';
   const inPeriod = d => d && (!from || d >= from) && (!to || d <= to);
-  const memo = new Map();
-  const here = (at, city) => {
-    if (!at || at[0] == null) return false;
-    const key = (+at[0]).toFixed(2) + ',' + (+at[1]).toFixed(2) + (city ? '|' + city : '');
-    if (!memo.has(key)) memo.set(key, (city && cities.townNamed(towns, city, at[0], at[1])) || cities.townAt(towns, at[0], at[1]));
-    return memo.get(key) === town;
-  };
+  const here = (at, city) => !!at && at[0] != null && townOfAt([+at[0], +at[1]], city) === town;
   const days = [...new Set(placesAndDays(from, to).filter(p => here(p.at, p.city)).map(p => p.day))].sort();
   const visits = [];
   days.forEach(d => {
@@ -722,11 +862,16 @@ app.get('/api/city/:id', (req, res) => {
     .map(s => ({ id: s.id, what: s.what, start: s.start, end: s.end, place: s.place, hotel: s.hotel, type: s.type, provider: s.provider, price: s.price }));
   const activitiesHere = activities.list().filter(a => a.at && inPeriod((a.date || '').slice(0, 10)) && here(a.at))
     .map(a => ({ id: a.id, date: a.date, name: a.name, sport: a.sport, distance: a.distance, moving_time: a.moving_time, elevation: a.elevation, trainer: a.trainer }));
+  // the photos of the photo index taken in the town (as its days count them), for its gallery and its days; without
+  // the index, the photos' grid cells (a cell knows its days and its total: spread evenly)
+  const near = p => Math.abs(p[2] - town.lat) < 0.3 && Math.abs(p[3] - town.lon) < 0.5, dayOf = p => new Date(p[1] * 1000).toISOString().slice(0, 10);
+  const photosIn = datedPhotos().filter(p => near(p) && inPeriod(dayOf(p)) && here([p[2], p[3]])), photoIds = photosIn.map(p => p[0]);
   const photoDays = new Map();
-  readImport(PHOTOS_FILE, []).forEach(c => {
+  if (photoIndex.list().length) photosIn.forEach(p => photoDays.set(dayOf(p), (photoDays.get(dayOf(p)) || 0) + 1));
+  else readImport(PHOTOS_FILE, []).forEach(c => {
     const ds = (c.days || []).filter(inPeriod);
     if (!ds.length || !here([c.lat, c.lon])) return;
-    const each = (c.count || 0) / (c.days || []).length;  // a cell knows its days and its total: spread evenly
+    const each = (c.count || 0) / (c.days || []).length;
     ds.forEach(d => photoDays.set(d, (photoDays.get(d) || 0) + each));
   });
   const timelineHere = (readImport(TIMELINE_FILE, {}).visits || [])
@@ -737,7 +882,7 @@ app.get('/api/city/:id', (req, res) => {
     days: days.length, first: days[0], last: days[days.length - 1], visits: visits.reverse(),
     stays: staysHere.sort(sortBy('start')), flights: flightsHere.sort(sortBy('date')), ground: groundHere.sort(sortBy('date')),
     activities: activitiesHere.sort(sortBy('date')),
-    photos: [...photoDays].map(([day, n]) => ({ day, count: Math.max(1, Math.round(n)) })).sort(sortBy('day')),
+    photos: [...photoDays].map(([day, n]) => ({ day, count: Math.max(1, Math.round(n)) })).sort(sortBy('day')), photo_ids: photoIds,
     timeline: timelineHere.sort(sortBy('start')),
     music: music.top({ days: new Set(days) })
   });
@@ -748,7 +893,20 @@ app.get('/api/city/:id', (req, res) => {
 const weather = require('./weather').create({ activities: () => activities.list(), file: path.join(DATA_DIR, 'weather.json'), log: m => console.log(m) });
 app.get('/api/weather', (_req, res) => res.json(weather.all()));
 const WELLNESS_FILE = path.join(DATA_DIR, 'wellness.json');
-const wellnessDays = () => readImport(WELLNESS_FILE, { days: {} }).days || {};
+// Every day's sleep, resting heart rate and more (imports/garmin.py). A night whose sleep was not measured is left
+// out of it: older watches give no sleep stages and call the whole time the watch lay still "deep" (12-13 hours,
+// also when it lay on a table), as garmin.py now leaves them out too
+const measuredSleep = d => d.sleep && !(!d.rem && (d.deep || 0) >= 0.9 * d.sleep);
+const SLEEP_KEYS = ['sleep', 'deep', 'light', 'rem', 'awake', 'bed', 'wake', 'score'];
+const wellnessSeen = new WeakMap();
+const wellnessDays = () => {
+  const raw = readImport(WELLNESS_FILE, { days: {} }).days || {};
+  if (!wellnessSeen.has(raw)) {
+    wellnessSeen.set(raw, Object.fromEntries(Object.entries(raw).map(([d, x]) => [d, !x.sleep || measuredSleep(x) ? x
+      : Object.fromEntries(Object.entries(x).filter(([k]) => !SLEEP_KEYS.includes(k)))])));
+  }
+  return wellnessSeen.get(raw);
+};
 app.get('/api/wellness', (req, res) => {
   const from = req.query.from || '', to = req.query.to || '';
   res.json(Object.fromEntries(Object.entries(wellnessDays()).filter(([d]) => (!from || d >= from) && (!to || d <= to))));
@@ -773,9 +931,9 @@ app.get('/api/music', (req, res) => res.json(music.top({ from: req.query.from ||
 const tripStore = require('./trips').create({
   towns: () => { if (towns === undefined) towns = cities.load(path.join(DATA_DIR, 'cities1000.txt')); return towns; },
   cities, days: (from, to) => placesAndDays(from, to), flights: () => flights, airports: () => airports, groundTrips: () => trips,
-  stays: () => stays, activities: () => activities.list(), photos: () => photoIndex.list(),
-  homeAirports: () => config.flightmail?.home_airports || ['AMS', 'EIN', 'RTM'], file: path.join(DATA_DIR, 'drives.json'),
-  wellness: wellnessDays, weather: () => weather.all(),
+  stays: () => stays, activities: () => activities.list(), photos: datedPhotos,
+  homeAirports, file: path.join(DATA_DIR, 'drives.json'),
+  wellness: wellnessDays, weather: () => weather.all(), calendar: () => readImport(path.join(DATA_DIR, 'calendar.json'), []),
   log: m => console.log(m)
 });
 app.get('/api/trips', (_req, res) => res.json(tripStore.list()));
@@ -785,17 +943,328 @@ const curiosities = require('./stats').create({
   days: (from, to) => placesAndDays(from, to), towns: () => (towns === undefined ? (towns = cities.load(path.join(DATA_DIR, 'cities1000.txt'))) : towns),
   cities, activities: () => activities.list(), stays: () => stays, flights: () => flights, airports: () => airports, groundTrips: () => trips,
   trips: () => tripStore.list(), weather: () => weather.all(), wellness: wellnessDays,
-  homeAirports: () => config.flightmail?.home_airports || ['AMS', 'EIN', 'RTM'],
+  homeAirports,
   heightsFile: path.join(DATA_DIR, 'heights.json'), coastFile: path.join(DATA_DIR, 'coastline.geojson'), download: httpsGet, log: m => console.log(m)
 });
+// --- Backup (backup.js): everything you imported or added, out as one .tar.gz and back in ---
+
+// ferries with no terminal on the map leave from their island's coast nearest the other end (ground.js): Natural
+// Earth's closed coastlines, each with its box
+let coastRingsOnce;
+ground.setCoast(() => {
+  if (coastRingsOnce === undefined) {
+    try {
+      const geo = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'coastline.geojson'), 'utf8'));
+      coastRingsOnce = geo.features.flatMap(f => (f.geometry.type === 'MultiLineString' ? f.geometry.coordinates : [f.geometry.coordinates]))
+        .filter(l => l.length > 3 && l[0][0] === l[l.length - 1][0] && l[0][1] === l[l.length - 1][1])
+        .map(pts => ({ pts, box: [Math.min(...pts.map(p => p[0])), Math.min(...pts.map(p => p[1])), Math.max(...pts.map(p => p[0])), Math.max(...pts.map(p => p[1]))] }));
+    } catch (_) { coastRingsOnce = []; }
+  }
+  return coastRingsOnce;
+});
+
+const backups = require('./backup').create({
+  files: () => [
+    ['flights.json', FLIGHTS_FILE], ['ground.json', GROUND_FILE], ['stays.json', STAYS_FILE], ['stays.removed.json', REMOVED_FILE],
+    ['garmin.json', GARMIN_FILE], ['strava.json', path.join(__dirname, config.strava_file)], ['wellness.json', WELLNESS_FILE],
+    ['photos.json', PHOTOS_FILE], ['photo_points.json', path.join(DATA_DIR, 'photo_points.json')], ['timeline.json', TIMELINE_FILE],
+    ['weather.json', path.join(DATA_DIR, 'weather.json')], ['lastfm.json', path.join(DATA_DIR, 'lastfm.json')],
+    ['climb_ascents.json', path.join(DATA_DIR, 'climb_ascents.json')], ['drives.json', path.join(DATA_DIR, 'drives.json')],
+    ['suggestions.dismissed.json', path.join(DATA_DIR, 'suggestions.dismissed.json')], ['saved_places.json', path.join(DATA_DIR, 'saved_places.json')],
+    ['tripdoc_rows.json', path.join(DATA_DIR, 'tripdoc_rows.json')], ['albums.json', path.join(DATA_DIR, 'albums.json')],
+    ['home.json', path.join(DATA_DIR, 'home.json')], ['album_places.json', path.join(DATA_DIR, 'album_places.json')],
+    ['checkins.json', path.join(DATA_DIR, 'checkins.json')], ['calendar.json', path.join(DATA_DIR, 'calendar.json')],
+    ['transactions.json', path.join(DATA_DIR, 'transactions.json')]
+  ].map(([name, file]) => ({ name, file })),
+  tracks: path.join(DATA_DIR, 'tracks'), backupsDir: path.join(DATA_DIR, 'backups'), log: m => console.log(m)
+});
+app.get('/api/backup/summary', (_req, res) => res.json(backups.summary()));
+app.get('/api/backup', (req, res) => {  // ?activities=0: without the sports activities and their tracks
+  const activities = req.query.activities !== '0';
+  res.set({ 'Content-Type': 'application/gzip',
+    'Content-Disposition': `attachment; filename="cairn-backup-${backups.stamp()}${activities ? '' : '-no-activities'}.tar.gz"` });
+  backups.stream(res, undefined, { activities });
+});
+// a backup back in place; then Cairn starts again to read it (its service brings it back; run by hand, start it again)
+app.post('/api/backup/restore', express.raw({ type: () => true, limit: '2gb' }), async (req, res) => {
+  if (!req.body?.length) return res.status(400).json({ error: 'no file' });
+  try {
+    const done = await backups.restore(req.body);
+    const supervised = process.env.XPC_SERVICE_NAME === 'nl.tue.cairn';  // its LaunchAgent (mail/cairn.plist.template) starts it again
+    res.json({ ...done, restarting: supervised });
+    if (supervised) setTimeout(() => process.exit(0), 500);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
 // --- Suggestions (suggestions.js): journeys your photos show and nothing else does ---
 const suggestions = require('./suggestions').create({
   towns: () => (towns === undefined ? (towns = cities.load(path.join(DATA_DIR, 'cities1000.txt'))) : towns), cities,
-  photos: () => photoIndex.list(), flights: () => flights, airports: () => airports, groundTrips: () => trips, activities: () => activities.list(),
-  stays: () => stays, homeAirports: () => config.flightmail?.home_airports || ['AMS', 'EIN', 'RTM'],
+  photos: ownPlacePhotos, flights: () => flights, airports: () => airports, groundTrips: () => trips, activities: () => activities.list(),
+  stays: () => stays, homeAirports,
   dismissedFile: path.join(DATA_DIR, 'suggestions.dismissed.json')
 });
 app.get('/api/suggestions', (_req, res) => res.json(suggestions.list()));
+
+// albums with no places whose names say where and when (albums.js)
+const albums = require('./albums').create({
+  dir: () => (config.takeout_photos_dir ? config.takeout_photos_dir.replace(/^~/, require('os').homedir()) : ''),
+  cacheFile: path.join(DATA_DIR, 'albums.json'), placesFile: path.join(DATA_DIR, 'album_places.json'), km: ground.km,
+  towns: () => (towns === undefined ? (towns = cities.load(path.join(DATA_DIR, 'cities1000.txt'))) : towns),
+  near: year => {  // the middle of where your data puts you that year (the median place)
+    const pts = placesAndDays(`${year}-01-01`, `${year}-12-31`).map(p => p.at).filter(Boolean);
+    if (!pts.length) return null;
+    const mid = k => pts.map(p => p[k]).sort((a, b) => a - b)[Math.floor(pts.length / 2)];
+    return [mid(0), mid(1)];
+  },
+  flights: () => flights, airports: () => airports, groundTrips: () => trips, stays: () => stays,
+  dismissed: () => { try { return new Set(JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'suggestions.dismissed.json'), 'utf8'))); } catch (_) { return new Set(); } },
+  log: m => console.log(m)
+});
+// trips your Things to-dos say you made, that nothing else knows (things.js, todotrips.js)
+const things = require('./things').create({ db: () => config.things_db || '', log: m => console.log(m) });
+const dismissedSet = () => { try { return new Set(JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'suggestions.dismissed.json'), 'utf8'))); } catch (_) { return new Set(); } };
+const todoTrips = require('./todotrips').create({
+  things, locate: (name, year) => albums.locate(name, year), days: (from, to) => placesAndDays(from, to), km: ground.km,
+  townAt: at => { if (towns === undefined) towns = cities.load(path.join(DATA_DIR, 'cities1000.txt')); return towns && cities.townAt(towns, at[0], at[1]); },
+  dismissed: dismissedSet, log: m => console.log(m)
+});
+app.get('/api/suggestions/todos', (_req, res) => { const list = todoTrips.list(); res.json(list || { pending: true }); });
+// trains, buses and ferries in your trip docs that are not on the map (data/tripdoc_rows.json, from the trip docs)
+app.get('/api/suggestions/tripdocs', (_req, res) => {
+  const rows = readImport(path.join(DATA_DIR, 'tripdoc_rows.json'), []), no = dismissedSet();
+  const have = new Set(trips.map(t => `${(t.date || '').slice(0, 10)}|${t.mode}`));
+  res.json(rows.filter(r => !no.has(r.key) && !have.has(`${r.date}|${r.mode}`)));
+});
+
+// --- Getting ready for the coming trips (prep.js), and every morning what is still missing to the alerts channel ---
+function discord(text) {  // tripmail's Discord webhook (secret), the alerts channel
+  let s = secret;
+  try { s = JSON.parse(fs.readFileSync(path.join(__dirname, 'secret'), 'utf8')); } catch (_) {}
+  const url = mailSection(s).discord_webhook;
+  if (!url) return Promise.reject(new Error('no discord_webhook in secret'));
+  return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'User-Agent': 'cairn' }, body: JSON.stringify({ content: text.slice(0, 1900) }),
+    signal: AbortSignal.timeout(20000) }).then(r => { if (!r.ok) throw new Error(`Discord: HTTP ${r.status}`); });
+}
+const prep = require('./prep').create({
+  trips: () => tripStore.list(), flights: () => flights, airports: () => airports, stays: () => stays, groundTrips: () => trips,
+  climbs: () => climbs.list(), saved: () => readImport(path.join(DATA_DIR, 'saved_places.json'), []), things,
+  homeAirports, km: ground.km,
+  sentFile: path.join(DATA_DIR, 'prep_alerts.json'), dismissed: dismissedSet, discord, log: m => console.log(m)
+});
+app.get('/api/coming', async (_req, res) => res.json(await prep.coming()));
+
+// --- Spending (spending.js): what the stays cost, in euros ---
+const spending = require('./spending').create({
+  stays: () => stays, file: path.join(DATA_DIR, 'rates.json'), log: m => console.log(m),
+  transactions: () => readImport(path.join(DATA_DIR, 'transactions.json'), []),
+  townAt: at => { if (towns === undefined) towns = cities.load(path.join(DATA_DIR, 'cities1000.txt')); return towns && cities.townAt(towns, at[0], at[1]); }
+});
+app.get('/api/spending', (_req, res) => res.json(spending.summary()));
+
+// --- Wish list: saved places (Google Maps, imports/saved_places.py), climbs to ride near where you go, countries ---
+const SAVED_FILE = path.join(DATA_DIR, 'saved_places.json');
+const NEAR_HOME_KM = 60;
+app.get('/api/wishlist', (_req, res) => {
+  if (towns === undefined) towns = cities.load(path.join(DATA_DIR, 'cities1000.txt'));
+  const saved = readImport(SAVED_FILE, []);
+  const pts = placesAndDays('', new Date().toISOString().slice(0, 10));
+  const favourite = towns ? cities.rank(towns, pts, 20) : [];
+  const climbsToRide = climbs.list().filter(c => !c.times).map(c => {
+    let best = null;
+    for (const t of favourite) { const d = ground.km([t.lat, t.lon], [c.lat, c.lon]); if (d <= NEAR_HOME_KM && (!best || d < best.km)) best = { km: Math.round(d), near: t.name, nearId: t.id }; }
+    return best && { id: c.id, name: c.name, country: c.country, ele: c.ele, lat: c.lat, lon: c.lon, ...best };
+  }).filter(Boolean).sort((a, b) => a.km - b.km).slice(0, 60);
+  const visited = new Set();
+  if (towns) for (const p of pts) { if (!p.at) continue; const t = cities.townAt(towns, p.at[0], p.at[1]); if (t) visited.add(t.cc); }
+  const dn = new Intl.DisplayNames(['en'], { type: 'region' }), OLD = new Set(['AN', 'BU', 'CS', 'DD', 'DY', 'EU', 'EZ', 'FX', 'HV', 'NH', 'NT', 'QO', 'RH', 'SU', 'TP', 'UK', 'UN', 'VD', 'YD', 'YU', 'ZR', 'AC', 'CP', 'DG', 'EA', 'IC', 'TA', 'CQ']);
+  const all = [];
+  for (let a = 65; a <= 90; a++) for (let b = 65; b <= 90; b++) {
+    const cc = String.fromCharCode(a, b), name = dn.of(cc);
+    if (name && name !== cc && !OLD.has(cc) && !/^X[A-Z]$/.test(cc) || cc === 'XK') all.push({ cc, name });
+  }
+  res.json({ saved, climbs: climbsToRide, near: favourite.slice(0, 10).map(t => ({ id: t.id, name: t.name, cc: t.country })),
+    countries: { visited: [...visited].length, total: all.length, missing: all.filter(c => !visited.has(c.cc)).sort((a, b) => a.name.localeCompare(b.name)) } });
+});
+
+// --- A year in review (review.js) ---
+const yearReview = require('./review').create({
+  days: (from, to) => placesAndDays(from, to),
+  townOf: p => { if (towns === undefined) towns = cities.load(path.join(DATA_DIR, 'cities1000.txt')); return towns && ((p.city && cities.townNamed(towns, p.city, p.at[0], p.at[1])) || cities.townAt(towns, p.at[0], p.at[1])); },
+  trips: () => tripStore.list(), flights: () => flights, groundTrips: () => trips, stays: () => stays, activities: () => activities.list(),
+  climbs: () => climbs.list(), photos: datedPhotos, music: range => music.top(range), wellness: wellnessDays, weather: () => weather.all(),
+  spending: () => spending.summary()
+});
+app.get('/api/review/years', (_req, res) => res.json(yearReview.years()));
+app.get('/api/review/by-year', (_req, res) => res.json(yearReview.byYear()));  // every year side by side
+app.get('/api/review/:year', (req, res) => {
+  if (!/^\d{4}$/.test(req.params.year)) return res.status(400).json({ error: 'a year, like 2025' });
+  res.json(yearReview.review(+req.params.year));
+});
+
+// --- Data health: what looks wrong, to fix with a click ---
+// stays booked for the same nights (a booking and a trip doc's line, two sites), trips and stays not placed, trains and
+// buses drawn straight, flights without their airline's code; each can be fixed or said to be fine (dismissed)
+// stays that are copies of each other: the same nights and the same place ("Houston (Texas)" is Houston); the one that
+// knows most is kept (its position, the hotel, the price, Booking.com's own record)
+const placeKey = p => (p || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s*\(.*?\)/g, '').replace(/[^a-z]/g, '');
+function stayCopies() {
+  const groups = new Map();
+  stays.filter(s => s.what !== 'car' && s.start).forEach(s => {
+    const k = `${s.start}|${s.end || s.start}|${placeKey(s.place)}`;
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(s);
+  });
+  const score = s => (s.lat != null) * 8 + !!s.hotel * 4 + !!s.price * 2 + (s.source === 'booking') * 1;
+  return [...groups.values()].filter(g => g.length > 1).map(g => { const keep = [...g].sort((a, b) => score(b) - score(a))[0]; return { keep, drop: g.filter(s => s !== keep) }; });
+}
+app.post('/api/health/dedupe', (_req, res) => {
+  const copies = stayCopies(), gone = [];
+  for (const { drop } of copies) for (const s of drop) {
+    const i = stays.indexOf(s);
+    if (i >= 0) { stays.splice(i, 1); removeStayCode(s.code); gone.push(s.id); }
+  }
+  saveStays();
+  res.json({ removed: gone.length });
+});
+
+app.get('/api/health', (_req, res) => {
+  const no = dismissedSet(), beds = stays.filter(s => s.what !== 'car' && s.start && s.end && s.end > s.start).sort((a, b) => a.start.localeCompare(b.start));
+  const twice = [];
+  for (let i = 0; i < beds.length; i++) {
+    for (let j = i + 1; j < beds.length && beds[j].start < beds[i].end; j++) {
+      const a = beds[i], b = beds[j], key = `health|twice|${Math.min(a.id, b.id)}|${Math.max(a.id, b.id)}`;
+      const nights = Math.round((Date.parse(a.end < b.end ? a.end : b.end) - Date.parse(b.start > a.start ? b.start : a.start)) / 864e5);
+      if (nights > 0 && !no.has(key) && !(a.start === b.start && (a.end || a.start) === (b.end || b.start) && placeKey(a.place) === placeKey(b.place))) twice.push({ key, nights, stays: [a, b].map(s => ({ id: s.id, start: s.start, end: s.end, place: s.place, hotel: s.hotel || s.type || '', provider: s.provider || '', source: s.source || 'email' })) });
+    }
+  }
+  const unplaced = [...trips.filter(t => t.unplaced).map(t => ({ kind: 'ground', id: t.id, date: t.date, text: `${t.mode}: ${t.from} → ${t.to}`, from: t.from, to: t.to })),
+    ...stays.filter(s => s.unplaced || (s.lat == null && s.place)).map(s => ({ kind: 'stay', id: s.id, date: s.start, text: `${s.what === 'car' ? 'rental car' : 'stay'}: ${s.place}`, place: s.place }))]
+    .filter(x => !no.has(`health|unplaced|${x.kind}|${x.id}`)).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  const straight = trips.filter(t => t.path_source === 'straight' && t.mode !== 'ferry' && !no.has(`health|straight|${t.id}`))
+    .map(t => ({ id: t.id, date: t.date, mode: t.mode, from: t.from, to: t.to, distance: t.distance }));
+  const flightsBare = flights.filter(f => !/^[A-Z0-9]{2}\s?\d/i.test((f.flight_number || '').trim()) && !no.has(`health|flight|${f.id}`))
+    .map(f => ({ id: f.id, date: f.date, flight_number: f.flight_number || '', from: f.from, to: f.to, airline: f.airline || '' }));
+  res.json({ copies: stayCopies().reduce((n, g) => n + g.drop.length, 0), twice, unplaced, straight, flights: flightsBare });
+});
+// a train, bus or ferry looked up again from its names (its places and track)
+app.post('/api/ground/:id/retry', (req, res) => {
+  const t = trips.find(x => x.id === Number(req.params.id));
+  if (!t) return res.status(404).json({ error: 'no such trip' });
+  // ?keep=1: the track only, from the places it has (else the places too, from the names)
+  (req.query.keep ? ['path', 'path_source', 'route_v', 'distance', 'ports'] : ['from_lat', 'from_lon', 'to_lat', 'to_lon', 'path', 'path_source', 'route_v', 'unplaced', 'distance', 'ports'])
+    .forEach(k => delete t[k]);
+  saveTrips();
+  lookUpTrips();
+  res.json(t);
+});
+app.post('/api/stays/:id/retry', (req, res) => {  // a stay's place looked up again
+  const s = stays.find(x => x.id === Number(req.params.id));
+  if (!s) return res.status(404).json({ error: 'no such stay' });
+  ['lat', 'lon', 'unplaced'].forEach(k => delete s[k]);
+  saveStays();
+  lookUpTrips();
+  res.json(s);
+});
+
+app.get('/api/suggestions/albums', (_req, res) => { const list = albums.list(); res.json(albums.ready() ? list : { pending: true }); });
+// Payments abroad (your bank's, imports/bank.py) on days when nothing in Cairn puts you in that country: trips that
+// may be missing. Per country, the payments a few days apart make one run; a run with no day of yours in that
+// country around it (a day either side) is listed, unless you said it was none (an online purchase)
+let paidCache = { key: '', list: [] };
+app.get('/api/suggestions/payments', (_req, res) => {
+  const tx = readImport(path.join(DATA_DIR, 'transactions.json'), []), no = dismissedSet();
+  if (!tx.length) return res.json([]);
+  if (towns === undefined) towns = cities.load(path.join(DATA_DIR, 'cities1000.txt'));
+  if (!towns) return res.json([]);
+  const key = [tx.length, flights.length, trips.length, stays.length, no.size].join('|');
+  if (paidCache.key !== key) {
+    const memo = new Map(), ccAt = at => { const k = at[0].toFixed(2) + ',' + at[1].toFixed(2); if (!memo.has(k)) memo.set(k, cities.townAt(towns, at[0], at[1])?.cc || null); return memo.get(k); };
+    const home = new Set(homeAirports().map(c => airports[c]).filter(Boolean).map(a => ccAt([a.lat, a.lon])).filter(Boolean));
+    Object.values(homePlaces()).forEach(t => { if (t) home.add(t.cc); });
+    const there = new Set();  // 'cc|day' of every day Cairn puts you in a country
+    placesAndDays('', '').forEach(p => { const cc = p.at && ccAt(p.at); if (cc) there.add(`${cc}|${p.day}`); });
+    const near = (cc, d) => [-1, 0, 1].some(n => there.has(`${cc}|${new Date(Date.parse(d) + n * 864e5).toISOString().slice(0, 10)}`));
+    const runs = [];
+    tx.filter(t => t.country && !home.has(t.country) && t.amount < 0).sort((a, b) => a.date.localeCompare(b.date)).forEach(t => {
+      const r = runs.findLast(x => x.country === t.country);
+      if (r && (Date.parse(t.date) - Date.parse(r.last)) / 864e5 <= 3) { r.last = t.date; r.items.push(t); } else runs.push({ country: t.country, first: t.date, last: t.date, items: [t] });
+    });
+    paidCache = { key, list: runs.filter(r => !r.items.some(t => near(r.country, t.date))).map(r => {
+      const amounts = {};
+      r.items.forEach(t => { amounts[t.currency] = Math.round(((amounts[t.currency] || 0) - t.amount) * 100) / 100; });
+      return { key: `payments|${r.country}|${r.first}`, country: r.country, first: r.first, last: r.last, payments: r.items.length, amounts,
+        examples: r.items.slice(0, 3).map(t => t.description) };
+    }).filter(r => !no.has(r.key)).reverse() };
+  }
+  res.json(paidCache.list);
+});
+
+// Gaps (To check): trips abroad with no flight, train, bus or ferry around their first or last day (how did you get
+// there or back?), and long runs of days nothing in Cairn has a place for. Each can be dismissed
+let gapsCache = { key: '', value: null };
+app.get('/api/suggestions/gaps', (_req, res) => {
+  if (towns === undefined) towns = cities.load(path.join(DATA_DIR, 'cities1000.txt'));
+  const no = dismissedSet(), today = new Date().toISOString().slice(0, 10);
+  const key = [dataVersion, flights.length, trips.length, stays.length, no.size, today].join('|');
+  if (gapsCache.key !== key) {
+    const day = (d, n) => new Date(Date.parse(d) + n * 864e5).toISOString().slice(0, 10);
+    const moved = new Set();  // every day with a flight, train, bus or ferry, and the day either side
+    [...flights, ...trips].forEach(t => { const d = (t.date || '').slice(0, 10); if (d && t.approx !== 'year' && t.approx !== 'month') [-1, 0, 1].forEach(n => moved.add(day(d, n))); });
+    // a ride, run or walk that day (a trip on your own power), or a rental car picked up or brought back
+    activities.list().filter(x => !x.trainer && (x.distance || 0) >= 20).forEach(x => moved.add((x.date || '').slice(0, 10)));
+    stays.filter(x => x.what === 'car').forEach(x => [x.start, x.end].forEach(d => d && [-1, 0, 1].forEach(n => moved.add(day(d.slice(0, 10), n)))));
+    const home = new Set(Object.values(homePlaces()).filter(Boolean).map(t => t.cc));
+    homeAirports().map(c => airports[c]).filter(Boolean).forEach(a => { const t = towns && cities.townAt(towns, a.lat, a.lon); if (t) home.add(t.cc); });
+    const unreached = tripStore.list().filter(t => t.end < today && t.countries.some(c => !home.has(c.cc)))
+      .map(t => ({ key: `gap-trip|${t.id}`, id: t.id, name: t.name, start: t.start, end: t.end, days: t.days, there: moved.has(t.start), back: moved.has(t.end) }))
+      .filter(t => (!t.there || !t.back) && !no.has(t.key));
+    const days = [...new Set(placesAndDays('', '').map(p => p.day).filter(d => d && d <= today))].sort(), quiet = [];
+    for (let i = 1; i < days.length; i++) {
+      const n = Math.round((Date.parse(days[i]) - Date.parse(days[i - 1])) / 864e5) - 1;
+      if (n >= GAP_DAYS) quiet.push({ key: `gap-days|${day(days[i - 1], 1)}`, first: day(days[i - 1], 1), last: day(days[i], -1), days: n });
+    }
+    gapsCache = { key, value: { unreached: unreached.sort((a, b) => b.start.localeCompare(a.start)), quiet: quiet.filter(g => !no.has(g.key)).reverse() } };
+  }
+  res.json(gapsCache.value);
+});
+const GAP_DAYS = 30;
+
+// The albums with photos that have no place of their own, where they are put, and your choices (albums.js)
+app.get('/api/albums', (_req, res) => res.json(albums.ready() ? albums.albums() : { pending: true }));
+app.get('/api/albums/photos', (req, res) => {  // ?album=: its photos with no place of their own
+  const list = albums.albumPhotos(String(req.query.album || ''));
+  return list ? res.json(list) : res.status(404).json({ error: 'no such album' });
+});
+app.get('/api/albums/thumb', async (req, res) => {  // ?album=&file=: only a photo that album has
+  const file = albums.albumFile(String(req.query.album || ''), String(req.query.file || ''));
+  const made = file && await photoIndex.thumbOfFile(file);
+  if (!made) return res.status(404).end();
+  res.set('Cache-Control', 'max-age=86400').type(made.type).sendFile(made.file);
+});
+// a place as the browser sends it ({ name, lat, lon }), false (not a place) or null (back to what the name gives)
+const placeOfBody = p => (p === false || p === null ? p
+  : p && Number.isFinite(+p.lat) && Number.isFinite(+p.lon) ? { at: [+p.lat, +p.lon], name: String(p.name || '').slice(0, 120) } : undefined);
+app.put('/api/albums/place', (req, res) => {  // { album, place }
+  const place = placeOfBody(req.body?.place), album = String(req.body?.album || '');
+  if (place === undefined || !albums.albumPhotos(album)) return res.status(400).json({ error: 'album and place (or false, or null) needed' });
+  albums.chooseAlbum(album, place);
+  res.json({ ok: true });
+});
+app.put('/api/albums/photos', (req, res) => {  // { album, files, place }: place false is not allowed here
+  const place = placeOfBody(req.body?.place), album = String(req.body?.album || ''), have = albums.albumPhotos(album);
+  const files = (req.body?.files || []).map(String).filter(f => have?.some(x => x.file === f));
+  if (place === undefined || place === false || !files.length) return res.status(400).json({ error: 'album, files and place (or null) needed' });
+  albums.choosePhotos(album, files, place);
+  res.json({ ok: true, files: files.length });
+});
+app.get('/api/suggestions/albums/cover', async (req, res) => {  // ?key=album|<name>: only an album's own cover
+  const file = albums.cover(String(req.query.key || ''));
+  const made = file && await photoIndex.thumbOfFile(file);
+  if (!made) return res.status(404).end();
+  res.set('Cache-Control', 'max-age=86400').type(made.type).sendFile(made.file);
+});
 app.post('/api/suggestions/dismiss', (req, res) => {
   if (!req.body?.key) return res.status(400).json({ error: 'key is required' });
   suggestions.dismiss(String(req.body.key));
@@ -805,7 +1274,7 @@ app.post('/api/suggestions/dismiss', (req, res) => {
 app.get('/api/curiosities', (_req, res) => res.json(curiosities.get() || { pending: true }));
 app.get('/api/trips/:id', (req, res) => {
   const t = tripStore.get(req.params.id);
-  return t ? res.json({ ...t, music: music.top({ from: t.start, to: t.end }) }) : res.status(404).json({ error: 'no such trip' });
+  return t ? res.json({ ...t, music: music.top({ from: t.start, to: t.end }), spending: spending.forTrip(t.start, t.end) }) : res.status(404).json({ error: 'no such trip' });
 });
 
 app.get('/api/cities', (req, res) => {
@@ -814,9 +1283,42 @@ app.get('/api/cities', (req, res) => {
   res.json(cities.rank(towns, placesAndDays(req.query.from || '', req.query.to || '')));
 });
 
-// What the map needs from config: the airports trips start from and return to
+// Your places: the town you grew up in, the one you live in and the one you work in (data/home.json), each a GeoNames
+// town { id, name, cc, lat, lon } or null; set in the settings, marked apart on the map
+const HOME_FILE = path.join(DATA_DIR, 'home.json');
+const HOME_ROLES = ['hometown', 'residence', 'work'];
+function homePlaces() {
+  const h = readImport(HOME_FILE, {});
+  return Object.fromEntries(HOME_ROLES.map(r => [r, h[r] || null]));
+}
+
+// What the map needs: the airports trips start from and return to (config), and your places
 app.get('/api/settings', (_req, res) => {
-  res.json({ home_airports: config.flightmail?.home_airports || ['AMS', 'EIN', 'RTM'] });
+  res.json({ home_airports: homeAirports(), home: homePlaces() });
+});
+
+// Towns by name, for picking your places: ?q=Chern
+app.get('/api/towns', (req, res) => {
+  if (towns === undefined) towns = cities.load(path.join(DATA_DIR, 'cities1000.txt'));
+  if (!towns) return res.json([]);
+  res.json(cities.search(towns, String(req.query.q || '')).map(t => ({ id: t.id, name: t.name, cc: t.cc, lat: t.lat, lon: t.lon, pop: t.pop })));
+});
+
+// { hometown, residence, work }: each a town id, or null to clear it; a role left out stays as it was
+app.put('/api/home', (req, res) => {
+  if (towns === undefined) towns = cities.load(path.join(DATA_DIR, 'cities1000.txt'));
+  if (!towns) return res.status(503).json({ error: 'no town list (data/cities1000.txt)' });
+  const home = homePlaces();
+  for (const r of HOME_ROLES) {
+    if (!(r in (req.body || {}))) continue;
+    const id = req.body[r];
+    if (id === null || id === '') { home[r] = null; continue; }
+    const t = cities.byId(towns, Number(id));
+    if (!t) return res.status(400).json({ error: `no town ${id}` });
+    home[r] = { id: t.id, name: t.name, cc: t.cc, lat: t.lat, lon: t.lon };
+  }
+  fs.writeFileSync(HOME_FILE, JSON.stringify(home, null, 1));
+  res.json(home);
 });
 
 // --- TripIt iCal import ---
@@ -998,6 +1500,12 @@ init().then(() => {
     setTimeout(() => { try { activities.payload(); climbs.list(); tripStore.list(); } catch (e) { console.warn('[warm-up]', e.message); } }, 500);
     setTimeout(() => weather.fill(), 60e3);
     setTimeout(() => curiosities.get(), 90e3);
+    setTimeout(() => albums.list(), 100e3);  // the albums read and their places looked up before anyone asks
+    setTimeout(() => { tripStore.list(); yearReview.byYear(); }, 20e3);  // trips and the years side by side, worked out before anyone asks
+    // the photos' thumbnails made ahead, in quiet moments (a page of them then opens at once); again every 6 hours for new ones
+    setTimeout(() => photoIndex.warm(m => console.log(m)), 5 * 60e3);
+    setInterval(() => photoIndex.warm(m => console.log(m)), 6 * 3600e3).unref();
+    setInterval(() => prep.morning().catch(e => console.warn('[prep]', e.message)), 10 * 60e3).unref();  // once a day, after 07:30
     setTimeout(() => music.sync(), 120e3);
     setInterval(() => music.sync(), 6 * 3600e3).unref();
     setInterval(() => weather.fill(), 6 * 3600e3).unref();  // new rides, once the weather history has them

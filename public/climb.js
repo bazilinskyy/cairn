@@ -224,15 +224,16 @@ function drawClimbMap(c) {
   document.getElementById('climb-map').classList.add('mini-map');
   document.getElementById('climb-map').dataset.basemap = BASEMAPS[prefs.basemap] ? prefs.basemap : 'auto';
   climbMap = L.map('climb-map', { zoomControl: true, attributionControl: true });
+  toneMap(climbMap);
   const b = BASEMAPS[prefs.basemap] || BASEMAPS.auto, [url, attribution, maxZoom = 19] = b.tiles;
   L.tileLayer(url, { attribution, maxZoom }).addTo(climbMap);
-  const color = getCSSVar('--climb'), bounds = L.latLngBounds([[c.lat, c.lon]]);
+  const color = mapVar('--climb'), bounds = L.latLngBounds([[c.lat, c.lon]]);
   // your rides over it, thin; the ways up on top: yours solid, the others dashed
   const ids = new Set([...(c.rides || []).map(r => r.id)]);
   allActivities.filter(a => ids.has(a.id) && a.pts).forEach(a => {
     const pts = [];
     for (let i = 0; i < a.pts.length; i += 2) pts.push([a.pts[i], a.pts[i + 1]]);
-    L.polyline(pts, { color: getCSSVar('--ride'), weight: 2, opacity: 0.6 }).addTo(climbMap);
+    L.polyline(pts, { color: mapVar('--ride'), weight: 2, opacity: 0.6 }).addTo(climbMap);
   });
   (c.ascents || []).forEach(a => {
     const line = L.polyline(decodePath(a.path), a.times ? { color, weight: 5, opacity: 0.9 } : { color, weight: 3, opacity: 0.8, dashArray: '6 6' })

@@ -32,8 +32,13 @@ function renderCityReport() {
   const inVisit = (v, date) => date && date.slice(0, 10) >= v.start && date.slice(0, 10) <= v.end;
   const stays = d.stays.filter(s => s.what !== 'car'), cars = d.stays.filter(s => s.what === 'car');
   const km = d.activities.reduce((n, a) => n + (a.distance || 0), 0);
-  const photos = d.photos.reduce((n, p) => n + p.count, 0);
-  document.getElementById('city-title').innerHTML = `🏙️ ${flagOf(t.country)}${escapeHTML(t.name)}`;
+  const photos = Math.max(d.photos.reduce((n, p) => n + p.count, 0), (d.photo_ids || []).length);  // the photo places, or the photo index
+  document.getElementById('city-title').innerHTML = `<span id="city-flag"></span>🏙️ ${countryLink(t.country, flagOf(t.country))}${escapeHTML(t.name)}`;
+  // its own flag (or coat of arms), from Wikidata
+  fetch(`/api/city/${t.id}/flag`).then(r => (r.ok ? r.json() : null)).catch(() => null).then(f => {
+    const box = document.getElementById('city-flag');
+    if (f && box && cityShown === d) box.innerHTML = `<img class="page-flag" src="${escapeHTML(f.url)}" alt="" title="${escapeHTML(t.name)}'s ${f.kind} (Wikimedia Commons, via Wikidata)" onerror="this.remove()">`;
+  });
   document.getElementById('city-sub').textContent = (win.from || win.to ? `${win.from || '…'} to ${win.to || '…'} · ` : '') +
     (d.days ? `first ${fmtDate(d.first)}, last ${fmtDate(d.last)}` : 'no days there in this period');
 
@@ -50,7 +55,8 @@ function renderCityReport() {
     card('Flights', d.flights.length.toLocaleString(), `${d.flights.filter(f => f.direction === 'in').length} in, ${d.flights.filter(f => f.direction === 'out').length} out`) +
     card('Trains, buses, ferries', d.ground.length.toLocaleString()) +
     card('Activities', d.activities.length.toLocaleString(), `${Math.round(dist(km)).toLocaleString()} ${DU()}`) +
-    card('Photos', photos.toLocaleString(), plural(d.photos.length, 'day')) + '</div>';
+    card('Photos', photos.toLocaleString(), d.photos.length ? plural(d.photos.length, 'day') : '') + '</div>' +
+    '<div id="city-photos"></div>';  // the photos taken in and around the town (cityPhotos)
 
   if (d.visits.length) {
     html += section('Visits', table(['When', 'Days', 'What you did', 'Trip'], d.visits.map(v => {
@@ -128,9 +134,10 @@ function drawCityMap(d) {
   const box = document.getElementById('city-map'), t = d.town;
   box.dataset.basemap = BASEMAPS[prefs.basemap] ? prefs.basemap : 'auto';
   cityMap = L.map(box, { zoomControl: true, attributionControl: true }).setView([t.lat, t.lon], 12);
+  toneMap(cityMap);
   const b = BASEMAPS[prefs.basemap] || BASEMAPS.auto, [url, attribution, maxZoom = 19] = b.tiles;
   L.tileLayer(url, { attribution, maxZoom }).addTo(cityMap);
-  const st = lineStyle(), col = k => getCSSVar('--' + k);
+  const st = lineStyle(), col = k => mapVar('--' + k);
   const near = (lat, lon, maxKm) => Math.hypot(lat - t.lat, (lon - t.lon) * Math.cos(t.lat * Math.PI / 180)) * 111.2 <= maxKm;
   const acts = new Set(d.activities.map(a => a.id));
   allActivities.filter(a => acts.has(a.id) && a.pts).forEach(a => {
@@ -142,7 +149,7 @@ function drawCityMap(d) {
   const ground = new Set(d.ground.map(g => g.id));
   allTrips.filter(g => ground.has(g.id) && g.from_lat != null && g.to_lat != null).forEach(g => {
     L.polyline(g.path ? decodePath(g.path) : [[g.from_lat, g.from_lon], [g.to_lat, g.to_lon]],
-      { color: col(g.mode in { train: 1, bus: 1, ferry: 1 } ? g.mode : 'bus'), weight: 3 * st.w, opacity: 0.85, dashArray: g.path ? null : '6 6' })
+      { color: col(g.mode in { train: 1, bus: 1, ferry: 1, hitch: 1 } ? g.mode : 'bus'), weight: 3 * st.w, opacity: 0.85, dashArray: g.path ? null : '6 6' })
       .bindPopup(`<b>${(groundModes[g.mode] || '🚌').split(' ')[0]} ${escapeHTML(g.from)} → ${escapeHTML(g.to)}</b><br><small>${fmtDate(g.date)}</small>`).addTo(cityMap);
   });
   const stays = new Set(d.stays.map(s => s.id));
@@ -163,15 +170,57 @@ function drawCityMap(d) {
       .bindPopup(`<b>⛰️ ${escapeHTML(c.name)}</b><br><small>${done ? `climbed ${c.times}×` : 'not climbed yet'}</small>` +
         `<br><a href="#" onclick="event.preventDefault(); openClimb('${c.id}')">Open climb page →</a>`).addTo(cityMap);
   });
-  const photos = (allPhotoPoints || []).filter(p => inWin(photoDay(p)) && near(p[2], p[3], CITY_PHOTO_KM));
+  const photos = cityPhotoList(t);
+  cityPhotos(photos);
   if (photos.length) {
     const group = L.markerClusterGroup({ showCoverageOnHover: false, maxClusterRadius: 40,
       iconCreateFunction: c => L.divIcon({ html: `<span>${c.getChildCount().toLocaleString()}</span>`, className: 'photo-cluster', iconSize: [30, 30] }) });
     const icon = L.divIcon({ className: 'photo-dot', iconSize: [10, 10] });
     group.addLayers(photos.map(p => L.marker([p[2], p[3]], { icon }).bindPopup(() => photoPopup(p), { maxWidth: 260, minWidth: 240 })));
     cityMap.addLayer(group);
-  } else if (allPhotoPoints === null) loadPhotoPoints();
+  } else if (allPhotoPoints === null) loadPhotoPoints().then(() => cityShown === d && drawCityMap(d));
   setTimeout(() => cityMap && cityMap.invalidateSize(), 50);
+}
+
+// The photos of the period taken within CITY_PHOTO_KM of the town, newest first: those on its map
+function cityPhotoList(t) {
+  const near = p => Math.hypot(p[2] - t.lat, (p[3] - t.lon) * Math.cos(t.lat * Math.PI / 180)) * 111.2 <= CITY_PHOTO_KM;
+  return (allPhotoPoints || []).filter(p => inWin(photoDay(p)) && near(p)).sort((a, b) => b[1] - a[1]);
+}
+
+// A gallery under the cards: the photos taken in the town (as its days count them: the town that pulls hardest),
+// then, on asking, those around it on its map; a page of CITY_PHOTOS_PAGE at a time (only that page's thumbnails are
+// asked for), each opening the whole photo or video
+const CITY_PHOTOS_PAGE = 24;
+function cityPhotos(all, page = 0, around = false) {
+  const box = document.getElementById('city-photos');
+  if (!box) return;
+  const mine = new Set(cityShown?.photo_ids || []), inTown = all.filter(p => mine.has(p[0])), list = around ? all : inTown;
+  const others = all.length - inTown.length, name = escapeHTML(cityShown?.town.name || 'the town');
+  if (!list.length && !others) { box.innerHTML = ''; return; }
+  const pages = Math.max(1, Math.ceil(list.length / CITY_PHOTOS_PAGE));
+  page = Math.min(Math.max(0, page), pages - 1);
+  const when = p => (p[5] === 'y' ? `${new Date(p[1] * 1000).getUTCFullYear()}` : `${fmtDate(photoDay(p))} ${new Date(p[1] * 1000).toISOString().slice(11, 16)} UTC`);
+  // the page buttons: the first, the last, and the two either side of this one
+  const nums = [...new Set([0, page - 2, page - 1, page, page + 1, page + 2, pages - 1])].filter(n => n >= 0 && n < pages).sort((a, b) => a - b);
+  const pager = pages > 1 ? `<div class="photo-pager">` +
+    `<button class="btn btn-ghost" data-page="${page - 1}" ${page ? '' : 'disabled'} aria-label="Previous page">‹</button>` +
+    nums.map((n, i) => `${i && n - nums[i - 1] > 1 ? '<span>…</span>' : ''}<button class="btn ${n === page ? 'btn-primary' : 'btn-ghost'}" data-page="${n}"` +
+      `${n === page ? ' aria-current="page"' : ''}>${n + 1}</button>`).join('') +
+    `<button class="btn btn-ghost" data-page="${page + 1}" ${page < pages - 1 ? '' : 'disabled'} aria-label="Next page">›</button></div>` : '';
+  const toggle = others ? `<button class="btn btn-ghost sp-more" id="city-photos-around">${around ? `Only those in ${name}` : `Also the ${others.toLocaleString()} taken around it`}</button>` : '';
+  box.innerHTML = `<div class="chart-section"><h3>Photos ${around ? 'in and around' : 'in'} ${name} · ${list.length.toLocaleString()}` +
+    `${pages > 1 ? ` <small style="text-transform:none;font-weight:400">page ${page + 1} of ${pages}</small>` : ''}</h3>` +
+    (list.length ? '<div class="climb-photos">' + list.slice(page * CITY_PHOTOS_PAGE, (page + 1) * CITY_PHOTOS_PAGE).map(p =>
+      `<a href="/api/photos/${p[0]}/full" target="_blank" rel="noopener" title="${when(p)}">` +
+      `<img src="/api/photos/${p[0]}/thumb" alt="${p[4] ? 'Video' : 'Photo'} taken ${when(p)}" loading="lazy" decoding="async">${p[4] ? '<span>🎬</span>' : ''}</a>`).join('') + '</div>' : '') +
+    `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">${pager}${toggle}</div>` +
+    `<p class="sp-note">Newest first${win.from || win.to ? ', in this period' : ''}. In the town: the photos it counts as yours there, as for its days; around it: the rest of the 📷 marks on the map, within ${fmtDist(CITY_PHOTO_KM)}. Click one for the whole ${list.some(p => p[4]) ? 'photo or video' : 'photo'}.</p></div>`;
+  box.querySelectorAll('[data-page]').forEach(b => b.addEventListener('click', () => {
+    cityPhotos(all, +b.dataset.page, around);
+    box.scrollIntoView({ block: 'nearest' });
+  }));
+  document.getElementById('city-photos-around')?.addEventListener('click', () => cityPhotos(all, 0, !around));
 }
 
 window.addEventListener('load', () => {

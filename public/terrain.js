@@ -1,14 +1,16 @@
 'use strict';
 // The 3D view: the map as a globe with real terrain (MapLibre GL, loaded the first time it is opened), showing the
 // layers that are on in the 2D map (switched here too, the same choice), for the period or trip chosen, with flights
-// as arcs through the air (deck.gl). Heights from the open AWS Terrain Tiles; the base map as chosen in the settings.
+// along their rough path through the air (deck.gl). Heights from the open AWS Terrain Tiles; the base map as chosen in
+// the settings.
 // Esc or "← 2D map" goes back to the same place. Uses layers.js's and the page's globals.
 
 const MAPLIBRE = 'https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/5.6.0/';
 const DECK = 'https://unpkg.com/deck.gl@9.1.14/dist.min.js';
 const DEM_TILES = 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png';
 let map3d = null, deckOverlay = null, libsLoading = null;
-let view3d = 'globe';  // 'globe': flights as lines along the globe; 'flat': a flat map with flights as arcs through the air
+let view3d = 'globe';  // 'globe': the earth as a ball; 'flat': a flat map you can tilt
+let flights3d = 'air';  // 'air': flights along their rough path through the air; 'ground': their line on the ground
 
 function loadScript(src) {
   return new Promise((resolve, reject) => {
@@ -46,7 +48,7 @@ const pt = (lat, lon, props = {}) => ({ type: 'Feature', properties: props, geom
 const line = (latlons, props = {}) => ({ type: 'Feature', properties: props, geometry: { type: 'LineString', coordinates: latlons.map(([a, b]) => [b, a]) } });
 
 const LAYERS3D = {  // key in the 2D legend -> what it is, and its 2D layer
-  flight: () => routeLayer, train: () => groundLayer.train, bus: () => groundLayer.bus, ferry: () => groundLayer.ferry,
+  flight: () => routeLayer, train: () => groundLayer.train, bus: () => groundLayer.bus, ferry: () => groundLayer.ferry, hitch: () => groundLayer.hitch,
   stay: () => stayLayer, car: () => carLayer, photo: () => photoLayer, ride: () => kindLayer.ride, run: () => kindLayer.run,
   walk: () => kindLayer.walk, sport: () => kindLayer.sport, climb: () => climbLayer, country: () => countryLayer, city: () => cityLayer
 };
@@ -75,6 +77,25 @@ function data3d() {
   return { acts, ground, stays, photos, climbs, climbLines, cities, countries, flights };
 }
 
+// A flight's rough path: the great circle between its airports (which flights roughly follow), climbing to cruising
+// height over the first 300 km or so and coming down over the last 350, as [lon, lat, metres]. Heights are shown 10
+// times higher (at most an eighth of the flight's length), as 11 km would not show at the scale of the globe.
+const SHOWN_HIGHER = 10;
+function flightPath(from, to) {
+  const r = x => x * Math.PI / 180, [lon1, lat1] = from, [lon2, lat2] = to;
+  const h = Math.sin(r(lat2 - lat1) / 2) ** 2 + Math.cos(r(lat1)) * Math.cos(r(lat2)) * Math.sin(r(lon2 - lon1) / 2) ** 2;
+  const km = 6371 * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+  const cruise = km < 400 ? 7000 : km < 1000 ? 9500 : 11000;
+  const top = Math.min(cruise * SHOWN_HIGHER, km * 1000 / 8);
+  const up = Math.min(300, km * 0.4), down = Math.min(350, km * 0.45);
+  const ease = x => 1 - (1 - Math.min(1, Math.max(0, x))) ** 2;  // quick at first, levelling off
+  const pts = greatCircle(lat1, lon1, lat2, lon2, Math.max(20, Math.min(200, Math.round(km / 25))));  // the page's
+  return pts.map(([lat, lon], i) => {
+    const s = km * i / (pts.length - 1);
+    return [lon, lat, top * Math.min(ease(s / up), ease((km - s) / down))];
+  });
+}
+
 // --- the view ---
 
 async function open3D() {
@@ -90,7 +111,7 @@ async function open3D() {
     map3d.resize();
     return;
   }
-  const st = lineStyle(), col = k => getCSSVar('--' + k), grey = /^grey/.test(prefs.basemap);
+  const st = lineStyle(), col = k => mapVar('--' + k), grey = /^grey/.test(prefs.basemap);
   map3d = new maplibregl.Map({
     container: 'map3d-canvas', center: [c.lng, c.lat], zoom: z, pitch: z > 7 ? 60 : 0, maxPitch: 80,
     style: {
@@ -110,7 +131,7 @@ async function open3D() {
           paint: { 'line-color': ['match', ['get', 'kind'], 'ride', col('ride'), 'run', col('run'), 'walk', col('walk'), col('sport')],
             'line-width': ['interpolate', ['linear'], ['zoom'], 5, 1 * st.w, 12, 2.5 * st.w, 16, 4 * st.w], 'line-opacity': Math.min(1, 0.85 * st.o) } },
         { id: 'ground', type: 'line', source: 'ground', layout: { 'line-join': 'round' },
-          paint: { 'line-color': ['match', ['get', 'mode'], 'train', col('train'), 'bus', col('bus'), col('ferry')], 'line-width': 2.5 * st.w, 'line-opacity': 0.9 } },
+          paint: { 'line-color': ['match', ['get', 'mode'], 'train', col('train'), 'bus', col('bus'), 'hitch', col('hitch'), col('ferry')], 'line-width': 2.5 * st.w, 'line-opacity': 0.9 } },
         { id: 'flightLines', type: 'line', source: 'flightLines', paint: { 'line-color': col('accent'), 'line-width': 1.5, 'line-opacity': 0.7 } },
         { id: 'climbLines', type: 'line', source: 'climbLines', paint: { 'line-color': col('climb'), 'line-width': 4 * st.w, 'line-opacity': 0.9 } },
         { id: 'stays', type: 'circle', source: 'stays', paint: { 'circle-radius': 5 * st.r, 'circle-color': ['match', ['get', 'what'], 'car', col('car'), col('stay')],
@@ -135,8 +156,8 @@ async function open3D() {
   map3d.once('load', () => { map3d.resize(); refresh3D(); });
   map3d.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'bottom-right');
   map3d.addControl(new maplibregl.TerrainControl({ source: 'dem', exaggeration: 1.4 }), 'bottom-right');
-  if (window.deck) {  // flights as arcs through the air, on the flat view (deck.gl does not draw them on MapLibre's globe)
-    deckOverlay = new deck.MapboxOverlay({ interleaved: false, layers: [] });
+  if (window.deck) {  // flights through the air (deck.gl, drawn in MapLibre's own layers: so also on the globe)
+    deckOverlay = new deck.MapboxOverlay({ interleaved: true, layers: [] });
     map3d.addControl(deckOverlay);
   }
   const popup = (e, html) => new maplibregl.Popup({ maxWidth: '280px' }).setLngLat(e.lngLat).setHTML(html).addTo(map3d);
@@ -176,18 +197,20 @@ function refresh3D() {
   ['photo-groups', 'photo-count', 'photo'].forEach(l => vis(l, shown('photo')));
   vis('climbs', shown('climb')); vis('climbLines', shown('climb'));
   vis('cities', shown('city')); vis('country', shown('country'));
-  // flights: arcs (deck.gl), else great-circle lines on the ground
-  const flights = shown('flight') ? d.flights : [];
-  if (deckOverlay && view3d === 'flat') {
-    const accent = getCSSVar('--accent'), rgb = accent.match(/\w\w/g)?.map(h => parseInt(h, 16)) || [79, 195, 247];
-    deckOverlay.setProps({ layers: [new deck.ArcLayer({ id: 'flights', data: flights, getSourcePosition: f => f.from, getTargetPosition: f => f.to,
-      getSourceColor: [...rgb, 200], getTargetColor: [...rgb, 120], getWidth: 2 * lineStyle().w, getHeight: 0.4, greatCircle: false, pickable: true,
-      onClick: info => info.object && new maplibregl.Popup().setLngLat(info.coordinate).setHTML(`<b>✈️ ${escapeHTML(info.object.name)}</b><br><small>${fmtDate(info.object.date)}</small>`).addTo(map3d) })] });
-    set('flightLines', []);
-  } else {
-    deckOverlay?.setProps({ layers: [] });
-    set('flightLines', flights.map(f => line(greatCircle(f.from[1], f.from[0], f.to[1], f.to[0]))));  // the page's greatCircle
-  }
+  // flights: through the air (deck.gl), with their line on the ground faint beneath; else that line alone
+  const flights = shown('flight') ? d.flights : [], air = deckOverlay && flights3d === 'air';
+  set('flightLines', flights.map(f => line(greatCircle(f.from[1], f.from[0], f.to[1], f.to[0]))));  // the page's greatCircle
+  map3d.setPaintProperty('flightLines', 'line-opacity', air ? 0.2 : 0.7);
+  if (air) {
+    const accent = mapVar('--accent'), rgb = accent.match(/\w\w/g)?.map(h => parseInt(h, 16)) || [79, 195, 247];
+    const once = new Map();  // a route flown more often: once, a little wider
+    flights.forEach(f => { const k = [f.from, f.to].map(String).sort().join('|'); once.set(k, { ...f, n: (once.get(k)?.n || 0) + 1, names: [...(once.get(k)?.names || []), f] }); });
+    deckOverlay.setProps({ layers: [new deck.PathLayer({ id: 'flights', data: [...once.values()].map(f => ({ ...f, path: flightPath(f.from, f.to) })),
+      getPath: f => f.path, getColor: [...rgb, 210], getWidth: f => Math.min(1.5 + Math.log2(f.n), 4) * lineStyle().w, widthUnits: 'pixels',
+      jointRounded: true, capRounded: true, pickable: true,
+      onClick: info => info.object && new maplibregl.Popup().setLngLat(info.coordinate).setHTML(`<b>✈️ ${escapeHTML(info.object.name.replace(/^\S+ /, ''))}</b><br><small>` +
+        `${info.object.n} flight${info.object.n > 1 ? 's' : ''}: ${info.object.names.slice(-5).map(x => fmtDate(x.date)).join(', ')}${info.object.n > 5 ? ', …' : ''}</small>`).addTo(map3d) })] });
+  } else deckOverlay?.setProps({ layers: [] });
   draw3dPanel();
 }
 
@@ -195,15 +218,19 @@ function refresh3D() {
 function draw3dPanel() {
   const box = document.getElementById('map3d-panel');
   const trip = document.getElementById('p-trip');
-  const labels = { flight: '✈️ Flights', train: '🚆 Trains', bus: '🚌 Buses', ferry: '⛴️ Ferries', stay: '🏨 Stays', car: '🚗 Rental cars',
+  const labels = { flight: '✈️ Flights', train: '🚆 Trains', bus: '🚌 Buses', ferry: '⛴️ Ferries', hitch: '👍 Hitchhiking', stay: '🏨 Stays', car: '🚗 Rental cars',
     photo: '📷 Photos', ride: '🚴 Cycling', run: '🏃 Running', walk: '🥾 Walks & hikes', sport: '🏅 Other sports', climb: '⛰️ Climbs',
     country: '🌍 Countries', city: '🏙️ Cities' };
   box.innerHTML = `<button class="btn btn-primary map3d-back" onclick="close3D()" title="Back to the 2D map (Esc)">← 2D map</button>` +
     `<div class="map3d-views" role="group" aria-label="View"><button class="btn ${view3d === 'globe' ? 'btn-primary' : 'btn-ghost'}" onclick="setView3d('globe')" ` +
     `aria-pressed="${view3d === 'globe'}">🌍 Globe</button><button class="btn ${view3d === 'flat' ? 'btn-primary' : 'btn-ghost'}" onclick="setView3d('flat')" ` +
     `aria-pressed="${view3d === 'flat'}">🗺️ Flat map</button></div>` +
-    `<p class="map3d-note">${view3d === 'globe' ? 'The earth as a ball; flights follow its curve on the ground. Choose Flat map to see them as arcs through the air.'
-      : 'A flat map you can tilt (right-drag or Ctrl-drag); flights are arcs through the air.'}</p>` +
+    `<p class="map3d-note">${view3d === 'globe' ? 'The earth as a ball.' : 'A flat map you can tilt (right-drag or Ctrl-drag).'}</p>` +
+    (window.deck ? `<div class="map3d-views" role="group" aria-label="Flights"><button class="btn ${flights3d === 'air' ? 'btn-primary' : 'btn-ghost'}" onclick="setFlights3d('air')" ` +
+      `aria-pressed="${flights3d === 'air'}">✈️ In the air</button><button class="btn ${flights3d === 'ground' ? 'btn-primary' : 'btn-ghost'}" onclick="setFlights3d('ground')" ` +
+      `aria-pressed="${flights3d === 'ground'}">〰️ On the ground</button></div>` +
+      `<p class="map3d-note">${flights3d === 'air' ? 'Flights along their rough path: the shortest way over the globe, climbing, cruising and coming down (heights 10× higher, to show).'
+        : 'Flights as their line on the ground.'}</p>` : '') +
     `<label class="map3d-trip">Trip <select id="map3d-trip">${trip ? trip.innerHTML : ''}</select></label>` +
     `<div class="map3d-layers">${Object.entries(labels).map(([k, label]) =>
       `<label><input type="checkbox" data-layer3d="${k}" ${shown(k) ? 'checked' : ''}> ${label}</label>`).join('')}</div>`;
@@ -231,6 +258,13 @@ function setView3d(v) {
   refresh3D();
 }
 try { view3d = localStorage.getItem('cairn-3d-view') || 'globe'; } catch (_) {}
+
+function setFlights3d(v) {
+  flights3d = v;
+  try { localStorage.setItem('cairn-3d-flights', v); } catch (_) {}
+  refresh3D();
+}
+try { flights3d = localStorage.getItem('cairn-3d-flights') || 'air'; } catch (_) {}
 
 function close3D() {
   document.getElementById('map3d').hidden = true;

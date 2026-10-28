@@ -1,5 +1,5 @@
 'use strict';
-// What you listened to (Last.fm): every scrobble, fetched once and then the new ones every few hours, kept in
+// What you listened to (Last.fm): every scrobble, fetched once and then the new ones every six hours, kept in
 // data/lastfm.json; for a town's or a trip's page, the artists and tracks you played on its days. Needs a Last.fm API
 // key and your user name in `secret` (lastfm_api_key, lastfm_user; read each time, so adding them needs no restart).
 

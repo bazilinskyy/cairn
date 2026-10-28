@@ -28,7 +28,7 @@ before(async () => {
   fs.copyFileSync(path.join(ROOT, 'activities.js'), path.join(dir, 'activities.js'));
   fs.copyFileSync(path.join(ROOT, 'regions.js'), path.join(dir, 'regions.js'));
   fs.copyFileSync(path.join(ROOT, 'country-lists.json'), path.join(dir, 'country-lists.json'));
-  ['climbs.js', 'ascents.js', 'efforts.js', 'climbs.json', 'photos.js', 'climb_records.json', 'trips.js', 'weather.js', 'stats.js', 'lastfm.js', 'suggestions.js'].forEach(f => fs.copyFileSync(path.join(ROOT, f), path.join(dir, f)));
+  ['climbs.js', 'ascents.js', 'efforts.js', 'climbs.json', 'photos.js', 'climb_records.json', 'trips.js', 'weather.js', 'stats.js', 'lastfm.js', 'suggestions.js', 'backup.js', 'albums.js', 'things.js', 'todotrips.js', 'prep.js', 'spending.js', 'review.js'].forEach(f => fs.copyFileSync(path.join(ROOT, f), path.join(dir, f)));
   fs.copyFileSync(path.join(ROOT, 'default.config'), path.join(dir, 'default.config'));
   fs.cpSync(path.join(ROOT, 'public'), path.join(dir, 'public'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'data'));
@@ -41,12 +41,15 @@ before(async () => {
     geometry: { type: 'Polygon', coordinates: [[[lon - 1, lat - 1], [lon + 1, lat - 1], [lon + 1, lat + 1], [lon - 1, lat + 1], [lon - 1, lat - 1]]] } });
   fs.writeFileSync(path.join(dir, 'data', 'admin1.geojson'), JSON.stringify({ type: 'FeatureCollection', features: [
     square('NL', 'NL-NH', 52.3, 4.8), square('PT', 'PT-11', 38.8, -9.1), square('ES', 'ES-TF', 28.4, -16.5)] }));
+  const town = (id, name, lat, lon, cc, pop) => [id, name, name, '', lat, lon, 'P', 'PPLA', cc, '', '', '', '', '', pop, '', '', 'Europe/X', '2024-01-01'].join('\t');
+  fs.writeFileSync(path.join(dir, 'data', 'cities1000.txt'), [town(710735, 'Chernihiv', 51.505, 31.287, 'UA', 282747),
+    town(710719, 'Chernivtsi', 48.292, 25.936, 'UA', 264298), town(2756253, 'Eindhoven', 51.441, 5.478, 'NL', 235691)].join('\n'));
   fs.writeFileSync(path.join(dir, 'config'), JSON.stringify({ port: PORT, ground_lookups: false }));
   fs.writeFileSync(path.join(dir, 'secret'), '{}');
   server = spawn(process.execPath, ['app.js'], {
     cwd: dir, env: { ...process.env, NODE_PATH: path.join(ROOT, 'node_modules') }, stdio: 'ignore',
   });
-  for (let i = 0; i < 50; i++) {
+  for (let i = 0; i < 300; i++) {  // up to 30 s: a busy machine starts it slowly
     try { await fetch(`${BASE}/api/flights`); return; } catch (_) { await new Promise(r => setTimeout(r, 100)); }
   }
   throw new Error('server did not start');
@@ -109,6 +112,11 @@ test('ground trips: added, updated in place when posted again, edited and delete
   assert.strictEqual(d.id, c.id);
   assert.strictEqual(d.to, 'Brussel-Zuid');
   assert.strictEqual(d.event_id, 'E2');
+  // the same bus from the calendar and from its email, an hour apart (two time zones): kept once
+  const cal = await (await call('POST', '/api/ground', { date: '2022-04-12 12:55:00', mode: 'bus', from: 'Faro', to: 'Huelva', source: 'calendar' })).json();
+  const mail = await (await call('POST', '/api/ground', { date: '2022-04-12 11:55:00', mode: 'bus', from: 'Faro', to: 'Huelva (Bus Station)', source: 'flightmail' })).json();
+  assert.strictEqual(mail.id, cal.id);
+  await call('DELETE', `/api/ground/${cal.id}`);
 
   assert.strictEqual((await (await call('GET', '/api/ground')).json()).length, 2);
   assert.deepStrictEqual(await (await call('DELETE', `/api/ground/${c.id}`)).json(), { deleted: c.id });
@@ -138,7 +146,7 @@ test('photos and Timeline come from the import files, read again when they chang
   const cells = [{ lat: 51.44, lon: 5.47, year: 2024, count: 2, days: ['2024-06-01'] }];
   fs.writeFileSync(path.join(dir, 'data', 'photos.json'), JSON.stringify(cells));
   assert.deepStrictEqual(await (await call('GET', '/api/photos')).json(), cells);
-  assert.deepStrictEqual(await (await call('GET', '/api/settings')).json(), { home_airports: ['AMS', 'EIN', 'RTM'] });
+  assert.deepStrictEqual(await (await call('GET', '/api/settings')).json(), { home_airports: ['AMS', 'EIN', 'RTM'], home: { hometown: null, residence: null, work: null } });
 });
 
 test('activities: Strava not set up, then the Garmin file read when it appears, gzipped and cached', async () => {
@@ -161,8 +169,9 @@ test('climbs: none without rides', async () => {
   assert.deepStrictEqual(await (await call('GET', '/api/climbs')).json(), []);
 });
 
-test('cities: none without the town list', async () => {
-  assert.deepStrictEqual(await (await call('GET', '/api/cities?from=2024-01-01')).json(), []);
+test('cities: the towns of the period, from the town list (the ride above started in Eindhoven)', async () => {
+  assert.deepStrictEqual((await (await call('GET', '/api/cities?from=2024-01-01&to=2024-12-31')).json()).map(c => [c.name, c.days]), [['Eindhoven', 1]]);
+  assert.deepStrictEqual(await (await call('GET', '/api/cities?from=2025-01-01&to=2025-12-31')).json(), []);
 });
 
 test('stays: a mail for a stay from the Booking.com export takes it over and keeps the hotel position', async () => {
@@ -201,6 +210,77 @@ test('countries as each list counts them: a stay on Tenerife is Spain, or the Ca
   await call('DELETE', `/api/stays/${stay.id}`);
 });
 
+test('your places: picked by name, kept by Cairn, cleared one at a time', async () => {
+  assert.deepStrictEqual((await (await call('GET', '/api/towns?q=cherni')).json()).map(t => t.name), ['Chernihiv', 'Chernivtsi']);
+  assert.deepStrictEqual((await (await call('GET', '/api/settings')).json()).home, { hometown: null, residence: null, work: null });
+  let r = await call('PUT', '/api/home', { hometown: 710719, work: 2756253 });
+  assert.deepStrictEqual(Object.entries(await r.json()).map(([k, t]) => [k, t?.name ?? null]), [['hometown', 'Chernivtsi'], ['residence', null], ['work', 'Eindhoven']]);
+  assert.strictEqual((await call('PUT', '/api/home', { residence: 1 })).status, 400);  // no such town: nothing changes
+  r = await call('PUT', '/api/home', { work: null });
+  const home = (await (await call('GET', '/api/settings')).json()).home;
+  assert.deepStrictEqual([home.hometown.name, home.hometown.cc, home.work], ['Chernivtsi', 'UA', null]);
+});
+
+test('check-ins count for their town; payments abroad that no trip explains are listed until dismissed', async () => {
+  fs.writeFileSync(path.join(dir, 'data', 'checkins.json'), JSON.stringify([
+    { t: Date.UTC(2023, 4, 2, 12) / 1000, lat: 51.44, lon: 5.48, name: 'Market square', source: 'facebook', kind: 'check-in' }]));
+  assert.strictEqual((await (await call('GET', '/api/checkins')).json()).length, 1);
+  assert.deepStrictEqual((await (await call('GET', '/api/cities?from=2023-01-01&to=2023-12-31')).json()).map(c => [c.name, c.days]), [['Eindhoven', 1]]);
+  fs.writeFileSync(path.join(dir, 'data', 'transactions.json'), JSON.stringify([
+    { date: '2022-02-02', amount: -30, currency: 'EUR', description: 'RESTAURANT X MADRID ESP', country: 'ES' },
+    { date: '2022-02-03', amount: -12, currency: 'EUR', description: 'MUSEO DEL PRADO MADRID ESP', country: 'ES' },
+    { date: '2022-02-03', amount: -5, currency: 'EUR', description: 'BAKERY LEIDEN NLD', country: 'NL' }]));
+  const list = await (await call('GET', '/api/suggestions/payments')).json();
+  assert.deepStrictEqual(list.map(r => [r.country, r.first, r.last, r.payments, r.amounts.EUR]), [['NL', '2022-02-03', '2022-02-03', 1, 5], ['ES', '2022-02-02', '2022-02-03', 2, 42]]);
+  await call('POST', '/api/suggestions/dismiss', { key: list[1].key });
+  assert.deepStrictEqual((await (await call('GET', '/api/suggestions/payments')).json()).map(r => r.country), ['NL']);
+  fs.rmSync(path.join(dir, 'data', 'checkins.json'));
+  fs.rmSync(path.join(dir, 'data', 'transactions.json'));
+});
+
+test('backup: out as a .tar.gz with its manifest, and back in (what changed since is undone, the data before kept)', async () => {
+  const { execFileSync } = require('child_process');
+  const res = await call('GET', '/api/backup');
+  assert.strictEqual(res.status, 200);
+  assert.match(res.headers.get('content-type'), /gzip/);
+  const backup = Buffer.from(await res.arrayBuffer());
+  const file = path.join(dir, 'b.tar.gz');
+  fs.writeFileSync(file, backup);
+  const names = execFileSync('tar', ['-tzf', file]).toString().split('\n');
+  assert.ok(names.includes('manifest.json') && names.includes('flights.json') && names.includes('ground.json'), names.join(','));
+  const added = await (await call('POST', '/api/flights', { from: 'AMS', to: 'LIS', date: '2027-01-01 10:00:00' })).json();
+  const back = await fetch(BASE + '/api/backup/restore', { method: 'POST', headers: { 'Content-Type': 'application/gzip' }, body: backup });
+  assert.strictEqual(back.status, 200);
+  const done = await back.json();
+  assert.ok(done.files.includes('flights.json') && !done.restarting);
+  assert.ok(fs.readdirSync(path.join(dir, 'data', 'backups')).some(n => n.startsWith('before-restore-')));
+  const onDisk = JSON.parse(fs.readFileSync(path.join(dir, 'data', 'flights.json'), 'utf8'));
+  assert.ok(!onDisk.some(f => f.id === added.id), 'the flight added after the backup is gone from the file');
+});
+
+test('backup: without the sports activities when asked', async () => {
+  const { execFileSync } = require('child_process');
+  const file = path.join(dir, 'n.tar.gz');
+  fs.writeFileSync(file, Buffer.from(await (await call('GET', '/api/backup?activities=0')).arrayBuffer()));
+  const names = execFileSync('tar', ['-tzf', file]).toString().split('\n');
+  assert.ok(names.includes('flights.json') && !names.includes('garmin.json') && !names.some(n => n.startsWith('tracks')), names.join(','));
+  assert.strictEqual(JSON.parse(execFileSync('tar', ['-xzOf', file, 'manifest.json']).toString()).activities, false);
+});
+
+test('backup: what is not a Cairn backup is refused, and nothing changes', async () => {
+  const { execFileSync } = require('child_process');
+  const bad = await fetch(BASE + '/api/backup/restore', { method: 'POST', headers: { 'Content-Type': 'application/gzip' }, body: Buffer.from('not a backup') });
+  assert.strictEqual(bad.status, 400);
+  const src = fs.mkdtempSync(path.join(require('os').tmpdir(), 'cairn-evil-'));
+  fs.writeFileSync(path.join(src, 'manifest.json'), JSON.stringify({ app: 'cairn' }));
+  fs.writeFileSync(path.join(src, 'secret'), '{"rapidapi_key": "x"}');
+  execFileSync('tar', ['-czf', path.join(src, 'x.tar.gz'), '-C', src, 'manifest.json', 'secret']);
+  const evil = await fetch(BASE + '/api/backup/restore', { method: 'POST', headers: { 'Content-Type': 'application/gzip' }, body: fs.readFileSync(path.join(src, 'x.tar.gz')) });
+  assert.strictEqual(evil.status, 400);
+  assert.match((await evil.json()).error, /not a Cairn backup/);
+  assert.strictEqual(fs.readFileSync(path.join(dir, 'secret'), 'utf8'), '{}');
+});
+
 test('listens on 127.0.0.1 only', async (t) => {
   const lan = Object.values(os.networkInterfaces()).flat().find(a => a && a.family === 'IPv4' && !a.internal);
   if (!lan) return t.skip('no non-loopback IPv4 address');
@@ -210,4 +290,16 @@ test('listens on 127.0.0.1 only', async (t) => {
     s.once('error', () => resolve(false));
   });
   assert.strictEqual(connected, false, `port ${PORT} reachable on ${lan.address}`);
+});
+
+test('the years side by side; gaps; a climb route needs a climb and a place near it', async () => {
+  const years = await (await fetch(`${BASE}/api/review/by-year`)).json();
+  assert.ok(Array.isArray(years));
+  years.forEach(y => assert.deepStrictEqual(Object.keys(y).sort(),
+    ['away', 'climbs', 'countries', 'days', 'distance', 'eur', 'newCountries', 'newTowns', 'nights', 'photos', 'towns', 'trips', 'year']));
+  const gaps = await (await fetch(`${BASE}/api/suggestions/gaps`)).json();
+  assert.ok(Array.isArray(gaps.unreached) && Array.isArray(gaps.quiet));
+  for (const q of ['from=abc', 'from=91,0', 'from=1,2,3', '']) {
+    assert.strictEqual((await fetch(`${BASE}/api/climbs/nothing/gpx?${q}`)).status, 400, q);
+  }
 });

@@ -18,7 +18,7 @@ const tripLink = (t, text) => `<a href="#trip=${t.id}" class="sp-link inline" on
 
 const hm = sec => `${Math.floor(sec / 3600)}:${String(Math.round(sec % 3600 / 60)).padStart(2, '0')}`;
 const tripRange = (a, b) => (b && b !== a ? `${fmtDate(a)} – ${fmtDate(b)}` : fmtDate(a));
-const tripFlags = t => t.countries.map(c => flagOf(c.cc).trim()).join(' ');
+const tripFlags = t => t.countries.map(c => (typeof countryLink === 'function' ? countryLink(c.cc, flagOf(c.cc).trim()) : flagOf(c.cc).trim())).join(' ');
 
 async function renderTrips() {
   const box = document.getElementById('trips-body');
@@ -35,15 +35,17 @@ async function renderTrips() {
     `<div class="sub">${escapeHTML(list.reduce((a, b) => (b.days > a.days ? b : a)).name)}</div></div></div>`;
   Object.keys(years).sort().reverse().forEach(y => {
     const ts = years[y];
-    html += `<div class="chart-section"><h3>${y} · ${ts.length} trip${ts.length !== 1 ? 's' : ''}, ${ts.reduce((n, t) => n + t.days, 0)} days</h3><div class="sp-scroll">` +
+    html += `<div class="chart-section"><h3>${y} · ${ts.length} trip${ts.length !== 1 ? 's' : ''}, ${ts.reduce((n, t) => n + t.days, 0)} days` +
+      ` <a href="#year=${y}" class="sp-link inline" style="text-transform:none;font-weight:400" onclick="event.preventDefault(); openYear(${y})">the year in review →</a></h3><div class="sp-scroll">` +
       `<table class="sp-table"><thead><tr><th>When</th><th>Trip</th><th>Days</th><th>Towns</th><th></th></tr></thead><tbody>` +
-      ts.map(t => `<tr><th>${tripRange(t.start, t.end)}</th><td>${tripFlags(t)} ${tripLink(t)}</td><td>${t.days}${t.nights ? `<small>${t.nights} night${t.nights !== 1 ? 's' : ''} in stays</small>` : ''}</td>` +
+      ts.map(t => `<tr><th>${tripRange(t.start, t.end)}</th><td>${tripFlags(t)} ${tripLink(t)}${t.work?.length ? ` <span title="For work: ${escapeHTML(t.work.join('; '))}">💼</span>` : ''}</td><td>${t.days}${t.nights ? `<small>${t.nights} night${t.nights !== 1 ? 's' : ''} in stays</small>` : ''}</td>` +
         `<td>${t.towns.slice(0, 3).map(c => `<a href="#" class="sp-link inline" onclick="event.preventDefault(); openCityReport(${c.id})">${escapeHTML(c.name)}</a>`).join(', ')}</td>` +
         `<td>${[[t.flights, '✈️'], [t.ground, '🚆'], [t.activities, '🏃'], [t.photos, '📷']].filter(([n]) => n).map(([n, i]) => `${i} ${n}`).join(' · ')}</td></tr>`).join('') +
       '</tbody></table></div></div>';
   });
-  box.innerHTML = html;
+  box.innerHTML = '<div id="coming-trips"></div>' + html;
   paginateTables('trips-body');
+  renderComing();
 }
 
 async function openTrip(id) {
@@ -57,6 +59,68 @@ async function openTrip(id) {
   renderTrip();
   window.scrollTo(0, 0);
   if (d.roads_pending) setTimeout(() => tripShown === d && location.hash === `#trip=${id}` && refreshTripMap(id), 20000);
+}
+
+// --- getting ready for the coming trips (prep.js on the server) ---
+
+let comingAsked = null;
+const loadComing = (fresh = false) => (comingAsked = !fresh && comingAsked ? comingAsked : fetch('/api/coming').then(r => (r.ok ? r.json() : [])).catch(() => []));
+
+async function renderComing() {
+  const box = document.getElementById('coming-trips');
+  const list = await loadComing(true);
+  if (!box || !list.length) return;
+  box.innerHTML = `<div class="chart-section"><h3>Coming trips</h3>${list.map(t => prepBlock(t, true)).join('')}` +
+    '<p class="sp-note">What is booked, and what is still missing: a check-in to-do for a flight (one per journey; done or set aside counts), a bed for every night, the way there and back. ' +
+    'Every morning at 07:30 what is missing and not yet a to-do goes to the alerts channel. Weather: Open-Meteo\'s forecast, once the trip is within 16 days.</p></div>';
+  hookPrep(box);
+}
+
+async function renderTripPrep(id) {
+  const box = document.getElementById('trip-prep');
+  const t = (await loadComing(true)).find(x => x.id === id);
+  if (!box || !t) return;
+  box.innerHTML = `<div class="chart-section"><h3>Getting ready</h3>${prepBlock(t, false)}</div>`;
+  hookPrep(box);
+}
+
+// one coming trip: its bookings, what is missing (with a link that makes the Things to-do, in ✈️ Travel), its open
+// to-dos, the weather and the climbs near where you stay
+function prepBlock(t, withTitle) {
+  const today = new Date().toISOString().slice(0, 10), days = Math.round((Date.parse(t.start) - Date.parse(today)) / 864e5);
+  const when = days > 0 ? `in ${days} day${days > 1 ? 's' : ''}` : 'now';
+  const thingsLink = m => `things:///add?${new URLSearchParams({ title: m.text, when: m.when > today ? m.when : 'today', list: '✈️ Travel',
+    notes: `${t.name}, ${tripRange(t.start, t.end)} (from Cairn)` }).toString().replace(/\+/g, '%20')}`;
+  const badge = f => (!f.checkin ? '<span class="prep-bad">no check-in to-do</span>'
+    : `<span class="prep-ok" title="${escapeHTML(f.checkin.title)}">${f.checkin.status === 'done' ? '✓ checked in' : f.checkin.status === 'open' ? 'check-in to-do' : 'check-in set aside'}${f.checkin.with ? ` (with ${escapeHTML(f.checkin.with)})` : ''}</span>`);
+  const ahead = d => (d || '').slice(0, 10) >= today;  // a trip under way: only what is still to come
+  const rows = [
+    ...t.flights.filter(f => ahead(f.date)).map(f => `<li>✈️ <b>${escapeHTML(f.flight_number || '')}</b> ${escapeHTML(f.from_city || f.from)} → ${escapeHTML(f.to_city || f.to)} <small>${f.date.slice(0, 16).replace(' ', ' at ')}</small> ${badge(f)}</li>`),
+    ...t.ground.filter(g => ahead(g.date)).map(g => `<li>${(groundModes[g.mode] || '🚌').split(' ')[0]} ${escapeHTML(g.from)} → ${escapeHTML(g.to)} <small>${g.date.slice(0, 16).replace(' ', ' at ')}</small></li>`),
+    ...t.stays.filter(x => ahead(x.end || x.start)).map(s => `<li>🏨 ${escapeHTML(s.hotel || s.type || s.place || '')} <small>${escapeHTML(s.place || '')} · ${tripRange(s.start, s.end)} · ${escapeHTML(s.provider || '')}</small></li>`),
+    ...t.cars.filter(c => ahead(c.end || c.start)).map(c => `<li>🚗 Rental car <small>${escapeHTML(c.place || '')} · ${tripRange(c.start, c.end)} · ${escapeHTML(c.provider || '')}</small></li>`)];
+  const missing = t.missing.map(m => `<li class="prep-missing" data-key="${escapeHTML(m.key)}">⚠️ ${escapeHTML(m.text)} ` +
+    (m.todo ? '<span class="prep-ok">already a to-do</span>' : `<a href="${thingsLink(m)}">Add to Things</a>`) +
+    ` <button class="btn btn-ghost" data-prep-no title="Not needed (staying with friends, booked elsewhere)">Not needed</button></li>`).join('');
+  const weather = t.weather.length ? `<div class="prep-weather">${t.weather.slice(0, 16).map(w => { const [icon, word] = skyOf(w.code);
+    return `<span title="${escapeHTML(w.place)}: ${word}, ${fmtTemp(w.tmin)}–${fmtTemp(w.tmax)}${w.rain ? `, ${w.rain} mm` : ''}"><small>${new Date(w.day + 'T12:00:00Z').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric' })}</small>${icon}<b>${fmtTemp(w.tmax)}</b>${w.rain >= 1 ? `<small>${Math.round(w.rain)} mm</small>` : ''}</span>`; }).join('')}</div>` : '';
+  const climbs = t.climbs.length ? `<p class="prep-line">⛰️ Climbs near your stays you have not ridden: ${t.climbs.map(c =>
+    `<a href="#" class="sp-link inline" onclick="event.preventDefault(); openClimb('${c.id}')">${escapeHTML(c.name)}</a> <small>${c.km} km` +
+    (c.from ? ` · <a href="/api/climbs/${encodeURIComponent(c.id)}/gpx?${new URLSearchParams({ from: c.from.at.join(','), name: c.from.name || '' })}" download ` +
+      `title="A bike route from ${escapeHTML(c.from.name || 'your stay')} to the top and back (OpenStreetMap), for your bike computer">GPX</a>` : '') + '</small>').join(' · ')}</p>` : '';
+  const saved = t.saved?.length ? `<p class="prep-line">⭐ Saved places nearby: ${t.saved.map(p =>
+    `${p.url ? `<a href="${escapeHTML(p.url)}" target="_blank" rel="noopener">${escapeHTML(p.name)}</a>` : escapeHTML(p.name)} <small>${p.km} km${p.list && p.list !== 'Starred' ? ` · ${escapeHTML(p.list)}` : ''}</small>`).join(' · ')}</p>` : '';
+  const todos = t.todos.length ? `<p class="prep-line">✅ To-dos: ${t.todos.map(td => escapeHTML(td.title)).join(' · ')}</p>` : '';
+  return `<div class="prep-trip">${withTitle ? `<h4>${tripFlags(t)} ${tripLink(t)} <small>${tripRange(t.start, t.end)} · ${when}</small></h4>` : ''}` +
+    `${missing ? `<ul class="prep-list">${missing}</ul>` : '<p class="prep-line prep-ok">Nothing missing</p>'}` +
+    `<ul class="prep-list">${rows.join('')}</ul>${weather}${todos}${saved}${climbs}</div>`;
+}
+
+function hookPrep(box) {
+  box.querySelectorAll('[data-prep-no]').forEach(b => b.addEventListener('click', () => {
+    const li = b.closest('[data-key]');
+    fetch('/api/suggestions/dismiss', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: li.dataset.key }) }).then(() => li.remove());
+  }));
 }
 
 // the roads looked up meanwhile: the map again
@@ -87,10 +151,11 @@ function renderTrip() {
   const plural = (n, w) => `${n.toLocaleString()} ${w}${n !== 1 ? 's' : ''}`;
   document.getElementById('trip-title').innerHTML = `${tripFlags(d)} ${escapeHTML(d.name)}`;
   document.getElementById('trip-sub').textContent = `${tripRange(d.start, d.end)} · ${plural(d.days, 'day')}` +
-    (d.countries.length ? ` · ${d.countries.map(c => `${c.cc} ${c.days} d`).join(', ')}` : '');
+    (d.countries.length ? ` · ${d.countries.map(c => `${c.cc} ${c.days} d`).join(', ')}` : '') +
+    (d.work?.length ? ` · 💼 ${d.work.join('; ')}` : '');  // from your calendars
   const card = (label, value, sub = '') => (!value || value === '0' ? '' : `<div class="stat-card"><div class="label">${label}</div><div class="value">${value}</div>` +
     (sub ? `<div class="sub">${sub}</div>` : '') + '</div>');
-  const section = (title, body, note = '') => `<div class="chart-section"><h3>${title}</h3><div class="sp-scroll">${body}</div>` +
+  const section = (title, body, note = '', cls = '') => `<div class="chart-section ${cls}"><h3>${title}</h3><div class="sp-scroll">${body}</div>` +
     (note ? `<p class="sp-note">${note}</p>` : '') + '</div>';
   const table = (head, rows) => `<table class="sp-table"><thead><tr>${head.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table>`;
   const city = c => `<a href="#" class="sp-link inline" onclick="event.preventDefault(); openCityReport(${c.id})">${escapeHTML(c.name)}</a>`;
@@ -109,6 +174,8 @@ function renderTrip() {
     card(cars.length ? 'Driven' : 'By road', road ? `${Math.round(dist(road)).toLocaleString()} ${DU()}` : '', cars.length ? plural(cars.length, 'rental car') : 'between photos and stays') +
     card('Activities', d.activities.length, `${Math.round(dist(actKm)).toLocaleString()} ${DU()}`) +
     card('Photos', d.photo_ids.length.toLocaleString()) +
+    (d.spending?.priced ? card('Spent on stays', `€${d.spending.eur.toLocaleString()}`, `€${d.spending.perNight} a night · ${d.spending.priced} of ${d.spending.stays} stays with a price`) : '') +
+    (d.spending?.card ? card('Paid by card and cash', `€${d.spending.card.eur.toLocaleString()}`, `${d.spending.card.payments} payment${d.spending.card.payments !== 1 ? 's' : ''} on the trip's days (your bank)`) : '') +
     card('Sleep', d.body?.sleep ? hm(d.body.sleep) : '', [d.body.score ? `score ${d.body.score}` : '', d.body.sleep_before ? `${hm(d.body.sleep_before)} the month before` : ''].filter(Boolean).join(' · ')) +
     card('Resting heart rate', d.body?.rhr ? `${d.body.rhr} bpm` : '', d.body.rhr_before ? `${d.body.rhr_before} the month before` : '') + '</div>';
 
@@ -130,7 +197,7 @@ function renderTrip() {
       `<td>${s ? `🏨 ${escapeHTML(s.hotel || s.type || s.place || '')}<small>${escapeHTML(s.provider || '')}</small>` : ''}</td>` +
       (withBody ? `<td>${bodyOf(x.body)}</td>` : '') + '</tr>';
   })), 'Where: the towns your flights, trains, stays, activities, photos and Timeline put you in that day. 🛣️ moves between photos, activities and stays of 10 km or more, along the roads (🚗 with a rental car). ' +
-    'Weather on rides: Open-Meteo\'s history at the start, over the ride\'s hours. Sleep, heart: from Garmin, the night before that day and the day\'s resting heart rate.');
+    'Weather on rides: Open-Meteo\'s history at the start, over the ride\'s hours. Sleep, heart: from Garmin, the night before that day and the day\'s resting heart rate.', 'glance');
   if (d.towns.length) html += section('Towns', `<p>${d.towns.map(c => `${flagOf(c.country)}${city(c)} <small>${plural(c.days, 'day')}</small>`).join(' · ')}</p>`);
   if (stays.length || cars.length) {
     html += section('Stays and rental cars', table(['When', 'Nights', 'Where', 'Booked'], d.stays.map(s =>
@@ -158,7 +225,9 @@ function renderTrip() {
     html += section('Famous climbs', `<p>${climbed.map(({ c, rides }) => `⛰️ <a href="#" class="sp-link" onclick="event.preventDefault(); openClimb('${c.id}')">${escapeHTML(c.name)}</a>` +
       ` <small>${rides.map(r => fmtDate(r.date)).join(', ')}</small>`).join('<br>')}</p>`);
   }
+  if (d.end >= new Date().toISOString().slice(0, 10)) html = '<div id="trip-prep"></div>' + html;  // a coming trip: getting ready first
   document.getElementById('trip-body').innerHTML = html;
+  if (document.getElementById('trip-prep')) renderTripPrep(d.id);
   hookLinks('trip-body');
   paginateTables('trip-body');
   drawTripMap(d);
@@ -213,6 +282,37 @@ function tripStory(d) {
     `as recorded for activities; for photos and drives guessed from the longitude. Click a photo for the whole of it. 🎵 the track you played most that day (Last.fm), 😴 sleep the night before (Garmin's score), ❤️ resting heart rate.</p></div>` : '';
 }
 
+// The trip's journal: its page on white, light theme, every photo of the day by day shown (up to JOURNAL_PHOTOS a
+// stretch) and loaded, then the browser's print dialog (where it can be saved as a PDF); all as it was afterwards
+const JOURNAL_PHOTOS = 24;
+async function printJournal() {
+  const root = document.documentElement, theme = root.dataset.theme, shown = [];
+  document.querySelectorAll('#trip-body .story-strip').forEach(s => [...s.querySelectorAll('a[hidden]')].slice(0, JOURNAL_PHOTOS - STRIP).forEach(a => { a.hidden = false; shown.push(a); }));
+  const imgs = [...document.querySelectorAll('#trip-body img')];
+  imgs.forEach(i => { i.loading = 'eager'; });
+  toast('Getting the journal ready…');
+  await Promise.race([Promise.all(imgs.map(i => (i.complete ? null : new Promise(r => { i.onload = i.onerror = r; })))), new Promise(r => setTimeout(r, 15000))]);
+  root.dataset.theme = 'light';
+  const box = document.getElementById('trip-map');
+  Object.assign(box.style, { width: '680px', height: '360px' });  // as wide as the paper: its tiles loaded before the dialog
+  drawTripMap(tripShown);
+  await new Promise(r => setTimeout(r, 2500));
+  const done = () => {
+    window.removeEventListener('afterprint', done);
+    if (theme) root.dataset.theme = theme; else delete root.dataset.theme;
+    shown.forEach(a => { a.hidden = true; });
+    Object.assign(box.style, { width: '', height: '' });
+    drawTripMap(tripShown);
+  };
+  window.addEventListener('afterprint', done);
+  setTimeout(() => window.print(), 300);
+}
+
+// printing (the 🖨️ button or the browser's): the map as wide as the paper, around the trip again
+const refitTripMap = () => { if (tripMap && document.getElementById('tab-trip').classList.contains('active')) { tripMap.invalidateSize(); if (tripMap.fitTo) tripMap.fitBounds(tripMap.fitTo, { padding: [24, 24], maxZoom: 12 }); } };
+window.addEventListener('beforeprint', refitTripMap);
+window.addEventListener('afterprint', refitTripMap);
+
 // Top artists and tracks (Last.fm), for a trip's or a town's page
 function musicSection(m, title, what) {
   const list = rows => `<ol class="music-list">${rows.join('')}</ol>`;
@@ -229,9 +329,10 @@ function drawTripMap(d, keepView = false) {
   if (!box) return;
   box.dataset.basemap = BASEMAPS[prefs.basemap] ? prefs.basemap : 'auto';
   tripMap = L.map(box, { zoomControl: true, attributionControl: true });
+  toneMap(tripMap);
   const b = BASEMAPS[prefs.basemap] || BASEMAPS.auto, [url, attribution, maxZoom = 19] = b.tiles;
   L.tileLayer(url, { attribution, maxZoom }).addTo(tripMap);
-  const st = lineStyle(), col = k => getCSSVar('--' + k), bounds = [], local = [];  // local: the trip's own area, without the flights there
+  const st = lineStyle(), col = k => mapVar('--' + k), bounds = [], local = [];  // local: the trip's own area, without the flights there
   // moves first, under the rest: along the roads solid, the short ones dotted
   d.moves.forEach(m => {
     const pts = m.path ? decodePath(m.path) : [m.from, m.to];
@@ -254,7 +355,7 @@ function drawTripMap(d, keepView = false) {
   const gids = new Set(d.ground.map(g => g.id));
   allTrips.filter(g => gids.has(g.id) && g.from_lat != null && g.to_lat != null).forEach(g => {
     const pts = g.path ? decodePath(g.path) : [[g.from_lat, g.from_lon], [g.to_lat, g.to_lon]];
-    L.polyline(pts, { color: col(['train', 'bus', 'ferry'].includes(g.mode) ? g.mode : 'bus'), weight: 3 * st.w, opacity: 0.9, dashArray: g.path ? null : '6 6' })
+    L.polyline(pts, { color: col(['train', 'bus', 'ferry', 'hitch'].includes(g.mode) ? g.mode : 'bus'), weight: 3 * st.w, opacity: 0.9, dashArray: g.path ? null : '6 6' })
       .bindPopup(`<b>${(groundModes[g.mode] || '🚌').split(' ')[0]} ${escapeHTML(g.from)} → ${escapeHTML(g.to)}</b><br><small>${fmtDate(g.date)}</small>`).addTo(tripMap);
     pts.forEach(p => { bounds.push(p); local.push(p); });
   });
@@ -281,9 +382,9 @@ function drawTripMap(d, keepView = false) {
     group.addLayers(photos.map(p => L.marker([p[2], p[3]], { icon }).bindPopup(() => photoPopup(p), { maxWidth: 260, minWidth: 240 })));
     tripMap.addLayer(group);
   } else if (ids.size && allPhotoPoints === null) {
-    loadPhotoPoints();
-    setTimeout(() => tripShown === d && drawTripMap(d, true), 4000);
+    loadPhotoPoints().then(() => tripShown === d && drawTripMap(d, true));
   }
+  tripMap.fitTo = local.length || bounds.length ? L.latLngBounds(local.length ? local : bounds) : null;  // again for the page's width on paper
   if (view) tripMap.setView(view.c, view.z);
   else if (local.length || bounds.length) tripMap.fitBounds(L.latLngBounds(local.length ? local : bounds), { padding: [24, 24], maxZoom: 12 });
   else if (d.towns[0]) tripMap.setView([d.towns[0].lat || 0, d.towns[0].lon || 0], 8);

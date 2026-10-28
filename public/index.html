@@ -14,15 +14,19 @@
   <script src="layers.js"></script>
   <script src="sports.js"></script>
   <script src="city.js"></script>
+  <script src="airport.js"></script>
+  <script src="country.js"></script>
   <script src="trips.js"></script>
   <script src="curiosities.js"></script>
   <script src="add.js"></script>
+  <script src="review.js"></script>
+  <script src="wish.js"></script>
   <script src="terrain.js"></script>
   <script src="climb.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-    :root {
+    :root, [data-theme="dark"] {
       --bg:       #0d0d1a;
       --surface:  #13132b;
       --surface2: #1a1a3a;
@@ -37,6 +41,8 @@
       --train:    #ffb74d;
       --bus:      #81c784;
       --ferry:    #b39ddb;
+      --hitch:    #ff8a65;
+      --checkin:  #ffd180;
       --stay:     #f06292;
       --car:      #ffd54f;
       --photo:    #4dd0e1;
@@ -48,8 +54,19 @@
       --sport:    #c98500;
       --tile:     #66bb6a;
       --city:     #eceff1;
+      --home:     #ffb300;
       --climb:    #c0ca33;
     }
+
+    /* lines and markers on the satellite map (its own tone, set on the map's panes, layers.js mapTone): vivid, with a
+       dark outline, as the photos underneath are both dark and light */
+    [data-theme="sat"] {
+      --surface: #111111; --surface2: #222222; --text: #ffffff; --text2: #dddddd; --accent: #00e5ff; --accent2: #d500f9;
+      --train: #ffab00; --bus: #76ff03; --ferry: #ea80fc; --hitch: #ff9e80; --checkin: #ffe57f; --stay: #ff4081; --car: #ffea00; --photo: #18ffff;
+      --timeline: #ffffff; --country: #b388ff; --ride: #ff6e40; --run: #b388ff; --walk: #ff80ab; --sport: #ffd740;
+      --tile: #69f0ae; --city: #ffffff; --home: #ffc400; --climb: #eeff41;
+    }
+    .leaflet-pane[data-theme="sat"] > :is(svg, canvas) { filter: drop-shadow(0 0 1.2px rgba(0,0,0,0.95)); }
 
     [data-theme="light"] {
       --bg:        #f5f7fa;
@@ -65,6 +82,8 @@
       --train:     #c77700;
       --bus:       #1e8449;
       --ferry:     #8e44ad;
+      --hitch:     #d84315;
+      --checkin:   #6d4c41;
       --stay:      #c2185b;
       --car:       #9a7d0a;
       --photo:     #00838f;
@@ -76,6 +95,7 @@
       --sport:     #eda100;
       --tile:      #2e7d32;
       --city:      #37474f;
+      --home:      #e65100;
       --climb:     #827717;
     }
 
@@ -131,6 +151,20 @@
     .settings-group { border: none; margin: 0 0 16px; padding: 0; }
     .settings-group legend { font-size: 12px; font-weight: 600; color: var(--text2); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
     .settings-group label { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 13px; cursor: pointer; }
+    .settings-group .place-row { display: grid; grid-template-columns: 150px 1fr; align-items: center; gap: 8px; padding: 3px 0; font-size: 13px; }
+    .modal .settings-group .place-row input { width: 100%; padding: 6px 10px; margin: 0; }
+    .place-pick { position: relative; }
+    .place-list { position: absolute; left: 0; right: 0; top: calc(100% + 2px); z-index: 5; background: var(--surface); border: 1px solid var(--border);
+      border-radius: 6px; box-shadow: 0 4px 14px rgba(0,0,0,0.35); max-height: 240px; overflow-y: auto; }
+    .place-list div { padding: 6px 10px; cursor: pointer; display: flex; gap: 8px; }
+    .place-list div small { color: var(--text2); margin-left: auto; }
+    .place-list div.on, .place-list div:hover { background: var(--surface2); }
+    /* your places on the map: the hometown bigger, with a halo */
+    .home-pin { width: 28px; height: 28px; border-radius: 50%; background: var(--surface); border: 2px solid var(--home);
+      display: flex; align-items: center; justify-content: center; font-size: 15px; box-shadow: 0 1px 4px rgba(0,0,0,0.45); }
+    .home-pin.hometown { width: 38px; height: 38px; font-size: 20px; border-width: 3px;
+      box-shadow: 0 0 0 5px color-mix(in srgb, var(--home) 35%, transparent), 0 1px 6px rgba(0,0,0,0.5); }
+    .leaflet-tooltip.home-label { background: var(--surface); color: var(--text); border: 1px solid var(--home); font-weight: 600; font-size: 11px; padding: 1px 6px; }
     .modal .settings-group input { accent-color: var(--accent); width: auto; margin: 0; padding: 0; flex: none; }
 
     /* --- Content --- */
@@ -269,6 +303,9 @@
     .sp-table td .sp-link { display: block; color: var(--accent); text-decoration: none; }
     .sp-table td .sp-link:hover { text-decoration: underline; }
     .sp-table td .sp-link.inline { display: inline; }
+    .years-table td.yb { position: relative; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .years-table td.yb small { font-size: 10px; }
+    .years-table .yb-bar { position: absolute; left: 4px; bottom: 3px; height: 3px; border-radius: 2px; background: var(--accent); opacity: 0.55; max-width: calc(100% - 8px); }
     .sp-table tr.sp-hi { background: color-mix(in srgb, var(--accent) 8%, transparent); }
     .sp-rank { color: var(--text2); width: 20px; }
     .country-fill { shape-rendering: crispEdges; }
@@ -282,13 +319,46 @@
     .curio-bars { display: grid; grid-template-columns: 40px 1fr 36px; gap: 3px 8px; align-items: center; font-size: 12px; max-width: 520px; }
     .curio-bars div.bar { height: 10px; border-radius: 0 4px 4px 0; background: var(--accent); }
     .curio-bars span:last-child { color: var(--text2); }
+    .prep-trip { border-top: 1px solid var(--border); padding: 12px 0; }
+    .prep-trip:first-of-type { border-top: none; padding-top: 0; }
+    .prep-trip h4 { margin: 0 0 6px; font-size: 14px; }
+    .prep-trip h4 a { color: var(--accent); text-decoration: none; }
+    .prep-trip h4 small { color: var(--text2); font-weight: 400; margin-left: 6px; }
+    .prep-list { list-style: none; margin: 4px 0; padding: 0; font-size: 13px; }
+    .prep-list li { padding: 3px 0; }
+    .prep-list small { color: var(--text2); }
+    .prep-missing { color: var(--text); }
+    .prep-missing a { color: var(--accent); margin-left: 6px; }
+    .prep-missing .btn { padding: 2px 8px; font-size: 11px; margin-left: 4px; }
+    .prep-bad { color: #ef5350; font-size: 11px; margin-left: 6px; }
+    .prep-ok { color: var(--text2); font-size: 11px; margin-left: 6px; }
+    .prep-line { font-size: 13px; margin: 6px 0; }
+    .prep-weather { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0; }
+    .prep-weather span { display: flex; flex-direction: column; align-items: center; background: var(--surface2); border-radius: 6px; padding: 4px 6px; font-size: 12px; min-width: 48px; }
+    .prep-weather small { color: var(--text2); font-size: 10px; }
     .music-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px 24px; }
     .music-cols h4 { margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--text2); }
     .music-list { margin: 0; padding-left: 20px; font-size: 13px; }
     .music-list li { padding: 2px 0; }
     .music-list small { color: var(--text2); }
-    .story-day a, .chart-section p a.sp-link, .curio-cards a.sp-link { color: var(--accent); text-decoration: none; }
-    .story-day a:hover, .chart-section p a.sp-link:hover, .curio-cards a.sp-link:hover { text-decoration: underline; }
+    .story-day a, .chart-section p a.sp-link, .curio-cards a.sp-link, .sugg a.sp-link { color: var(--accent); text-decoration: none; }
+    .story-day a:hover, .chart-section p a.sp-link:hover, .curio-cards a.sp-link:hover, .sugg a.sp-link:hover { text-decoration: underline; }
+    /* a trip's journal (🖨️ on its page, or printing it): only the trip, on white, a day never split over two pages */
+    @media print {
+      body:has(#tab-trip.active) nav, body:has(#tab-trip.active) .sp-head .btn, body:has(#tab-trip.active) #trip-prep, body:has(#tab-trip.active) .glance, body:has(#tab-trip.active) .story-strip button,
+      body:has(#tab-trip.active) .leaflet-control-container, body:has(#tab-trip.active) #toast, body:has(#tab-trip.active) .sp-note:not(#trip-sub) { display: none !important; }
+      body:has(#tab-trip.active), body:has(#tab-trip.active) .tab-content, body:has(#tab-trip.active) .chart-section, body:has(#tab-trip.active) .stat-card { background: #fff !important; box-shadow: none !important; }
+      body:has(#tab-trip.active) .stats-page { padding: 0; max-width: none; }
+      html:has(#tab-trip.active) { --text: #1a1a2e; --text2: #556688; --accent: #c0392b; --border: rgba(0,50,120,0.12); --surface2: #eef1f5; }
+      body:has(#tab-trip.active) .chart-section { border: none; padding: 8px 0; break-inside: auto; }
+      body:has(#tab-trip.active) .story-day, body:has(#tab-trip.active) .stat-cards, body:has(#tab-trip.active) tr { break-inside: avoid; }
+      body:has(#tab-trip.active) .chart-section h3 { break-after: avoid; }
+      body:has(#tab-trip.active) #trip-map { height: 360px !important; break-inside: avoid; }
+      body:has(#tab-trip.active) a { color: inherit !important; text-decoration: none !important; }
+      html:has(#tab-trip.active), body:has(#tab-trip.active) { height: auto !important; overflow: visible !important; }
+      body:has(#tab-trip.active) .tab-content.active { display: block !important; height: auto !important; overflow: visible !important; }
+      @page { margin: 14mm; }
+    }
     .story-day { border-top: 1px solid var(--border); padding: 12px 0 4px; }
     .story-day:first-of-type { border-top: none; padding-top: 0; }
     .story-day h4 { margin: 0 0 8px; font-size: 14px; display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; }
@@ -307,6 +377,10 @@
     .climb-photos a { position: relative; display: block; }
     .climb-photos img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 6px; display: block; background: var(--surface2); }
     .climb-photos span { position: absolute; left: 6px; bottom: 6px; font-size: 14px; }
+    .photo-pager { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+    .photo-pager .btn { min-width: 34px; padding: 6px 10px; }
+    .photo-pager .btn[disabled] { opacity: 0.35; cursor: default; }
+    .photo-pager span { color: var(--text2); padding: 0 2px; }
     .photo-pop img { border-radius: 6px; display: block; max-width: 240px; height: auto; background: var(--surface2); min-height: 120px; }
     .popup-link { display: inline-block; margin-top: 6px; color: var(--accent); font-weight: 600; text-decoration: none; }
     .popup-link:hover { text-decoration: underline; }  /* no hairlines between a country's provinces */
@@ -336,6 +410,8 @@
       cursor: pointer; white-space: nowrap; user-select: none;
     }
     thead th:hover { color: var(--text); }
+    .sp-table th[data-sort] { cursor: pointer; white-space: nowrap; user-select: none; }
+    .sp-table th[data-sort]:hover { color: var(--accent); }
     thead th.sort-asc::after  { content: ' ▲'; color: var(--accent); }
     thead th.sort-desc::after { content: ' ▼'; color: var(--accent); }
     tbody tr { border-bottom: 1px solid var(--border); transition: background .1s; }
@@ -346,9 +422,10 @@
     .arrow { color: var(--text2); margin: 0 4px; }
 
     /* --- Add flight --- */
-    .add-page { padding: 36px 28px; max-width: 600px; margin: 0 auto; width: 100%; }
+    /* one width for the title and the kinds, whatever is chosen (they no longer jump); the forms narrower */
+    .add-page { padding: 36px 28px; max-width: 860px; margin: 0 auto; width: 100%; }
     .add-page h2 { font-size: 18px; font-weight: 600; margin-bottom: 6px; }
-    .add-page.wide { max-width: 860px; }
+    .add-page:not(.wide) > :is(#add-flight, #add-other) { max-width: 600px; }
     .add-kinds { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
     .add-page select, .add-page input[type="number"] { width: 100%; }
     .sugg-group { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; margin-bottom: 12px; }
@@ -356,10 +433,34 @@
     .sugg { display: grid; grid-template-columns: 76px 1fr auto; gap: 10px; align-items: center; padding: 8px 0; border-top: 1px solid var(--border); font-size: 13px; }
     .sugg:first-of-type { border-top: none; }
     .sugg .pics { display: flex; gap: 2px; }
+    .album-place small { display: block; }
+    .page-flag { height: 30px; width: auto; vertical-align: middle; margin-right: 10px; border-radius: 3px; box-shadow: 0 0 0 1px var(--border); background: var(--surface2); }
+    .album-place .muted, .sugg .muted { color: var(--text2); }
+    .album-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 6px; margin: 10px 0; max-height: 420px; overflow-y: auto; }
+    .album-grid label { position: relative; display: block; cursor: pointer; }
+    .album-grid img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 5px; display: block; background: var(--surface2); }
+    .album-grid input { position: absolute; top: 5px; left: 5px; width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
+    .album-grid input:checked + img { outline: 3px solid var(--accent); outline-offset: -3px; }
+    .album-grid span { position: absolute; left: 4px; right: 4px; bottom: 4px; font-size: 10px; background: rgba(0,0,0,0.65); color: #fff; border-radius: 3px; padding: 1px 4px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .sugg .pics img { width: 36px; height: 36px; object-fit: cover; border-radius: 4px; background: var(--surface2); }
     .sugg small { color: var(--text2); display: block; }
     .sugg .acts { display: flex; gap: 6px; align-items: center; }
     .sugg .acts select { width: auto; }
+    .health-pair { display: grid; grid-template-columns: 60px 1fr 1fr auto; gap: 10px; align-items: center; padding: 8px 0; border-top: 1px solid var(--border); font-size: 13px; }
+    .health-pair:first-child { border-top: none; }
+    .health-pair > span { color: var(--text2); font-size: 12px; }
+    .health-stay { background: var(--surface2); border-radius: 6px; padding: 6px 8px; display: flex; flex-direction: column; gap: 2px; }
+    .health-stay small { color: var(--text2); }
+    .health-stay .btn { align-self: flex-start; padding: 2px 8px; font-size: 11px; margin-top: 4px; }
+    .sugg-title { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--text2); margin: 18px 0 6px; }
+    .sugg.album { grid-template-columns: 56px 1fr auto; }
+    .pic-icon { display: flex; width: 56px; height: 40px; align-items: center; justify-content: center; font-size: 24px; background: var(--surface2); border-radius: 6px; }
+    .sugg.album .pics img { width: 56px; height: 56px; }
+    .album-fields { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+    .album-fields input { background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; color: var(--text); font-size: 12px; flex: 1 1 120px; min-width: 0; }
+    .album-fields input[type="number"] { flex: 0 0 70px; }
+    .sugg .acts label { font-size: 12px; display: flex; gap: 4px; align-items: center; }
     .add-page .subtitle { color: var(--text2); margin-bottom: 28px; font-size: 13px; }
 
     .form-step { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 24px; margin-bottom: 16px; }
@@ -401,6 +502,38 @@
     .toast.show { transform: translateY(0); opacity: 1; }
     .toast.success { border-color: rgba(76,175,80,0.5); color: #4caf50; }
     .toast.error   { border-color: rgba(239,83,80,0.5);  color: #ef5350; }
+
+    /* phones: the tabs scroll sideways, cards two abreast, the map's panels folded behind a button each */
+    .panel-toggle { display: none; }
+    @media (max-width: 700px) {
+      nav { padding: 0 8px; gap: 6px; }
+      .logo { font-size: 0; }
+      .logo svg { margin-right: 0 !important; }
+      .tabs { margin-left: 0; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+      .tabs::-webkit-scrollbar { display: none; }
+      .tab { padding: 6px 9px; white-space: nowrap; flex-shrink: 0; }
+      .tab-add { margin-left: 2px; }
+      .tab-tripit { display: none; }
+      .nav-right { gap: 0; }
+      .stats-page, .add-page { padding: 16px; }
+      .stat-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 20px; }
+      .stat-card { padding: 12px 14px; }
+      .stat-card .value { font-size: 21px; }
+      .chart-section { padding: 14px; margin-bottom: 16px; }
+      .sp-head { flex-wrap: wrap; }
+      .sp-head h2 { flex-basis: 100%; order: -1; }
+      .sp-head .btn { padding: 6px 10px; font-size: 12px; }
+      .story-day li { flex-wrap: wrap; }
+      .form-group { min-width: 0; }
+      .table-wrap, #sp-punch { overflow-x: auto; }
+      .sp-grid { grid-template-columns: minmax(0, 1fr); }
+      .flights-header { flex-wrap: wrap; }
+      .form-group input, .form-group select { min-width: 0; width: 100%; }
+      .mini-map { height: 300px !important; }
+      .panel-toggle { display: block; background: none; border: none; color: var(--text); font: inherit; font-weight: 600; padding: 0; cursor: pointer; }
+      .map-legend.foldable:not(.open) > :not(.panel-toggle) { display: none !important; }
+      .map-legend.foldable { line-height: 1.6; }
+    }
 
     /* scrollbar */
     ::-webkit-scrollbar { width: 6px; height: 6px; }
@@ -489,7 +622,11 @@
         </div>
       </div>
 
+      <div class="chart-section" style="margin-top:24px"><h3>Year in review</h3><p id="year-links"></p>
+        <div class="sp-scroll" id="years-table"></div>
+        <p class="sp-note">The years side by side: a bar shows each number against the column's biggest year. Distances count each journey in the year it was made; nights and € in the year a stay began. Click a heading to sort.</p></div>
       <div id="curiosities"></div>
+      <div id="spending"></div>
       <div class="chart-section" style="margin-top:24px">
         <h3>Countries</h3>
         <div class="sp-scroll"><table class="sp-table country-stats" id="country-stats"></table></div>
@@ -517,10 +654,33 @@
     <div id="sp-tip" class="sp-tip"></div>
   </div>
 
+  <!-- WISH LIST (wish.js) -->
+  <div id="tab-wish" class="tab-content">
+    <div class="stats-page">
+      <div class="sp-head">
+        <button class="btn btn-ghost" onclick="document.querySelector('.tab[data-tab=&quot;trips&quot;]').click()">← Trips</button>
+        <h2>Wish list</h2>
+      </div>
+      <div id="wish-body"></div>
+    </div>
+  </div>
+
+  <!-- YEAR IN REVIEW (review.js) -->
+  <div id="tab-year" class="tab-content">
+    <div class="stats-page">
+      <div class="sp-head">
+        <button class="btn btn-ghost" onclick="closeYear()">← Stats</button>
+        <h2 id="year-title"></h2>
+        <select id="year-pick" aria-label="Year"></select>
+      </div>
+      <div id="year-body"></div>
+    </div>
+  </div>
+
   <!-- TRIPS (trips.js): the list, and a page per trip -->
   <div id="tab-trips" class="tab-content">
     <div class="stats-page">
-      <div class="sp-head"><h2>Trips</h2></div>
+      <div class="sp-head"><h2>Trips</h2><a href="#wish" class="btn btn-ghost" onclick="event.preventDefault(); openWish()">⭐ Wish list</a></div>
       <p class="sp-note" style="margin: -12px 0 20px">Runs of days away from home, found in your flights, trains, stays, activities, photos and Timeline.</p>
       <div id="trips-body"></div>
     </div>
@@ -531,6 +691,7 @@
         <button class="btn btn-ghost" onclick="closeTrip()">← Trips</button>
         <h2 id="trip-title"></h2>
         <button class="btn btn-ghost" onclick="tripOnMap()">Show on the map</button>
+        <button class="btn btn-ghost" onclick="printJournal()" title="The trip day by day, to print or save as a PDF">🖨️ Journal</button>
       </div>
       <p class="sp-note" id="trip-sub" style="margin: -12px 0 20px"></p>
       <div id="trip-body"></div>
@@ -547,6 +708,32 @@
       </div>
       <p class="sp-note" id="city-sub" style="margin: -12px 0 20px"></p>
       <div id="city-body"></div>
+    </div>
+  </div>
+
+  <!-- AIRPORT PAGE (airport.js), opened from an airport on the map or in a table -->
+  <div id="tab-airport" class="tab-content">
+    <div class="stats-page">
+      <div class="sp-head">
+        <button class="btn btn-ghost" onclick="closeAirport()">← Map</button>
+        <h2 id="airport-title"></h2>
+        <button class="btn btn-ghost" onclick="closeAirport(true)">Show on the map</button>
+      </div>
+      <p class="sp-note" id="airport-sub" style="margin: -12px 0 20px"></p>
+      <div id="airport-body"></div>
+    </div>
+  </div>
+
+  <!-- COUNTRY PAGE (country.js), opened from a country on the map, the Stats tab or a page -->
+  <div id="tab-country" class="tab-content">
+    <div class="stats-page">
+      <div class="sp-head">
+        <button class="btn btn-ghost" onclick="closeCountry()">← Map</button>
+        <h2 id="country-title"></h2>
+        <button class="btn btn-ghost" onclick="closeCountry(true)">Show on the map</button>
+      </div>
+      <p class="sp-note" id="country-sub" style="margin: -12px 0 20px"></p>
+      <div id="country-body"></div>
     </div>
   </div>
 
@@ -597,9 +784,10 @@
       <p class="subtitle">What your emails, Garmin and photos do not know: a flight, a train, bus or ferry, a stay, with the date as well as you remember it. Or start from what your photos show.</p>
       <div class="add-kinds" role="tablist">
         <button class="btn btn-primary" data-add="flight">✈️ Flight</button>
-        <button class="btn btn-ghost" data-add="ground">🚆 Train, bus or ferry</button>
+        <button class="btn btn-ghost" data-add="ground">🚆 Train, bus, ferry, lift</button>
         <button class="btn btn-ghost" data-add="stay">🏨 Stay</button>
-        <button class="btn btn-ghost" data-add="suggest">💡 From your photos</button>
+        <button class="btn btn-ghost" data-add="suggest">💡 To check</button>
+        <button class="btn btn-ghost" data-add="health">🩺 Fix</button>
       </div>
       <div id="add-other"></div>
       <div id="add-flight">
@@ -671,7 +859,13 @@
 <div class="modal-backdrop" id="settings-modal" onclick="if(event.target===this)closeSettings()">
   <div class="modal">
     <h3>⚙️ Settings</h3>
-    <p>Kept in this browser.</p>
+    <p>Your places are kept in Cairn; the rest in this browser.</p>
+    <fieldset class="settings-group" id="set-home-group">
+      <legend>Your places</legend>
+      <div class="place-row"><span>🌱 Hometown</span><div class="place-pick"><input id="set-hometown" data-role="hometown" placeholder="The town you grew up in" autocomplete="off"><div class="place-list" hidden></div></div></div>
+      <div class="place-row"><span>🏠 Where you live</span><div class="place-pick"><input id="set-residence" data-role="residence" placeholder="Your town now" autocomplete="off"><div class="place-list" hidden></div></div></div>
+      <div class="place-row"><span>💼 Where you work</span><div class="place-pick"><input id="set-work" data-role="work" placeholder="The town you work in" autocomplete="off"><div class="place-list" hidden></div></div></div>
+    </fieldset>
     <fieldset class="settings-group">
       <legend>Distances</legend>
       <label><input type="radio" name="set-units" value="km"> Kilometres and metres</label>
@@ -700,6 +894,15 @@
       <label><input type="radio" name="set-countries" value="iso"> ISO countries and territories (250): Greenland, Puerto Rico, Hong Kong count apart</label>
       <label><input type="radio" name="set-countries" value="un"> Sovereign countries (200): UN members and observers, Kosovo, Taiwan, Northern Cyprus, Cook Islands, Niue; territories count for none</label>
       <label><input type="radio" name="set-countries" value="tcc"> Travelers' Century Club (330): islands, parts of countries and claims count apart</label>
+    </fieldset>
+    <fieldset class="settings-group">
+      <legend>Backup</legend>
+      <p class="sp-note" style="margin:0 0 8px">Everything you imported or added (flights, trains, stays, sports activities and their tracks, sleep, photo places, Timeline, weather, music) as one file. Not the photos themselves, nor keys and sign-ins. <span id="backup-summary"></span></p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <a class="btn btn-ghost" id="backup-download" href="/api/backup" download>Download backup</a>
+        <label style="padding:0"><input type="checkbox" id="backup-activities" checked> with sports activities and their tracks</label>
+        <label class="btn btn-ghost" style="cursor:pointer">Restore from backup…<input type="file" id="backup-file" accept=".gz,.tgz,application/gzip" hidden></label>
+      </div>
     </fieldset>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeSettings()">Cancel</button>
@@ -752,7 +955,7 @@ function toggleTheme() {
 let airportLayer = null;
 let clusterMode  = localStorage.getItem('clusterMode') === '1';  // remembered in this browser
 const routeLayer  = L.layerGroup();  // flights
-const groundModes = { train: '🚆 Trains', bus: '🚌 Buses', ferry: '⛴️ Ferries' };
+const groundModes = { train: '🚆 Trains', bus: '🚌 Buses', ferry: '⛴️ Ferries', hitch: '👍 Hitchhiking' };
 const groundLayer = Object.fromEntries(Object.keys(groundModes).map(m => [m, L.layerGroup()]));
 
 applyTheme(localStorage.getItem('theme') || 'dark');
@@ -841,12 +1044,70 @@ function openSettings() {
   document.getElementById('set-grid').checked = prefs.grid;
   document.querySelector(`input[name="set-countries"][value="${prefs.countries}"]`).checked = true;
   document.querySelector(`input[name="set-photos"][value="${prefs.photos || 'clusters'}"]`).checked = true;
+  fillPlaces();
   document.getElementById('settings-modal').classList.add('open');
+  fetch('/api/backup/summary').then(r => r.json()).then(b => {
+    const mb = b.files.reduce((n, f) => n + f.bytes, 0) / 1e6;
+    document.getElementById('backup-summary').textContent = `Now: ${b.files.length} files (${mb.toFixed(1)} MB) and ${b.tracks.toLocaleString()} activity tracks.`;
+  }).catch(() => {});
 }
+document.getElementById('backup-activities').addEventListener('change', e => {
+  document.getElementById('backup-download').href = e.target.checked ? '/api/backup' : '/api/backup?activities=0';
+});
+// A backup back in place: the data as it is now is kept first (data/backups/), then Cairn starts again with it
+document.getElementById('backup-file').addEventListener('change', async e => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file || !confirm(`Restore ${file.name}? Its files replace yours (the data as it is now is kept in data/backups/ first), then Cairn starts again.`)) return;
+  toast('Restoring…');
+  const r = await fetch('/api/backup/restore', { method: 'POST', headers: { 'Content-Type': 'application/gzip' }, body: file });
+  const d = await r.json().catch(() => ({ error: 'no answer' }));
+  if (!r.ok) return toast(`Not restored: ${d.error}`, 'error');
+  toast(`Restored ${d.files.length} files and ${d.tracks} tracks from ${d.created.slice(0, 10)}.${d.restarting ? ' Cairn starts again…' : ' Start Cairn again to see them.'}`);
+  if (d.restarting) {  // back when it answers again
+    for (let i = 0; i < 60; i++) {
+      await new Promise(res => setTimeout(res, 1000));
+      if (await fetch('/api/settings').then(x => x.ok).catch(() => false)) return location.reload();
+    }
+  }
+});
 function closeSettings() {
   document.getElementById('settings-modal').classList.remove('open');
 }
+
+// Your places: a town each, picked from the suggestions that come up as you type its name
+const townLabel = t => (t ? `${t.name}, ${t.cc}` : '');
+const pickedTown = {};  // role -> the town picked in the dialog since it opened
+function fillPlaces() {
+  document.querySelectorAll('#set-home-group input[data-role]').forEach(i => { i.value = townLabel(settings.home?.[i.dataset.role]); });
+  Object.keys(pickedTown).forEach(k => delete pickedTown[k]);
+}
+document.querySelectorAll('#set-home-group input[data-role]').forEach(input => attachTownPicker(input, {
+  onPick: t => { pickedTown[input.dataset.role] = t; }, onType: () => { delete pickedTown[input.dataset.role]; }
+}));
+
+// the places changed in the dialog to Cairn: a picked town, an emptied field clears it; a name typed but not
+// picked from the list takes the first town of that name
+async function savePlaces() {
+  const body = {};
+  for (const input of document.querySelectorAll('#set-home-group input[data-role]')) {
+    const role = input.dataset.role, v = input.value.trim(), now = settings.home?.[role];
+    if (pickedTown[role]) body[role] = pickedTown[role].id;
+    else if (!v) { if (now) body[role] = null; }
+    else if (v !== townLabel(now)) {
+      const [first] = await fetch('/api/towns?q=' + encodeURIComponent(v.split(',')[0])).then(r => (r.ok ? r.json() : [])).catch(() => []);
+      if (first) body[role] = first.id;
+    }
+  }
+  if (!Object.keys(body).length) return;
+  const r = await fetch('/api/home', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (!r.ok) return toast('Your places were not saved', 'error');
+  settings.home = await r.json();
+  if (map) { drawHome(); paintCities(); drawLegend(); }
+}
+
 function saveSettings() {
+  savePlaces();
   savePrefs({
     units: document.querySelector('input[name="set-units"]:checked').value,
     tileZoom: +document.querySelector('input[name="set-tiles"]:checked').value,
@@ -939,9 +1200,10 @@ function initMap() {
   const Legend = L.Control.extend({
     options: { position: 'topright' },
     onAdd() {
-      const box = L.DomUtil.create('div', 'map-legend');
+      const box = L.DomUtil.create('div', 'map-legend foldable');
       box.id = 'map-legend';
       L.DomEvent.disableClickPropagation(box);
+      box.addEventListener('click', e => { if (e.target.closest('.panel-toggle')) box.classList.toggle('open'); });  // on a phone
       const show = (k, on) => {
         const layer = layers[k][1];
         on ? layer.addTo(map) : map.removeLayer(layer);
@@ -970,10 +1232,11 @@ function initMap() {
     const inGroup = k => k.startsWith('act-') || k === 'tile';
     const group = rows.filter(([k]) => inGroup(k)), groupOn = group.filter(([, [, layer]]) => map.hasLayer(layer)).length;
     const row = ([k, [label, layer, color]]) => `<label class="${inGroup(k) ? 'child' : ''}"><input type="checkbox" data-layer="${k}" ${map.hasLayer(layer) ? 'checked' : ''}>` +
-      `<span class="swatch" style="border-color:${getCSSVar(color)}"></span>${label}<span class="count">${n[k] || 0}</span></label>`;
+      `<span class="swatch" style="border-color:${mapVar(color)}"></span>${label}<span class="count">${n[k] || 0}</span></label>`;
     const activities = allActivities.filter(a => inWin(a.date)).length;
     const box = document.getElementById('map-legend');
-    box.innerHTML = `<label class="all"><input type="checkbox" data-layer="all" ${on === rows.length ? 'checked' : ''}>All layers</label>` +
+    box.innerHTML = '<button class="panel-toggle" type="button">Layers ▾</button>' +
+      `<label class="all"><input type="checkbox" data-layer="all" ${on === rows.length ? 'checked' : ''}>All layers</label>` +
       rows.map(r => r[0] === group[0]?.[0]
         ? `<label class="group"><input type="checkbox" data-layer="act-group" ${groupOn === group.length ? 'checked' : ''}>Activities` +
           `<span class="count">${activities.toLocaleString()}</span></label>` + row(r)
@@ -991,6 +1254,7 @@ let drawLegend = () => {}, rememberLayers = () => {};
 
 // Everything on the map, for the period shown (layers.js)
 function redrawMap() {
+  toneMap(map);
   drawRoutes();
   drawAirports();
   drawExtras();
@@ -1044,7 +1308,7 @@ function drawRoutes() {
     const count = routeCount[key] || 1;
     const weight = Math.min(0.8 + Math.log2(count) * 0.4, 3);
     L.polyline(greatCircle(a.lat, a.lon, b.lat, b.lon), {
-      color: getCSSVar('--accent'), weight, opacity: 0.35, smoothFactor: 1
+      color: mapVar('--accent'), weight, opacity: 0.35, smoothFactor: 1
     }).addTo(routeLayer);
   });
 }
@@ -1080,7 +1344,7 @@ function drawGround() {
     r.trips.push(t);
     if (!r.best || (!r.best.path && t.path)) r.best = t;
   });
-  const how = { transitous: 'timetable track (Transitous)', osrm: 'road route (OSRM)', rail: 'likeliest railway line, a best guess (BRouter)', straight: 'straight line: no track found' };
+  const how = { transitous: 'timetable track (Transitous)', osrm: 'road route (OSRM)', sea: 'the ferry line (OpenStreetMap, OSRM)', direct: 'straight across the water', road: 'along the roads: no railway found, a guess', rail: 'likeliest railway line, a best guess (BRouter)', straight: 'straight line: no track found' };
   Object.values(routes).forEach(({ trips, best }) => {
     const pts = best.path ? decodePath(best.path) : [[best.from_lat, best.from_lon], [best.to_lat, best.to_lon]];
     // a trip added by hand may know only its year or month, and stand for several
@@ -1091,7 +1355,7 @@ function drawGround() {
       `${how[best.path_source] || 'looking up the track…'}</small><br>` +
       `<small>${dates.slice(0, 6).join(', ')}${dates.length > 6 ? ', …' : ''}</small>`;
     L.polyline(pts, {
-      color: getCSSVar('--' + best.mode), weight: Math.min(2.4 + Math.log2(trips.length) * 0.5, 4), opacity: 0.85,
+      color: mapVar('--' + best.mode), weight: Math.min(2.4 + Math.log2(trips.length) * 0.5, 4), opacity: 0.85,
       dashArray: best.path ? null : '4 6', smoothFactor: 1
     }).bindPopup(popup, { maxWidth: 280 }).addTo(groundLayer[best.mode]);
   });
@@ -1109,9 +1373,10 @@ function drawAirports() {
   const shownAirports = Object.entries(allAirports).filter(([iata]) => visitCount[iata]);
 
   const makePopup = (iata, ap, count) =>
-    `<b>${iata}</b> — ${ap.name}<br>` +
-    `<small>${countryFlag(ap.country)}${ap.city}, ${ap.country}</small><br>` +
-    `<a class="popup-flights-btn" onclick="showAirportFlights('${iata}')">View ${count} flight${count !== 1 ? 's' : ''} →</a>`;
+    `<b>${iata}</b> — ${escapeHTML(ap.name)}<br>` +
+    `<small>${countryFlag(ap.country)}${escapeHTML(ap.city)}, ${escapeHTML(ap.country)}</small><br>` +
+    `<a class="popup-flights-btn" onclick="showAirportFlights('${iata}')">View ${count} flight${count !== 1 ? 's' : ''} →</a> ` +
+    `<a class="popup-flights-btn" onclick="openAirport('${iata}')">Airport page →</a>`;
 
   if (clusterMode) {
     airportLayer = L.markerClusterGroup({
@@ -1131,7 +1396,7 @@ function drawAirports() {
       if (isNaN(ap.lat) || isNaN(ap.lon)) return;
       const count = visitCount[iata] || 1;
       const radius = Math.min(2 + Math.log2(count) * 1.2, 9);
-      airportLayer.addLayer(L.circleMarker([ap.lat, ap.lon], { radius, color: getCSSVar('--accent'), fillColor: getCSSVar('--accent'), fillOpacity: 0.8, weight: 0.5 }).bindPopup(makePopup(iata, ap, count), { maxWidth: 240 }));
+      airportLayer.addLayer(L.circleMarker([ap.lat, ap.lon], { radius, color: mapVar('--accent'), fillColor: mapVar('--accent'), fillOpacity: 0.8, weight: 0.5 }).bindPopup(makePopup(iata, ap, count), { maxWidth: 240 }));
     });
   } else {
     airportLayer = L.layerGroup();
@@ -1139,7 +1404,7 @@ function drawAirports() {
       if (isNaN(ap.lat) || isNaN(ap.lon)) return;
       const count = visitCount[iata] || 1;
       const radius = Math.min(2 + Math.log2(count) * 1.2, 9);
-      airportLayer.addLayer(L.circleMarker([ap.lat, ap.lon], { radius, color: getCSSVar('--accent'), fillColor: getCSSVar('--accent'), fillOpacity: 0.8, weight: 0.5 }).bindPopup(makePopup(iata, ap, count), { maxWidth: 240 }));
+      airportLayer.addLayer(L.circleMarker([ap.lat, ap.lon], { radius, color: mapVar('--accent'), fillColor: mapVar('--accent'), fillOpacity: 0.8, weight: 0.5 }).bindPopup(makePopup(iata, ap, count), { maxWidth: 240 }));
     });
   }
   if (map.hasLayer(routeLayer)) map.addLayer(airportLayer);  // airports go with the flights' checkbox
@@ -1253,7 +1518,7 @@ async function renderCountryStats(fetchAgain = true) {
   if (fetchAgain) countryStats = await fetch(`/api/countries?scheme=${prefs.countries}`).then(r => r.ok ? r.json() : []).catch(() => []);
   const names = new Intl.DisplayNames(['en'], { type: 'region' }), name = c => { try { return c.name || names.of(c.country) || c.country; } catch (_) { return c.country; } };
   const cols = [['country', 'Country'], ['days', 'Days'], ['visits', 'Visits'], ['nights', 'Nights in stays'], ['flights', 'Flights in'],
-    ['train', 'Trains'], ['bus', 'Buses'], ['ferry', 'Ferries'], ['cars', 'Rental cars'], ['activities', 'Activities'], ['km', DU()],
+    ['train', 'Trains'], ['bus', 'Buses'], ['ferry', 'Ferries'], ['hitch', 'Hitchhiked'], ['cars', 'Rental cars'], ['activities', 'Activities'], ['km', DU()],
     ['photos', 'Photos'], ['towns', 'Towns'], ['first', 'First'], ['last', 'Last']];
   const [key, dir] = countrySort;
   const rows = [...countryStats].sort((a, b) => key === 'country' ? dir * name(a).localeCompare(name(b))
@@ -1262,7 +1527,7 @@ async function renderCountryStats(fetchAgain = true) {
     : c[k] ? c[k].toLocaleString() : '';
   const table = document.getElementById('country-stats');
   table.innerHTML = '<thead><tr>' + cols.map(([k, label]) => `<th data-sort="${k}" class="${k === key ? 'sorted' : ''}">${label}${k === key ? (dir < 0 ? ' ↓' : ' ↑') : ''}</th>`).join('') +
-    '</tr></thead><tbody>' + rows.map(c => '<tr><th>' + flagOf(c.country) + escapeHTML(name(c)) + '</th>' +
+    '</tr></thead><tbody>' + rows.map(c => '<tr><th>' + (/^[A-Z]{2}$/.test(c.country) ? countryLink(c.country, flagOf(c.country) + escapeHTML(name(c))) : flagOf(c.country) + escapeHTML(name(c))) + '</th>' +
       cols.slice(1).map(([k]) => `<td>${cell(c, k)}</td>`).join('') + '</tr>').join('') + '</tbody>';
   table.querySelectorAll('th[data-sort]').forEach(th => th.addEventListener('click', () => {
     const k = th.dataset.sort;
@@ -1304,9 +1569,9 @@ function renderTable(filter = '') {
     <tr>
       <td class="dim">${(f.date || '').substring(0, 10)}</td>
       <td>
-        <span class="airport-code">${f.from || '—'}</span>
+        <span class="airport-code" style="cursor:pointer" title="Airport page" onclick="openAirport('${f.from}')">${f.from || '—'}</span>
         <span class="arrow">→</span>
-        <span class="airport-code">${f.to || '—'}</span>
+        <span class="airport-code" style="cursor:pointer" title="Airport page" onclick="openAirport('${f.to}')">${f.to || '—'}</span>
       </td>
       <td class="dim">${f.flight_number || '—'}</td>
       <td>${f.airline || '—'}</td>
@@ -1444,12 +1709,12 @@ window.showAirportFlights = function(iata) {
 
 async function init() {
   const optional = (url, empty) => fetch(url).then(r => r.ok ? r.json() : empty).catch(() => empty);
-  [allFlights, allAirports, allTrips, allStays, allPhotos, allTimeline, settings, stravaStatus] = await Promise.all([
+  [allFlights, allAirports, allTrips, allStays, allPhotos, allTimeline, settings, stravaStatus, allCheckins] = await Promise.all([
     fetch('/api/flights').then(r => r.json()),
     fetch('/api/airports').then(r => r.json()),
     optional('/api/ground', []), optional('/api/stays', []), optional('/api/photos', []),
     optional('/api/timeline', { visits: [], paths: [] }), optional('/api/settings', { home_airports: [] }),
-    optional('/api/activities/status', {})
+    optional('/api/activities/status', {}), optional('/api/checkins', [])
   ]);
   computeJourneys();
 

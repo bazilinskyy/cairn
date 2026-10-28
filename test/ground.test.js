@@ -126,6 +126,14 @@ test('cities: a place goes to the town that pulls hardest, an airport to its own
   assert.deepStrictEqual(top.map(t => [t.name, t.days, t.visits, t.first, t.last]), [
     ['Eindhoven', 3, 2, '2024-06-01', '2024-06-10'], ['Kyiv', 1, 1, '2024-07-01', '2024-07-01'], ['Veldhoven', 1, 1, '2024-06-02', '2024-06-02']]);
   assert.strictEqual(c.load(file + '.missing'), null);
+  // picking a town by name: its own name before another spelling, then the biggest; by id
+  assert.deepStrictEqual(c.search(towns, 'ki').map(t => t.name), ['Kyiv']);
+  assert.deepStrictEqual(c.search(towns, 'e').map(t => t.name), []);  // too short
+  assert.deepStrictEqual(c.search(towns, 'kie').map(t => t.name), ['Kyiv']);  // by another spelling
+  assert.strictEqual(c.byId(towns, 2).name, 'Veldhoven');
+  assert.strictEqual(c.byId(towns, 99), null);
+  assert.strictEqual(c.biggestNamed(towns, 'Kiev').name, 'Kyiv');  // the trip's place: the biggest of that name
+  assert.strictEqual(c.biggestNamed(towns, 'Nowhere'), null);
 });
 
 test('activities: an activity in Garmin and in Strava (started within two minutes, same kind) is kept once, from Garmin', () => {

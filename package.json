@@ -1,7 +1,8 @@
 {
   "name": "cairn",
   "version": "1.0.0",
-  "description": "Personal flight tracker \u2014 localhost replacement for openflights.org",
+  "description": "A self-hosted atlas of your life on the move: flights, trains, stays, rides, photos, towns, climbs and trips",
+  "license": "MIT",
   "main": "app.js",
   "scripts": {
     "start": "node app.js",

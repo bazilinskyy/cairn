@@ -10,6 +10,7 @@ const PHOTON = 'https://photon.komoot.io/api/';
 const PHOTON_REVERSE = 'https://photon.komoot.io/reverse';
 const TRANSITOUS = 'https://api.transitous.org/api/v5/plan';
 const OSRM = 'https://router.project-osrm.org/route/v1/driving/';
+const BIKE = 'https://routing.openstreetmap.de/routed-bike/route/v1/driving/';  // FOSSGIS's OSRM with the bicycle profile
 const BROUTER = 'https://brouter.de/brouter';
 const TRANSIT_MODES = { train: 'RAIL', bus: 'COACH,BUS', ferry: 'FERRY' };
 const NOT_TRANSIT = new Set(['WALK', 'BIKE', 'CAR', 'RENTAL', 'CAR_PARKING', 'FLEX', 'ODM']);
@@ -98,23 +99,53 @@ function simplify(pts, eps = 0.0005) {
 // A track belongs to this trip when it starts and ends near its stations and is not a long detour
 function plausible(pts, a, b) {
   const direct = km(a, b);
-  return pts.length > 1 && km(pts[0], a) < 30 && km(pts[pts.length - 1], b) < 30 && pathKm(pts) < 2.2 * direct + 30;
+  return pts.length > 1 && km(pts[0], a) < 30 && km(pts[pts.length - 1], b) < 30 && pathKm(pts) < 2.2 * direct + 30 && !overshoots(pts, b);
+}
+
+// A track that passes its end and comes back to it (a timetable's train on to Rotterdam and back to Breda): once
+// within 5 km of the end, more than 20 km away again
+function overshoots(pts, b) {
+  const at = pts.findIndex(p => km(p, b) < 5);
+  return at >= 0 && pts.slice(at).some(p => km(p, b) > 20);
+}
+
+// A timetable track that is really its stops joined by straight lines (a feed without shapes: a coach from London to
+// Bristol in one 170 km jump, an Indian train with a point every 15 km): a step over 30 km and over a third of the
+// whole, or fewer than one point per 5 km (a track from shapes has one every few hundred metres)
+function gappy(pts) {
+  const whole = pathKm(pts);
+  if (whole > 30 && pts.length < whole / 5) return true;
+  for (let i = 1; i < pts.length; i++) {
+    const step = km(pts[i - 1], pts[i]);
+    if (step > 30 && step > whole / 3) return true;
+  }
+  return false;
 }
 
 // --- services ---
 
 const last = {};
 const SPACING = { 'brouter.de': 3000 };  // BRouter's public server asks for fewer
+const resting = {};  // host -> until when it is not asked again: it refused (too many requests)
 async function getJSON(url) {
   const host = new URL(url).host;  // at most one request a second per service
+  if (resting[host] > Date.now()) throw new Error(`${host}: resting after a refusal`);
   const wait = (last[host] || 0) + (SPACING[host] || 1100) - Date.now();
   if (wait > 0) await new Promise(r => setTimeout(r, wait));
   last[host] = Date.now();
-  const res = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(30000) });
+  let res;
+  try {
+    res = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(OK_FAILS[host] ? 60000 : 30000) });
+  } catch (e) {
+    if (OK_FAILS[host] && e.name === 'TimeoutError') return {};  // a route BRouter takes too long over: none, not an outage
+    throw e;
+  }
+  if (res.status === 429 || res.status === 403) resting[host] = Date.now() + REST_MS;
   if (res.status === 429 || res.status === 403 || (res.status >= 500 && !OK_FAILS[host])) throw new Error(`${host}: HTTP ${res.status}`);
   return res.json().catch(() => ({}));  // BRouter's "no track found" is plain text: no route
 }
 const OK_FAILS = { 'brouter.de': true };  // a route BRouter gives up on (too long, no track) is an answer, not an outage
+const REST_MS = 30 * 60e3;
 
 const norm = s => (s || '').normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
 
@@ -163,10 +194,10 @@ const BARE = [
 const BARE_KM = 40;
 
 // The stations (or other places of a kind) around a place, nearest first, at most n
-async function placesNear(tag, around, n) {
-  const key = `reverse${n}|${tag}|${around.map(x => x.toFixed(2)).join(',')}`;
+async function placesNear(tag, around, n, radius = BARE_KM) {
+  const key = `reverse${n}|${tag}|${around.map(x => x.toFixed(2)).join(',')}|${radius}`;
   if (!geoCache.has(key)) {
-    const p = new URLSearchParams({ lat: around[0], lon: around[1], radius: BARE_KM, limit: String(n), osm_tag: tag });
+    const p = new URLSearchParams({ lat: around[0], lon: around[1], radius, limit: String(n), osm_tag: tag });
     const d = await getJSON(`${PHOTON_REVERSE}?${p}`);
     geoCache.set(key, (d.features || []).map(f => ({ at: [f.geometry.coordinates[1], f.geometry.coordinates[0]] })));
   }
@@ -184,9 +215,22 @@ async function nearestOf(tag, around) {
   return geoCache.get(key)[0]?.at || null;
 }
 
+// "Zurich central station (Sihlquai car park)", "Munich central bus station", "Pattaya Minivan Station": a town and a
+// station of it, as booking emails name them
+const TOWN_STATION = /^(.+?)[\s-]+(?:central\s+|main\s+|north\s+|south\s+)?(train|railway|bus|coach|minivan)?\s*station\b/i;
+
 async function geocode(name, bias, maxKm, lang = '') {
   const bare = BARE.find(([rx]) => rx.test((name || '').trim()));
   if (bare) return bias ? nearestOf(bare[1], bias) : null;  // with nothing to be near, any "Port" would be a guess
+  // the town first, then its station nearest to it (the whole name would find a station of that name anywhere)
+  const plain = (name || '').replace(/\s*\(.*?\)/g, '').trim(), inside = ((name || '').match(/\((.*?)\)/) || [])[1] || '';
+  const ts = TOWN_STATION.exec(plain) || (/station/i.test(inside) ? TOWN_STATION.exec(`${plain} ${inside}`) : null);  // "Metz (central bus station)"
+  if (ts && ts[1].length > 2) {
+    const town = await geocode(ts[1], bias, maxKm, lang);
+    if (!town) return null;
+    const st = await nearestOf(/bus|coach|minivan/i.test(ts[2] || '') ? 'amenity:bus_station' : 'railway:station', town);
+    return st && km(st, town) < 15 ? st : town;
+  }
   const tags = AIRPORT_RX.test(name || '') ? ['aeroway:aerodrome'] : PLACE_TAGS;
   for (const [q, shortened] of variants(name)) {
     const key = `${q}|${bias ? bias.map(x => x.toFixed(0)).join(',') : ''}|${lang}`;
@@ -248,7 +292,7 @@ async function transitous(a, b, mode, date) {
   for (const it of d.itineraries || []) {
     const pts = (it.legs || []).filter(l => !NOT_TRANSIT.has(l.mode) && l.legGeometry)
       .flatMap(l => decode(l.legGeometry.points, l.legGeometry.precision || 6));
-    if (plausible(pts, a, b)) return pts;
+    if (plausible(pts, a, b) && (mode === 'ferry' || !gappy(pts))) return pts;
   }
   return null;
 }
@@ -310,6 +354,52 @@ async function osrm(a, b) {
   return plausible(pts, a, b) ? pts : null;
 }
 
+// A ferry's ports: of the ferry terminals within PORT_KM of each end (and nearer to it than to the other end: an
+// island's search also finds the next island's), the two closest to each other, a little nearer to their places
+// counting too (Tenerife to La Gomera: Los Cristianos to San Sebastián, not Santa Cruz); null when an end has none
+// An end with no terminal Cairn can find (Sal, Karpathos: none tagged on the map) takes the coast instead: the
+// points of the coastline around it (setCoast: Natural Earth's closed coastlines, each an island or a land), the
+// smallest one it lies in, so never the next island's coast.
+const PORT_KM = 60;
+let coastRings = () => [];
+const setCoast = f => { coastRings = f; };
+function inside(pt, ring) {  // ring: [[lon, lat], ...]
+  let yes = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i], [xj, yj] = ring[j];
+    if ((yi > pt[0]) !== (yj > pt[0]) && pt[1] < (xj - xi) * (pt[0] - yi) / (yj - yi) + xi) yes = !yes;
+  }
+  return yes;
+}
+function coastNear(at) {
+  const ring = (coastRings() || []).filter(r => at[0] >= r.box[1] && at[0] <= r.box[3] && at[1] >= r.box[0] && at[1] <= r.box[2] && inside(at, r.pts))
+    .sort((a, b) => a.pts.length - b.pts.length)[0];
+  return ring ? ring.pts.map(([lon, lat]) => [lat, lon]).filter(p => km(p, at) <= PORT_KM) : [];
+}
+async function ports(a, b) {
+  const near = async end => { const t = await placesNear('amenity:ferry_terminal', end, 10, PORT_KM); return t.length ? t : coastNear(end); };
+  const [as, bs] = [await near(a), await near(b)];
+  const mine = (list, end, other) => list.filter(p => km(p, end) < km(p, other));
+  let best = null, score = Infinity;
+  for (const pa of mine(as, a, b)) for (const pb of mine(bs, b, a)) {
+    const sc = km(pa, pb) + 0.5 * (km(pa, a) + km(pb, b));
+    if (sc < score) { score = sc; best = [pa, pb]; }
+  }
+  return best;
+}
+
+// A ferry with no timetable track: the ferry lines OpenStreetMap maps, as OSRM's car route takes them between the two
+// ports; only an answer that crosses by ferry, and of it the part from the first ferry to the last (not the drive to
+// the port). Most ferries are in no timetable Cairn can ask.
+async function seaRoute(a, b) {
+  const d = await getJSON(`${OSRM}${a[1]},${a[0]};${b[1]},${b[0]}?overview=false&steps=true&geometries=polyline6`);
+  const steps = d.code === 'Ok' ? d.routes?.[0]?.legs?.[0]?.steps || [] : [];
+  const first = steps.findIndex(x => x.mode === 'ferry'), last = steps.map(x => x.mode).lastIndexOf('ferry');
+  if (first < 0) return null;
+  const pts = steps.slice(first, last + 1).flatMap(x => decode(x.geometry, 6));
+  return pts.length > 1 && km(pts[0], a) < 25 && km(pts[pts.length - 1], b) < 25 && pathKm(pts) < 2.2 * km(a, b) + 30 ? pts : null;
+}
+
 // --- trips ---
 
 const at = (t, end) => t[`${end}_lat`] != null ? [t[`${end}_lat`], t[`${end}_lon`]] : null;
@@ -329,11 +419,22 @@ function startNear(trip, flights, trips, airports) {
   return best && best.at;
 }
 
-async function place(trip, flights, trips, airports) {
+// known(name): the biggest town of that name Cairn knows (GeoNames: { lat, lon, pop }), or null. A town of 100,000 or
+// more is the one meant (Paris, not Paris in Tennessee; Skopje, not a farm of that name near the trip before) unless
+// it is an ocean away from the trip before; a smaller one unless that trip points elsewhere. Then the name is looked
+// up near it.
+const KNOWN_KM = 40, BIG_TOWN = 100000, FAR_KM = 3000;  // not even a big town an ocean away (Santiago de Chile for Cape Verde's)
+async function nearKnown(name, near, known) {
+  const t = known((name || '').replace(/\s*\(.*?\)/g, '').split('/')[0].trim());
+  if (!t || (near && km([t.lat, t.lon], near) > (t.pop < BIG_TOWN ? START_KM : FAR_KM))) return null;
+  return await geocode(name, [t.lat, t.lon], KNOWN_KM) || [t.lat, t.lon];
+}
+
+async function place(trip, flights, trips, airports, known = () => null) {
   const near = startNear(trip, flights, trips, airports);
   let a = at(trip, 'from'), b = at(trip, 'to');
-  if (!a) a = await geocode(trip.from, near, near ? START_KM : null);  // with no trip just before: the best known place
-  if (!b) b = await geocode(trip.to, a || near, a || near ? LEG_KM : null);
+  if (!a) a = await nearKnown(trip.from, near, known) || await geocode(trip.from, near, near ? START_KM : null);  // with no trip just before: the best known place
+  if (!b) b = await nearKnown(trip.to, a || near, known) || await geocode(trip.to, a || near, a || near ? LEG_KM : null);
   if (!b && !at(trip, 'from')) {  // no destination near the departure: the departure may be a namesake, trust the destination
     b = await geocode(trip.to, null, null);
     if (b) a = await geocode(trip.from, b, LEG_KM);
@@ -346,9 +447,14 @@ async function place(trip, flights, trips, airports) {
 // A trip with no track from where its ends were placed (a town's middle, too far to walk to its station) is tried
 // again from the nearest station or port at each end
 const STATION_TAGS = { train: 'railway:station', bus: 'amenity:bus_station', ferry: 'amenity:ferry_terminal' };
-const ROUTE_VERSION = 8;  // straight lines from before the station retry and the railway guess are tried once more
+const ROUTE_VERSION = 10;  // straight lines from before the station retry, the railway guess and the ferry lines are tried once more
 
 async function route(trip) {
+  if (trip.mode === 'ferry' && !trip.ports) {  // from port to port, not between the middles of the places
+    const pr = await ports(at(trip, 'from'), at(trip, 'to'));
+    if (pr) [[trip.from_lat, trip.from_lon], [trip.to_lat, trip.to_lon]] = pr;
+    trip.ports = !!pr;
+  }
   const a = at(trip, 'from'), b = at(trip, 'to');
   let pts = await transitous(a, b, trip.mode, trip.date), source = 'transitous', sa = null, sb = null;
   if (!pts && STATION_TAGS[trip.mode]) {
@@ -356,7 +462,8 @@ async function route(trip) {
     if (!(sa && sb && km(sa, a) < 15 && km(sb, b) < 15)) sa = sb = null;
     if (sa) pts = await transitous(sa, sb, trip.mode, trip.date);
   }
-  if (!pts && trip.mode === 'bus') pts = await osrm(a, b), source = 'osrm';
+  if (!pts && (trip.mode === 'bus' || trip.mode === 'hitch')) pts = await osrm(a, b), source = 'osrm';  // hitchhiking: along the roads
+  if (!pts && trip.mode === 'ferry') pts = await seaRoute(a, b), source = 'sea';
   if (!pts && trip.mode === 'train') {  // from stations: BRouter starts on a track (the nearest may be a park railway: then the next)
     const [as, bs] = [await placesNear('railway:station', a, 3), await placesNear('railway:station', b, 3)];
     const pairs = [[0, 0], [1, 1], [0, 1], [1, 0], [2, 2]].filter(([i, j]) => as[i] && bs[j] && km(as[i], a) < 15 && km(bs[j], b) < 15);
@@ -365,6 +472,8 @@ async function route(trip) {
     if (!pts && km(a, b) > LEG_STEP_KM) pts = await railGuessLong(as[0] || a, bs[0] || b);
     source = 'rail';
   }
+  if (!pts && trip.mode === 'train') pts = await osrm(a, b), source = 'road';  // no railway found: along the roads, a guess
+  if (!pts && trip.mode === 'ferry') pts = [a, b], source = 'direct';  // ferries mostly go straight across: drawn so
   if (pts) {
     trip.path = encode(simplify(pts));
     trip.distance = Math.round(pathKm(pts));
@@ -399,23 +508,34 @@ async function placeStay(stay, flights, trips, airports, seen = []) {
 
 // Look up every trip that still needs it, oldest first (so earlier trips give later ones their starting point),
 // then every stay. A service that is down stops the pass; the next pass tries again.
+// Returns { later: true } when some trips wait for BRouter, which refused (its railway guesses are tried again once
+// it has rested); the other trips go on meanwhile
 async function enrich(store, log = console.log) {
   const todo = [...store.trips].sort((x, y) => (x.date || '').localeCompare(y.date || ''));
+  let later = false;
   for (const trip of todo) {
     if (!store.trips.includes(trip)) continue;  // deleted meanwhile
     try {
       if ((!at(trip, 'from') || !at(trip, 'to')) && !trip.unplaced) {
-        await place(trip, store.flights(), store.trips, store.airports());
+        await place(trip, store.flights(), store.trips, store.airports(), store.known);
         if (trip.unplaced) log(`[ground] could not place ${trip.date} ${trip.from} - ${trip.to}`);
         store.save();
       }
-      if (at(trip, 'from') && at(trip, 'to') && (!trip.path_source || (trip.path_source === 'straight' && (trip.route_v || 1) < ROUTE_VERSION))) {
+      if (at(trip, 'from') && at(trip, 'to') && (!trip.path_source || (trip.path_source === 'straight' && (trip.route_v || 1) < ROUTE_VERSION)
+        || (trip.mode === 'ferry' && trip.ports === undefined)  // ferries from before the ports: once more
+        || (trip.path_source === 'road' && !(resting['brouter.de'] > Date.now()) && (trip.road_tries || 0) < 3))) {  // a train put on the road: the railway again, a few times
+        if (trip.path_source === 'road') trip.road_tries = (trip.road_tries || 0) + 1;
         await route(trip);
         store.save();
       }
     } catch (e) {
+      if (/brouter\.de/.test(e.message)) {  // the railway guess: this train waits, the rest go on
+        if (!later) log(`[ground] railway guesses wait: ${e.message}`);
+        later = true;
+        continue;
+      }
       log(`[ground] lookups paused: ${e.message}`);
-      return;
+      return { later };
     }
   }
   for (const stay of [...(store.stays || [])]) {
@@ -426,9 +546,10 @@ async function enrich(store, log = console.log) {
       store.saveStays();
     } catch (e) {
       log(`[ground] lookups paused: ${e.message}`);
-      return;
+      return { later };
     }
   }
+  return { later };
 }
 
 // A stay whose place changes is looked up again
@@ -446,7 +567,14 @@ function forget(trip, changes) {
   }
   const moved = ['from', 'to', 'from_lat', 'from_lon', 'to_lat', 'to_lon', 'mode', 'date']
     .some(k => k in changes && changes[k] !== trip[k]);
-  if (moved) delete trip.unplaced, delete trip.path, delete trip.path_source, delete trip.route_v;
+  if (moved) delete trip.unplaced, delete trip.path, delete trip.path_source, delete trip.route_v, delete trip.ports;
 }
 
-module.exports = { km, decode, encode, simplify, plausible, planTime, startNear, forget, forgetStay, enrich, pick, similar, geocode, placeStay };
+// A bike route through the points ([lat, lon], in order) along OpenStreetMap's roads and paths: { path, km }, or null
+async function bikeRoute(points) {
+  const r = await getJSON(BIKE + points.map(p => `${(+p[1]).toFixed(5)},${(+p[0]).toFixed(5)}`).join(';') + '?overview=full&geometries=geojson');
+  const route = r.routes?.[0];
+  return route ? { path: route.geometry.coordinates.map(([lon, lat]) => [lat, lon]), km: route.distance / 1000 } : null;
+}
+
+module.exports = { bikeRoute, setCoast, km, decode, encode, simplify, plausible, gappy, planTime, startNear, forget, forgetStay, enrich, pick, similar, geocode, placeStay };

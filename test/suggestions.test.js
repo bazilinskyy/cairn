@@ -37,3 +37,14 @@ test('a train between them, or saying it was no trip, takes it away', () => {
   m.dismiss(m.list().find(s => s.from === 'Paris').key);
   assert.ok(!m.list().some(s => s.from === 'Paris'));
 });
+
+test('albums: the place and year a name gives, and the places to look up, best first', () => {
+  const { parse, candidates } = require('../albums');
+  assert.deepStrictEqual(parse('Copy of Crimea 2011'), { place: 'Crimea', year: 2011 });
+  assert.deepStrictEqual(parse('Saint Petersburg - 2009'), { place: 'Saint Petersburg', year: 2009 });
+  assert.deepStrictEqual(parse('Chernihiv (Chernigov), Ukraine').place, 'Chernihiv Ukraine');
+  assert.strictEqual(candidates(parse('GA of EMA in Krakow').place)[0], 'Krakow');
+  assert.ok(candidates(parse('Copy of UK OUG 2011 Conference and Birmingham').place).includes('Birmingham'));
+  assert.strictEqual(candidates(parse('Ring of Kerry').place)[0], 'Ring of Kerry');
+  for (const everyday of ['Autumn 2010', 'Christmas holidays 2012', 'March 2011', 'Gigs']) assert.deepStrictEqual(candidates(parse(everyday).place), [], everyday);
+});
