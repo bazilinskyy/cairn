@@ -567,12 +567,14 @@ table (places, dates, where we sleep, comments) and the Transport table (flights
 their departure times). Dates are written day.month.year, like 24–26.09.26.
 
 Reply with JSON only, no other text:
-{{"things_to_do": [{{"place": "...", "items": ["...", "..."]}}],
+{{"things_to_do": [{{"place": "...", "items": [{{"name": "...", "why": "..."}}]}}],
  "itinerary": [{{"date": "YYYY-MM-DD", "place": "...", "plan": "..."}}]}}
 
 - things_to_do: for each place in the Plan (when the Plan is empty, where the flights go), 3 to 6 specific things
-  worth doing there or nearby: named sights, walks and hikes, viewpoints, beaches, food to try, each in one short
-  sentence that says why. Follow what the notes and comments ask for, and leave out what they already plan.
+  worth doing there or nearby: named sights, walks and hikes, viewpoints, beaches, food to try. "name": what it is
+  called, as you would search for it on a map ("Ponte Vecchio", "Sentiero degli Dei"; for food the dish);
+  "why": one short sentence that says why. Follow what the notes and comments ask for, and leave out what they
+  already plan.
 - itinerary: one entry per day from {first} to the trip's last day, following the stays' dates and the transport
   times (the arrival day, travel between places, the departure day), with that day's transport in it. One or two
   sentences a day.
@@ -640,7 +642,10 @@ def parse_reply(text):
     a line around the JSON is fine)."""
     data = json.loads(text[text.index("{"):text.rindex("}") + 1])
     one = lambda s: " ".join(str(s).split())  # noqa: E731
-    todo = [{"place": one(p["place"]), "items": [one(i) for i in p["items"] if one(i)]} for p in data.get("things_to_do", [])]
+    item = lambda i: ({"name": one(i.get("name", "")), "why": one(i.get("why", ""))} if isinstance(i, dict)  # noqa: E731
+                      else {"name": "", "why": one(i)})  # a plain sentence, as answers before names had it
+    todo = [{"place": one(p["place"]), "items": [x for x in map(item, p["items"]) if x["name"] or x["why"]]}
+            for p in data.get("things_to_do", [])]
     days = [{"date": date.fromisoformat(d["date"]), "place": one(d.get("place", "")), "plan": one(d["plan"])}
             for d in data.get("itinerary", [])]
     if not any(p["items"] for p in todo) and not days:
@@ -648,18 +653,28 @@ def parse_reply(text):
     return {"things_to_do": [p for p in todo if p["items"]], "itinerary": sorted(days, key=lambda d: d["date"])}
 
 
+def maps_link(*words):
+    """A Google Maps search for what the words name ("Ilha Deserta, Faro"): a link that always leads somewhere."""
+    return "https://www.google.com/maps/search/?api=1&query=" + urllib.parse.quote(", ".join(w for w in words if w))
+
+
 def suggestion_lines(data, today):
-    """[(text, kind)], kind one of h1, note, h2, place, item (a bullet) or day (a bullet led by its date and place)."""
+    """[(text, kind, link)], kind one of h1, note, h2, place, item (a bullet) or day (a bullet led by its date and
+    place); link None or (how many characters at the start it covers, url): a place and a thing to do link to Google
+    Maps."""
     out = [(SUGGESTIONS, "h1"), (f"{MARK} on {today:%d.%m.%y}, from the plan above, and written again whenever the doc "
                                  "changes: move what you want to keep above this heading.", "note")]
     if data["things_to_do"]:
         out.append(("Things to do", "h2"))
         for p in data["things_to_do"]:
-            out += [(p["place"], "place")] + [(i, "item") for i in p["items"]]
+            out.append((p["place"], "place", (len(p["place"]), maps_link(p["place"]))))
+            for i in p["items"]:
+                text = f"{i['name']}: {i['why']}" if i["name"] and i["why"] else i["name"] or i["why"]
+                out.append((text, "item", (len(i["name"]), maps_link(i["name"], p["place"])) if i["name"] else None))
     if data["itinerary"]:
         out.append(("Itinerary", "h2"))
         out += [(f"{d['date']:%a %d.%m}{', ' + d['place'] if d['place'] else ''}: {d['plan']}", "day") for d in data["itinerary"]]
-    return out
+    return [(line + (None,))[:3] for line in out]
 
 
 def suggestion_requests(doc, lines):
@@ -674,21 +689,24 @@ def suggestion_requests(doc, lines):
         last = body[-1]
         at, tail = last["endIndex"] - 1, ""
         lead = "\n" if "paragraph" in last and _ptext(last) else ""
-    text = lead + "\n".join(t for t, _ in lines) + tail
+    text = lead + "\n".join(t for t, _, _ in lines) + tail
     out.append({"insertText": {"location": {"index": at}, "text": text}})
     base = at + _len(lead)
-    stop = base + _len("\n".join(t for t, _ in lines))
+    stop = base + _len("\n".join(t for t, _, _ in lines))
     out.append({"updateTextStyle": {"range": {"startIndex": base, "endIndex": stop}, "textStyle": {}, "fields": "bold,italic,link"}})
     out.append({"deleteParagraphBullets": {"range": {"startIndex": base, "endIndex": stop + 1}}})
     named = {"h1": "HEADING_1", "h2": "HEADING_2"}
     i, bullets = base, []
-    for t, kind in lines:
+    for t, kind, link in lines:
         end = i + _len(t)
         out.append({"updateParagraphStyle": {"range": {"startIndex": i, "endIndex": end + 1},
                                              "paragraphStyle": {"namedStyleType": named.get(kind, "NORMAL_TEXT")}, "fields": "namedStyleType"}})
         bold = end if kind in ("h1", "h2", "place") else i + _len(t.split(": ", 1)[0] + ":") if kind == "day" else i
         if bold > i:
             out.append({"updateTextStyle": {"range": {"startIndex": i, "endIndex": bold}, "textStyle": {"bold": True}, "fields": "bold"}})
+        if link:
+            out.append({"updateTextStyle": {"range": {"startIndex": i, "endIndex": i + _len(t[:link[0]])},
+                                            "textStyle": {"link": {"url": link[1]}}, "fields": "link"}})
         if kind == "note":
             out.append({"updateTextStyle": {"range": {"startIndex": i, "endIndex": end}, "textStyle": {"italic": True}, "fields": "italic"}})
         if kind in ("item", "day"):

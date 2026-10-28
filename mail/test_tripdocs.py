@@ -251,7 +251,7 @@ class ParaGoogle(FakeGoogle):
     def __init__(self, plan, paras, modified="2026-10-01T10:00:00Z"):
         super().__init__({"d1": {"name": "Faro 2026", "tables": [plan]}})
         self.text = "".join(t + "\n" for t, _ in paras)
-        self.styles, self.bullets, self.bold = [s for _, s in paras], [False] * len(paras), []
+        self.styles, self.bullets, self.bold, self.links = [s for _, s in paras], [False] * len(paras), [], []
         self.modified_at, self.calls = modified, 0
 
     def docs_in(self, folder):
@@ -308,10 +308,13 @@ class ParaGoogle(FakeGoogle):
                     self.bullets[p] = kind == "createParagraphBullets"
             elif kind == "updateTextStyle" and body["textStyle"].get("bold"):
                 self.bold.append(self.text[a:b])
+            elif kind == "updateTextStyle" and body["textStyle"].get("link"):
+                self.links.append((self.text[a:b], body["textStyle"]["link"]["url"]))
 
 
 REPLY = """```json
-{"things_to_do": [{"place": "Faro", "items": ["Walk the old town walls.", "Take the boat to Ilha Deserta."]}],
+{"things_to_do": [{"place": "Faro", "items": [{"name": "Vila Adentro", "why": "walk the old town walls."},
+                                              {"name": "Ilha Deserta", "why": "take the boat from the harbour."}]}],
  "itinerary": [{"date": "2026-11-13", "place": "Faro", "plan": "Fly home at 16:10."},
                {"date": "2026-11-12", "place": "Faro", "plan": "Arrive, walk the old town."}]}
 ```"""
@@ -334,10 +337,14 @@ def test_suggestions_are_written_then_replaced_when_the_doc_changes():
     assert got[:2] == [("Information", "HEADING_1", False), ("Bring a towel", "NORMAL_TEXT", False)], got
     assert got[2] == ("Suggestions", "HEADING_1", False) and got[3][0].startswith("By tripmail on 01.11.26"), got
     assert got[4:] == [("Things to do", "HEADING_2", False), ("Faro", "NORMAL_TEXT", False),
-                       ("Walk the old town walls.", "NORMAL_TEXT", True), ("Take the boat to Ilha Deserta.", "NORMAL_TEXT", True),
+                       ("Vila Adentro: walk the old town walls.", "NORMAL_TEXT", True),
+                       ("Ilha Deserta: take the boat from the harbour.", "NORMAL_TEXT", True),
                        ("Itinerary", "HEADING_2", False), ("Thu 12.11, Faro: Arrive, walk the old town.", "NORMAL_TEXT", True),
                        ("Fri 13.11, Faro: Fly home at 16:10.", "NORMAL_TEXT", True)], got
     assert "Thu 12.11, Faro:" in g.bold and "Faro" in g.bold
+    maps = "https://www.google.com/maps/search/?api=1&query="
+    assert g.links == [("Faro", maps + "Faro"), ("Vila Adentro", maps + "Vila%20Adentro%2C%20Faro"),
+                       ("Ilha Deserta", maps + "Ilha%20Deserta%2C%20Faro")], g.links
     assert suggest(g, state=state)[1] == []  # unchanged
     g.modified_at = "2026-10-02T10:00:00Z"
     assert suggest(g, state=state)[1] == []  # touched, but the same text: no new question
@@ -376,6 +383,8 @@ def test_no_suggestions_for_past_trips_dry_runs_or_docs_that_have_them():
 def test_reply_and_markdown_helpers():
     data = tripdocs.parse_reply("Here you go:\n" + REPLY)
     assert [d["date"] for d in data["itinerary"]] == [date(2026, 11, 12), date(2026, 11, 13)]
+    old = tripdocs.parse_reply('{"things_to_do": [{"place": "Faro", "items": ["Walk the walls."]}], "itinerary": []}')
+    assert tripdocs.suggestion_lines(old, date(2026, 11, 1))[-1] == ("Walk the walls.", "item", None)  # a plain answer: no link
     md = "# **Plan**\n\n| Faro |\n\n# **Suggestions**\n\n*By flightmail on 01.11.26*\n\n## **Itinerary**\n\n# **Notes**\n\nmine"
     assert tripdocs.without_suggestions(md) == "# **Plan**\n\n| Faro |\n\n# **Notes**\n\nmine"
     assert tripdocs._plain("[Hostel](https://x.example/?a=1) 20€") == "Hostel 20€"
