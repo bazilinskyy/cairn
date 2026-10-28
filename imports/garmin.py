@@ -243,10 +243,11 @@ def vehicle_part(f, sport):
 
 
 def send_discord(text):
-    """A message to the alerts channel (flightmail's Discord webhook, in secret)."""
+    """A message to the alerts channel (tripmail's Discord webhook, in secret)."""
     import urllib.request
     try:
-        url = json.loads((HERE.parent / "secret").read_text()).get("flightmail", {}).get("discord_webhook")
+        sec = json.loads((HERE.parent / "secret").read_text())
+        url = (sec.get("tripmail") or sec.get("flightmail") or {}).get("discord_webhook")
     except (OSError, ValueError):
         url = None
     if url:
@@ -501,6 +502,12 @@ def weights(g, since="2000-01-01"):
 
 # --- days: sleep, resting heart rate, steps, stress and Body Battery (data/wellness.json) ---
 
+def measured_sleep(asleep, deep, rem):
+    """Whether a night's sleep was measured: older watches (here until 2021) give no stages, calling the whole time
+    the watch lay still "deep" (12-13 hours, also unworn on a table); such a night is left out."""
+    return bool(asleep) and not (not rem and (deep or 0) >= 0.9 * asleep)
+
+
 def _day(uds=None, sleep=None):
     """One day as Cairn keeps it, from Garmin's daily summary (export UDSFile or Connect's user summary) and sleep."""
     out = {}
@@ -514,12 +521,13 @@ def _day(uds=None, sleep=None):
     if sleep and (sleep.get("sleepStartTimestampGMT") or sleep.get("sleepTimeSeconds")):
         stages = {k: sleep.get(f"{k}SleepSeconds") for k in ("deep", "light", "rem", "awake")}
         asleep = sleep.get("sleepTimeSeconds") or sum(v or 0 for k, v in stages.items() if k != "awake")
-        score = sleep.get("sleepScores") or {}
-        score = score.get("overallScore") or (score.get("overall") or {}).get("value")
-        gmt = lambda v: (datetime.fromtimestamp(v / 1000, timezone.utc).strftime("%Y-%m-%dT%H:%M") if isinstance(v, (int, float))  # noqa: E731
-                         else str(v)[:16]) if v else None
-        out.update(sleep=asleep or None, deep=stages["deep"], light=stages["light"], rem=stages["rem"], awake=stages["awake"],
-                   bed=gmt(sleep.get("sleepStartTimestampGMT")), wake=gmt(sleep.get("sleepEndTimestampGMT")), score=score)
+        if measured_sleep(asleep, stages["deep"], stages["rem"]):
+            score = sleep.get("sleepScores") or {}
+            score = score.get("overallScore") or (score.get("overall") or {}).get("value")
+            gmt = lambda v: (datetime.fromtimestamp(v / 1000, timezone.utc).strftime("%Y-%m-%dT%H:%M") if isinstance(v, (int, float))  # noqa: E731
+                             else str(v)[:16]) if v else None
+            out.update(sleep=asleep or None, deep=stages["deep"], light=stages["light"], rem=stages["rem"], awake=stages["awake"],
+                       bed=gmt(sleep.get("sleepStartTimestampGMT")), wake=gmt(sleep.get("sleepEndTimestampGMT")), score=score)
     return {k: v for k, v in out.items() if v is not None}
 
 

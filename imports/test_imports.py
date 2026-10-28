@@ -212,6 +212,108 @@ def test_garmin_days():
     day = garmin._day({"restingHeartRate": 45, "bodyBatteryHighestValue": 79}, connect)
     assert (day["rhr"], day["bb_max"], day["sleep"], day["score"], day["bed"]) == (45, 79, 27000, 80, "2026-03-23T19:44")
     assert garmin._day(None, {"retro": False}) == {}  # a night not recorded
+    # an older watch: no stages, the whole time it lay still "deep" (13.4 hours): not a measured night
+    old = {"sleepTimeSeconds": 48240, "deepSleepSeconds": 48240, "lightSleepSeconds": 0, "sleepStartTimestampGMT": 1774295040000}
+    assert garmin._day({"restingHeartRate": 45}, old) == {"rhr": 45}
+
+
+def test_saved_places():
+    """Google Maps' saved places from a Takeout: the starred ones with their position, the lists' with theirs when the
+    link holds it."""
+    import saved_places
+    with tempfile.TemporaryDirectory() as d:
+        base = Path(d) / "Takeout"
+        (base / "Maps (your places)").mkdir(parents=True)
+        (base / "Saved").mkdir()
+        (base / "Maps (your places)" / "Saved Places.json").write_text(json.dumps({"type": "FeatureCollection", "features": [
+            {"geometry": {"coordinates": [-16.25, 28.27]}, "properties": {"date": "2025-01-02T10:00:00Z", "google_maps_url": "http://maps.google.com/?cid=1",
+             "location": {"name": "Teide", "address": "Tenerife"}}}]}))
+        (base / "Saved" / "Want to go.csv").write_text("Title,Note,URL\nTeide,climb it,http://maps.google.com/?cid=1\n"
+                                                         'Roque Nublo,,"https://www.google.com/maps/place/x/@27.96,-15.61,15z"\nSomewhere,,https://www.google.com/maps/search/somewhere\n')
+        got = sorted(saved_places.read([str(base)]), key=lambda p: p["name"])
+        assert [(p["name"], p["list"], p["lat"]) for p in got] == [("Roque Nublo", "Want to go", 27.96), ("Somewhere", "Want to go", None), ("Teide", "Want to go", 28.27)]
+        assert got[2]["address"] == "Tenerife" and got[2]["saved"] == "2025-01-02" and got[2]["note"] == "climb it"
+
+
+def test_checkins_facebook_instagram_reviews_rides():
+    import zipfile
+    import checkins
+    with tempfile.TemporaryDirectory() as d:
+        fb = Path(d, "facebook-me.zip")
+        with zipfile.ZipFile(fb, "w") as z:
+            z.writestr("your_activity_across_facebook/posts/your_posts__check_ins__photos_and_videos_1.json", json.dumps([
+                {"timestamp": 1514122000, "attachments": [{"data": [{"place": {"name": "Church of the Nativity",
+                 "coordinate": {"latitude": 31.7043, "longitude": 35.2075}}}]}], "data": [{"post": "Christmas"}]},
+                {"timestamp": 1514200000, "data": [{"post": "no place"}]},
+                {"timestamp": 1400000000, "attachments": [{"data": [{"media": {"uri": "x.jpg", "creation_timestamp": 1400000100,
+                 "media_metadata": {"photo_metadata": {"exif_data": [{"latitude": 50.45, "longitude": 30.52, "taken_timestamp": 1399990000}]}}}}]}]}]))
+        ig = Path(d, "instagram")
+        (ig / "your_instagram_activity" / "content").mkdir(parents=True)
+        (ig / "your_instagram_activity" / "content" / "posts_1.json").write_text(json.dumps([
+            {"media": [{"uri": "a.jpg", "creation_timestamp": 1600000000, "title": "ZÃ¼rich",
+                        "media_metadata": {"photo_metadata": {"exif_data": [{"latitude": 47.37, "longitude": 8.54}]}}}]}]))
+        rv = Path(d, "Reviews.json")
+        rv.write_text(json.dumps({"features": [{"geometry": {"type": "Point", "coordinates": [-9.14, 38.71]},
+            "properties": {"date": "2023-05-16T10:00:00Z", "location": {"name": "Pasteis de Belem"}}}]}))
+        uber = Path(d, "Uber Data", "Rider")
+        uber.mkdir(parents=True)
+        (uber / "trips_data.csv").write_text(
+            "City,Product Type,Trip or Order Status,Request Time,Begin Trip Time,Begin Trip Lat,Begin Trip Lng,Begin Trip Address,Dropoff Time,Dropoff Lat,Dropoff Lng,Dropoff Address\n"
+            "Lisbon,UberX,COMPLETED,2023-05-16 08:00:00 +0000 UTC,2023-05-16 08:05:00 +0000 UTC,38.77,-9.13,Airport,2023-05-16 08:30:00 +0000 UTC,38.71,-9.14,Baixa\n"
+            "Lisbon,UberX,CANCELED,2023-05-17 08:00:00 +0000 UTC,,38.77,-9.13,,,,,\n")
+        got, sources = checkins.read([fb, ig, rv, Path(d, "Uber Data")])
+    assert sources == {"facebook", "instagram", "google reviews", "uber"}, sources
+    assert [(c["source"], c["name"]) for c in got] == [
+        ("facebook", ""), ("facebook", "Church of the Nativity"), ("instagram", ""), ("uber", "Airport"), ("uber", "Baixa"),
+        ("google reviews", "Pasteis de Belem")], [(c["source"], c["name"]) for c in got]
+    assert got[0]["t"] == 1399990000 and got[0]["lat"] == 50.45  # the photo's own time, not the post's
+    assert all(c["kind"] in ("post", "check-in", "review", "ride") for c in got)
+
+
+def test_calendar_events():
+    import calendar_events
+    with tempfile.TemporaryDirectory() as d:
+        Path(d, "Work.ics").write_text(
+            "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nDTSTART;VALUE=DATE:20240310\r\nDTEND;VALUE=DATE:20240313\r\nSUMMARY:CHI 2024 conf\r\n"
+            " erence\r\nLOCATION:Honolulu\\, HI\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nDTSTART;TZID=Europe/Amsterdam:20240311T100000\r\n"
+            "DTEND;TZID=Europe/Amsterdam:20240311T110000\r\nSUMMARY:Call\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nDTSTART:20240401T090000Z\r\n"
+            "DTEND:20240401T170000Z\r\nSUMMARY:Project meeting\r\nLOCATION:Gothenburg\r\nSTATUS:CONFIRMED\r\nEND:VEVENT\r\n"
+            "BEGIN:VEVENT\r\nDTSTART:20240402T090000Z\r\nSUMMARY:Off\r\nLOCATION:X\r\nSTATUS:CANCELLED\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+        got = calendar_events.read([d])
+    assert got == [{"start": "2024-03-10", "end": "2024-03-12", "title": "CHI 2024 conference", "location": "Honolulu, HI", "calendar": "Work"},
+                   {"start": "2024-04-01", "end": "2024-04-01", "title": "Project meeting", "location": "Gothenburg", "calendar": "Work"}], got
+
+
+def test_bank_statements():
+    import bank
+    with tempfile.TemporaryDirectory() as d:
+        Path(d, "revolut.csv").write_text(
+            "Type,Product,Started Date,Completed Date,Description,Amount,Fee,Currency,State,Balance\n"
+            "CARD_PAYMENT,Current,2019-09-13 10:00:00,2019-09-14 10:00:00,Aroma Espresso Bar,-45.00,0.00,ILS,COMPLETED,100\n"
+            "TOPUP,Current,2019-09-01 10:00:00,2019-09-01 10:00:00,Top-Up,100.00,0.00,EUR,COMPLETED,200\n"
+            "CARD_PAYMENT,Current,2019-09-14 10:00:00,,Declined,-5.00,0.00,EUR,DECLINED,100\n")
+        Path(d, "ing.csv").write_text(
+            '"Datum";"Naam / Omschrijving";"Rekening";"Tegenrekening";"Code";"Af Bij";"Bedrag (EUR)";"Mutatiesoort";"Mededelingen"\n'
+            '"20240105";"ALBERT HEIJN 1234 LEIDEN NLD";"NL00INGB";"";"BA";"Af";"12,50";"Betaalautomaat";"Pasvolgnr: 001"\n'
+            '"20240106";"Salaris";"NL00INGB";"NL11";"GT";"Bij";"3000,00";"Overschrijving";""\n'
+            '"20240107";"RESTAURANT X MADRID ESP";"NL00INGB";"";"BA";"Af";"30,00";"Betaalautomaat";"Pasvolgnr: 001 Transactie: 1"\n')
+        got = bank.read([d])
+    assert [(t["date"], t["amount"], t["currency"], t["country"]) for t in got] == [
+        ("2019-09-13", -45.0, "ILS", "IL"), ("2024-01-05", -12.5, "EUR", "NL"), ("2024-01-07", -30.0, "EUR", "ES")], got
+
+
+def test_ovchipkaart_routes_per_year():
+    import ovchipkaart
+    with tempfile.TemporaryDirectory() as d:
+        Path(d, "reizen.csv").write_text(
+            "Datum;Check-in;Vertrek;Check-uit;Bestemming;Bedrag;Transactie;Klasse;Product;Opmerkingen;Naam;Kaartnummer\n"
+            "02-01-2024;08:01;Leiden;09:15;Haarlem;14,90;Check-uit;2;;;X;1\n"
+            "03-01-2024;08:01;Leiden;09:15;Haarlem;14,90;Check-uit;2;;;X;1\n"
+            "03-01-2024;18:01;Haarlem, Station;18:15;Haarlem, Zijlweg;1,90;Check-uit;2;;;X;1\n"
+            "04-01-2024;;;;;20,00;Saldo opgeladen;;;;X;1\n")
+        got = ovchipkaart.legs([Path(d, "reizen.csv")])
+    assert [(x["mode"], x["from"], x["to"], x["times"], x["approx"], x["date"][:4]) for x in got] == [
+        ("bus", "Haarlem, Station", "Haarlem, Zijlweg", 1, "year", "2024"), ("train", "Leiden", "Haarlem", 2, "year", "2024")], got
 
 
 if __name__ == "__main__":
