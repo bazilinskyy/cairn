@@ -525,11 +525,17 @@ def parse_email(msg, airports, airlines, places=None, home_tz="Europe/Amsterdam"
     mode = ground.mode_of(sender, html)
     if mode:  # trains, buses, ferries: their own rules, no flights in these emails
         found = ground.legs(sender, subject, html, lines, received, places or {}, home_tz, mode)
+        body = lines
+        if not found:  # some operators (Atlânticoline) put the journeys only in a PDF ticket
+            pdf = ground.pdf_lines(msg)
+            if pdf:
+                lines = lines + pdf
+                found = ground.legs(sender, subject, html, lines, received, places or {}, home_tz, mode)
         codes = tuple(dict.fromkeys(pnrs + numbers[:1]))
         found = [Leg(l.flight, l.dep, l.arr, l.dep_local, l.arr_local, tuple(dict.fromkeys(list(l.codes) + list(codes))),
                      "", l.day, l.mode, l.dep_tz, l.arr_tz, l.arr_guess) for l in found]
         dates = [d for line in [subject] + lines for _, d in _dates(line, received)]
-        return Parsed(_kind(subject, lines), found, _passengers(lines, []), bool(found), [],
+        return Parsed(_kind(subject, lines), found, _passengers(body, []), bool(found), [],  # a PDF's table headers are no names
                       max(dates).date() if dates else None, tuple(dict.fromkeys(list(codes) + [c for l in found for c in l.codes])))
     structured = reservations(html) if html else []
     markup = jsonld_legs(html, airports) if html else []

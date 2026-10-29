@@ -6,8 +6,12 @@ name ("Bruxelles Midi" -> Brussels), else the home time zone.
 """
 import csv
 import re
+import subprocess
+import tempfile
 import unicodedata
+from dataclasses import replace
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from parse import DATE_RX, Leg, TIME_RX, _dates, reservations
 
@@ -205,6 +209,55 @@ def _rne(lines, cities, home_tz):
     return [_leg("bus", "", a, b, t0, t1, cities, home_tz, (code,) if code else ())]
 
 
+def _atlanticoline(lines, cities, home_tz):
+    """Atlânticoline (the Azores' ferries; the details are only in the PDF): after each 'Journey N' come the column
+    names, then the date, the departure and arrival ports, the product, the passengers, and the two times."""
+    code = ""
+    for i, line in enumerate(lines):
+        m = re.match(r"(?i)^booking (?:number|id):?\s*(\d{4,})?$", line.strip())
+        if m:
+            code = m.group(1) or (lines[i + 1].strip() if i + 1 < len(lines) and lines[i + 1].strip().isdigit() else "")
+            break
+    starts = [i for i, l in enumerate(lines) if re.fullmatch(r"(?i)journey \d+", l.strip())] + [len(lines)]
+    out = []
+    for a, b in zip(starts, starts[1:]):
+        block = [l.strip() for l in lines[a + 1:b] if l.strip()]
+        day = next((k for k, l in enumerate(block) if re.fullmatch(r"\d{1,2}\.\d{1,2}\.\d{4}", l)), None)
+        times = [l for l in block if re.fullmatch(r"\d{1,2}:\d{2}", l)]
+        if day is None or day + 2 >= len(block) or not times:
+            continue
+        d = datetime.strptime(block[day], "%d.%m.%Y")
+        at = [d.replace(hour=int(t.split(":")[0]), minute=int(t.split(":")[1])) for t in times[:2]]
+        leg = _leg("ferry", "", block[day + 1], block[day + 2], at[0], at[1] if len(at) > 1 else None, cities, home_tz,
+                   (code,) if code else ())
+        out.append(replace(leg, dep_tz="Atlantic/Azores", arr_tz="Atlantic/Azores"))  # small ports GeoNames lacks
+    return out
+
+
+PDF_TEXT = 'function run(a){ObjC.import("PDFKit");var d=$.PDFDocument.alloc.initWithURL($.NSURL.fileURLWithPath(a[0]));' \
+           'return d.isNil()?"":d.string.js}'
+
+
+def pdf_lines(msg):
+    """Lines of text of the email's PDF attachments, read by macOS PDFKit (through osascript); [] elsewhere or when
+    a PDF cannot be read."""
+    out = []
+    for part in msg.walk():
+        name = (part.get_filename() or "").lower()
+        if part.get_content_type() != "application/pdf" and not name.endswith(".pdf"):
+            continue
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "attachment.pdf"
+            path.write_bytes(part.get_payload(decode=True) or b"")
+            try:
+                r = subprocess.run(["osascript", "-l", "JavaScript", "-e", PDF_TEXT, str(path)], capture_output=True,
+                                   text=True, timeout=60)
+            except (OSError, subprocess.TimeoutExpired):
+                continue
+        out += r.stdout.splitlines() if r.returncode == 0 else []
+    return out
+
+
 def legs(sender, subject, html, lines, year_hint, cities, home_tz, mode):
     """Legs of a ground booking, each journey once (some emails repeat their markup)."""
     seen, out = set(), []
@@ -227,4 +280,6 @@ def _legs(sender, subject, html, lines, year_hint, cities, home_tz, mode):
         return _redbus(lines, cities, home_tz)
     if "rnetickets" in s or "rede-expressos" in s:
         return _rne(lines, cities, home_tz)
+    if "atlanticoline" in s:
+        return _atlanticoline(lines, cities, home_tz)
     return []

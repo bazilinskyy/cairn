@@ -29,6 +29,7 @@ tables and wording are the airline's own.
 | `flix_cancel.eml` | FlixBus cancellation | written by hand; only the booking number |
 | `twelvego_bus.eml` | 12Go confirmation | written by hand; `BusReservation` with a wrong time-zone offset and stop names with "departure time" in them |
 | `rne_bus.eml` | Rede Expressos ticket | written by hand in the same layout; departure, connection and arrival |
+| `atlanticoline_ferry.eml` | Atlânticoline booking details (Azores ferries) | written by hand: the journeys are only in the attached PDF ticket, a small PDF made in the same layout |
 | `hotel_booking.eml` (also) | Booking.com hotel confirmation | stay: place, dates, price, "Modify your booking" link (a nested anchor) |
 | `booking_cancel.eml` | Booking.com cancellation | written by hand in the same layout; cancels the `hotel_booking.eml` stay |
 | `airbnb_booking.eml` | Airbnb confirmation | written by hand in the same layout; dates without a year |

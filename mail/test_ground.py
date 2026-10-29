@@ -1,4 +1,5 @@
 """Tests for ground.py (trains, buses, ferries). Run: python mail/test_ground.py (no pytest needed)."""
+import shutil
 import sys
 from datetime import datetime as D
 from pathlib import Path
@@ -116,6 +117,18 @@ def test_ground_instants_use_station_zones():
 def test_flights_unchanged():
     assert parsed("klm_nl_booking").legs[0].mode == "flight"
     assert parsed("hotel_booking").legs == []
+
+
+def test_atlanticoline_ferry_from_its_pdf():
+    # the email body only says "see the attachment"; the journeys, ports and booking number are in the PDF ticket,
+    # whose "Passengers" column header must not be taken for names
+    if not shutil.which("osascript"):
+        return  # PDFs are read with macOS PDFKit
+    p = parsed("atlanticoline_ferry")
+    assert p.kind == "booking" and p.passengers == []
+    assert legs(p) == [("ferry", "", "Santa Cruz das Flores", "Vila Nova do Corvo", D(2026, 11, 14, 10, 0), D(2026, 11, 14, 10, 40)),
+                       ("ferry", "", "Vila Nova do Corvo", "Santa Cruz das Flores", D(2026, 11, 14, 16, 0), D(2026, 11, 14, 16, 40))]
+    assert {(l.dep_tz, l.arr_tz, l.codes) for l in p.legs} == {("Atlantic/Azores", "Atlantic/Azores", ("123456",))}
 
 
 if __name__ == "__main__":
