@@ -75,6 +75,23 @@ def from_library(path):
                p.path, p.original_filename)
 
 
+def library_albums(path, out):
+    """The albums of an Apple Photos library with their photos, for Cairn's album suggestions (albums.js), which read it
+    instead of a Google Takeout folder: [{"album", "photos": [[file name, file path, unix time or 0, has a place]]}]."""
+    import osxphotos
+    db = osxphotos.PhotosDB(dbfile=path)
+    albums = {}
+    for p in db.photos():
+        if not p.path:
+            continue
+        lat, _ = p.location
+        row = [p.original_filename, p.path, int(p.date.timestamp()) if p.date else 0, lat is not None]
+        for a in p.albums:
+            albums.setdefault(a, []).append(row)
+    Path(out).write_text(json.dumps([{"album": a, "photos": rows} for a, rows in sorted(albums.items())], separators=(",", ":")))
+    print(f"{len(albums)} albums written to {out}")
+
+
 def from_folder(folder):
     try:
         r = subprocess.run(["exiftool", "-n", "-json", "-r", "-q", "-GPSLatitude", "-GPSLongitude", "-DateTimeOriginal",
@@ -168,6 +185,8 @@ def main(argv=None):
     ap.add_argument("--points", metavar="FILE", help="also every photo with its exact place, time and file, for Cairn's "
                     "photo layer and trips (on the Mac that runs Cairn: data/photo_points.json)")
     data = Path(__file__).resolve().parent.parent / "data"  # Cairn's data folder in a checkout, else here
+    ap.add_argument("--albums", metavar="FILE", help="also the library's albums with their photos, for Cairn's album "
+                    "suggestions (on the Mac that runs Cairn: data/photo_albums.json)")
     ap.add_argument("--out", default=str(data / "photos.json" if data.is_dir() else Path("photos.json")))
     ap.add_argument("--send", metavar="HOST:PATH", help="also copy the result there with scp")
     args = ap.parse_args(argv)
@@ -182,6 +201,8 @@ def main(argv=None):
                      if s[3] is not None and s[0] is not None and s[1] is not None and not (s[0] == 0 and s[1] == 0))
         Path(args.points).write_text(json.dumps(pts, separators=(",", ":")))
         print(f"{len(pts)} photos with a place and time, written to {args.points}")
+    if args.albums:
+        library_albums((args.library or [None])[0] or str(Path("~/Pictures/Photos Library.photoslibrary").expanduser()), args.albums)
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(result, separators=(",", ":")))

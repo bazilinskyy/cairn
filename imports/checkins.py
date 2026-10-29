@@ -10,20 +10,29 @@ Give it the downloads as they came (zip files or unpacked folders), any number a
   python imports/checkins.py ~/Downloads/takeout-*.zip ~/Downloads/Uber\\ Data --send mini:repos/contrail/data/checkins.json
 
 Writes data/checkins.json: [{"t": unix time, "lat", "lon", "name", "source", "kind"}], sorted by time. What was in it
-from sources this run did not read is kept (Facebook today, Uber next week). Standard library only, no network.
+from sources this run did not read is kept (Facebook today, Uber next week). Standard library only. Facebook's places
+you were tagged in have a name and a time but no position: their names are looked up with Photon (photon.komoot.io, one
+a second, near the Facebook post with a place closest in time; kept in data/place_lookups.json, so a second run asks
+nothing again), and a day whose tagged places are over 500 km apart (old photos tagged in one go) is left out;
+--no-lookups leaves them all out and uses no network.
 """
 import argparse
 import csv
 import io
 import json
+import math
 import re
 import subprocess
 import sys
+import time
+import urllib.parse
+import urllib.request
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+BATCH_KM = 500  # tagged places further apart on one day: a day of tagging, not of visiting
 
 
 # --- reading the downloads: (name, bytes) of every file in zips and folders ---
@@ -132,6 +141,68 @@ def from_meta(name, data, source):
     return out
 
 
+def from_tagged(data):
+    """Facebook's places you were tagged in: a name and a visit time, no position: [{"t", "name"}]."""
+    try:
+        doc = json.loads(data)
+    except ValueError:
+        return []
+    out = []
+    for it in doc if isinstance(doc, list) else []:
+        labels = it.get("label_values", []) if isinstance(it, dict) else []
+        t = next((number(x.get("timestamp_value")) for x in labels if x.get("label") == "Visit time"), None)
+        name = next((y.get("value") for x in labels if x.get("title") == "Place" for g in x.get("dict", [])
+                     for y in g.get("dict", []) if y.get("label") == "Name"), None)
+        if t and name:
+            out.append({"t": int(t), "name": fix_text(name)})
+    return out
+
+
+def photon(name, near):
+    """The place Photon gives for a name, near [lat, lon] when given: (lat, lon) or None."""
+    q = {"q": name, "limit": "1", **({"lat": f"{near[0]:.3f}", "lon": f"{near[1]:.3f}"} if near else {})}
+    req = urllib.request.Request("https://photon.komoot.io/api/?" + urllib.parse.urlencode(q),
+                                 headers={"User-Agent": "cairn (personal travel log; https://github.com/bazilinskyy/cairn)"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        f = (json.loads(r.read()).get("features") or [None])[0]
+    return (f["geometry"]["coordinates"][1], f["geometry"]["coordinates"][0]) if f else None
+
+
+def place_tagged(tagged, placed, cache_file):
+    """The tagged places with a position from Photon, near the Facebook post with a place closest in time."""
+    try:
+        cache = json.loads(cache_file.read_text())
+    except (OSError, ValueError):
+        cache = {}
+    known = sorted((c["t"], c["lat"], c["lon"]) for c in placed if c["source"] == "facebook")
+    out = []
+    for c in tagged:
+        near = min(known, key=lambda k: abs(k[0] - c["t"]))[1:] if known else None
+        key = c["name"] if not near else f"{c['name']}|{round(near[0])},{round(near[1])}"
+        if key not in cache:
+            try:
+                cache[key] = photon(c["name"], near)
+            except OSError as e:
+                print(f"Photon: {e}; the rest of the tagged places wait for the next run", file=sys.stderr)
+                break
+            cache_file.write_text(json.dumps(cache, ensure_ascii=False))
+            time.sleep(1.1)
+        if cache[key]:
+            out.append({"t": c["t"], "lat": cache[key][0], "lon": cache[key][1], "name": c["name"], "source": "facebook", "kind": "tagged"})
+    # a "visit time" is often when the tag was added: a day whose places are far apart (Munich, Mikkeli and Edinburgh
+    # Castle on one day) is a day of tagging old photos, and none of its places says where you were that day
+    days = {}
+    for c in out:
+        days.setdefault(datetime.fromtimestamp(c["t"], timezone.utc).date(), []).append(c)
+    batch = {d for d, cs in days.items() if any(km(a, b) > BATCH_KM for a in cs for b in cs)}
+    return [c for c in out if datetime.fromtimestamp(c["t"], timezone.utc).date() not in batch]
+
+
+def km(a, b):
+    la1, lo1, la2, lo2 = map(math.radians, (a["lat"], a["lon"], b["lat"], b["lon"]))
+    return 6371 * 2 * math.asin(math.sqrt(math.sin((la2 - la1) / 2) ** 2 + math.cos(la1) * math.cos(la2) * math.sin((lo2 - lo1) / 2) ** 2))
+
+
 def from_reviews(data):
     """Google Takeout's Maps reviews (Reviews.json, GeoJSON): each review's place and day."""
     try:
@@ -220,13 +291,17 @@ def from_vk(name, data):
     return out
 
 
-def read(paths):
-    """Everything the downloads hold, and the sources found: (list, set of sources)."""
-    out, seen = [], set()
+def read(paths, lookups=None):
+    """Everything the downloads hold, and the sources found: (list, set of sources). lookups: the cache file for the
+    names of the places Facebook tagged you in (None: leave those out)."""
+    out, seen, tagged = [], set(), []
     for name, data in files(paths):
         n = name.replace("\\", "/").lower()
         got = []
-        if n.endswith(".json") and ("reviews" in n.split("/")[-1]):
+        if n.endswith("places_you_have_been_tagged_in.json"):
+            tagged += from_tagged(data)
+            seen.add("facebook")
+        elif n.endswith(".json") and ("reviews" in n.split("/")[-1]):
             got = from_reviews(data)
         elif n.endswith(".json") and ("instagram" in n or "/media/" in n or n.split("/")[-1].startswith(("posts_", "stories", "media"))) and "facebook" not in n:
             got = from_meta(name, data, "instagram")
@@ -241,6 +316,8 @@ def read(paths):
         for c in got:
             seen.add(c["source"])
         out.extend(got)
+    if tagged and lookups:
+        out.extend(place_tagged(tagged, out, lookups))
     # one per place and minute (a photo set of one post is one check-in)
     unique = {(c["source"], c["t"] // 60, round(c["lat"], 4), round(c["lon"], 4)): c for c in out}
     return sorted(unique.values(), key=lambda c: c["t"]), seen
@@ -252,8 +329,9 @@ def main(argv=None):
     data_dir = HERE.parent / "data"
     ap.add_argument("--out", default=str(data_dir / "checkins.json" if data_dir.is_dir() else "checkins.json"))
     ap.add_argument("--send", metavar="HOST:PATH", help="also copy the result there with scp")
+    ap.add_argument("--no-lookups", action="store_true", help="leave out Facebook's tagged places (no network)")
     args = ap.parse_args(argv)
-    found, sources = read(args.paths)
+    found, sources = read(args.paths, None if args.no_lookups else Path(args.out).parent / "place_lookups.json")
     out = Path(args.out)
     try:
         kept = [c for c in json.loads(out.read_text()) if c.get("source") not in sources]

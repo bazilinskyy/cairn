@@ -270,6 +270,53 @@ def test_checkins_facebook_instagram_reviews_rides():
     assert all(c["kind"] in ("post", "check-in", "review", "ride") for c in got)
 
 
+def test_checkins_facebook_tagged_places_looked_up_once():
+    import checkins
+    asked = []
+    real = checkins.photon
+    checkins.photon = lambda name, near: asked.append((name, near)) or ({"Edinburgh Castle": (55.95, -3.2)}.get(name))
+    checkins.time.sleep, sleep = (lambda s: None), checkins.time.sleep
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            posts = Path(d, "your_facebook_activity", "posts")
+            posts.mkdir(parents=True)
+            (posts / "places_you_have_been_tagged_in.json").write_text(json.dumps([
+                {"label_values": [{"label": "Visit time", "timestamp_value": 1323400000},
+                                  {"title": "Place", "dict": [{"dict": [{"label": "Name", "value": "Edinburgh Castle"}]}]}]},
+                {"label_values": [{"label": "Visit time", "timestamp_value": 1323500000},
+                                  {"title": "Place", "dict": [{"dict": [{"label": "Name", "value": "Nowhere Known"}]}]}]}]))
+            (posts / "your_posts__check_ins__photos_and_videos_1.json").write_text(json.dumps([
+                {"timestamp": 1323300000, "attachments": [{"data": [{"place": {"name": "Waverley",
+                 "coordinate": {"latitude": 55.952, "longitude": -3.189}}}]}]}]))
+            cache = Path(d, "place_lookups.json")
+            got, sources = checkins.read([d], cache)
+            again, _ = checkins.read([d], cache)
+            assert checkins.read([d])[0] == [c for c in got if c["kind"] != "tagged"]  # no lookups: left out
+    finally:
+        checkins.photon, checkins.time.sleep = real, sleep
+    assert sources == {"facebook"}
+    assert [(c["name"], c["kind"], c["lat"]) for c in got] == [("Waverley", "post", 55.952), ("Edinburgh Castle", "tagged", 55.95)], got
+    assert again == got and len(asked) == 2  # asked once each (near the post closest in time), not again
+    assert asked[0] == ("Edinburgh Castle", (55.952, -3.189))
+
+
+def test_checkins_tagged_on_one_day_far_apart_left_out():
+    import checkins
+    real, sleep = checkins.photon, checkins.time.sleep
+    checkins.photon = lambda name, near: {"Munich": (48.14, 11.58), "Edinburgh Castle": (55.95, -3.2), "Leith": (55.98, -3.17)}[name]
+    checkins.time.sleep = lambda s: None
+    tag = lambda t, name: {"label_values": [{"label": "Visit time", "timestamp_value": t},
+                                            {"title": "Place", "dict": [{"dict": [{"label": "Name", "value": name}]}]}]}
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            Path(d, "places_you_have_been_tagged_in.json").write_text(json.dumps([
+                tag(1323400000, "Munich"), tag(1323401000, "Edinburgh Castle"), tag(1400000000, "Edinburgh Castle"), tag(1400001000, "Leith")]))
+            got, _ = checkins.read([d], Path(d, "lookups.json"))
+    finally:
+        checkins.photon, checkins.time.sleep = real, sleep
+    assert [(c["t"], c["name"]) for c in got] == [(1400000000, "Edinburgh Castle"), (1400001000, "Leith")], got
+
+
 def test_calendar_events():
     import calendar_events
     with tempfile.TemporaryDirectory() as d:

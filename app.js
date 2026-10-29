@@ -561,7 +561,8 @@ app.get('/api/photos/:id/:size(thumb|full)', async (req, res) => {
 app.get('/api/timeline', (_req, res) => res.json(readImport(TIMELINE_FILE, { visits: [], paths: [] })));
 // places you were at a known time from data downloads: Facebook, Instagram, VK, Maps reviews, Uber, Bolt
 const CHECKINS_FILE = path.join(DATA_DIR, 'checkins.json');
-app.get('/api/checkins', (_req, res) => res.json(readImport(CHECKINS_FILE, [])));
+// the check-ins, without the places you were tagged in that your other data says you were not at (see allPlacesAndDays)
+app.get('/api/checkins', (_req, res) => { placesAndDays('', ''); res.json(readImport(CHECKINS_FILE, []).filter(c => !untrusted.has(c))); });
 
 // --- Strava ---
 
@@ -678,6 +679,8 @@ function placesAndDays(from, to, { stays: withStays = true } = {}) {
   if (!m || m.refs.some((r, i) => r !== refs[i])) placesMemo.set(withStays, m = { refs, list: allPlacesAndDays(withStays) });
   return from || to ? m.list.filter(p => (!from || p.day >= from) && (!to || p.day <= to)) : m.list.slice();
 }
+const TAGGED_KM = 300;
+let untrusted = new Set();  // the check-ins left out (allPlacesAndDays)
 function allPlacesAndDays(withStays) {
   const from = '', to = '';
   const pts = [], inPeriod = d => d && (!from || d >= from) && (!to || d <= to);
@@ -713,9 +716,21 @@ function allPlacesAndDays(withStays) {
     });
   } else readImport(PHOTOS_FILE, []).forEach(c => (c.days || []).forEach(d => add([c.lat, c.lon], d)));
   // check-ins, posts with a place, reviews and rides (imports/checkins.py): where you were that day
-  readImport(CHECKINS_FILE, []).forEach(c => add([c.lat, c.lon], new Date(c.t * 1000).toISOString().slice(0, 10)));
+  const dayOf = c => new Date(c.t * 1000).toISOString().slice(0, 10), checkins = readImport(CHECKINS_FILE, []);
+  checkins.filter(c => c.kind !== 'tagged').forEach(c => add([c.lat, c.lon], dayOf(c)));
   (readImport(TIMELINE_FILE, {}).visits || []).forEach(v => eachDay(v.start.slice(0, 10), v.end.slice(0, 10), d => add([v.lat, v.lon], d)));
   activities.list().forEach(a => add(a.at, (a.date || '').slice(0, 10)));
+  // places Facebook tagged you in were found by their name ("School of Computer Science"), which can be a namesake far
+  // away: one counts unless the rest of your data, that day or the day either side, is all over TAGGED_KM from it
+  const byDay = new Map();
+  pts.forEach(p => { if (!byDay.has(p.day)) byDay.set(p.day, []); byDay.get(p.day).push(p.at); });
+  const out = new Set();
+  checkins.filter(c => c.kind === 'tagged').forEach(c => {
+    const t = Date.parse(dayOf(c)), near = [-1, 0, 1].flatMap(k => byDay.get(new Date(t + k * 864e5).toISOString().slice(0, 10)) || []);
+    if (near.length && near.every(at => ground.km(at, [c.lat, c.lon]) > TAGGED_KM)) out.add(c);
+    else add([c.lat, c.lon], dayOf(c));
+  });
+  if (withStays) untrusted = out;
   return pts;
 }
 
@@ -1053,7 +1068,8 @@ app.get('/api/suggestions', (_req, res) => res.json(suggestions.list()));
 
 // albums with no places whose names say where and when (albums.js)
 const albums = require('./albums').create({
-  dir: () => (config.takeout_photos_dir ? config.takeout_photos_dir.replace(/^~/, require('os').homedir()) : ''),
+  dir: () => (fs.existsSync(path.join(DATA_DIR, 'photo_albums.json')) ? path.join(DATA_DIR, 'photo_albums.json')
+    : config.takeout_photos_dir ? config.takeout_photos_dir.replace(/^~/, require('os').homedir()) : ''),
   cacheFile: path.join(DATA_DIR, 'albums.json'), placesFile: path.join(DATA_DIR, 'album_places.json'), km: ground.km,
   towns: () => (towns === undefined ? (towns = cities.load(path.join(DATA_DIR, 'cities1000.txt'))) : towns),
   near: year => {  // the middle of where your data puts you that year (the median place)

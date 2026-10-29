@@ -12,6 +12,8 @@
   <img alt="Self-hosted" src="https://img.shields.io/badge/self--hosted-your%20data%20stays%20home-0f172a">
   <img alt="One dependency" src="https://img.shields.io/badge/npm%20dependencies-1-38bdf8">
   <img alt="Data in plain JSON" src="https://img.shields.io/badge/data-plain%20JSON-94a3b8">
+  <a href="https://github.com/sponsors/bazilinskyy"><img alt="Sponsor on GitHub" src="https://img.shields.io/badge/sponsor-GitHub-ea4aaa?logo=githubsponsors&logoColor=white"></a>
+  <a href="https://ko-fi.com/bazilinskyy"><img alt="Support on Ko-fi" src="https://img.shields.io/badge/support-Ko--fi-ff5e5b?logo=kofi&logoColor=white"></a>
 </p>
 
 <p align="center">
@@ -214,7 +216,7 @@ No account is needed for any of these; each is asked at most about once a second
 - [tripmail](#tripmail)
 - [Using Cairn](#using-cairn): [the map](#the-map), [sports](#sports-activities), [coming trips](#coming-trips), [spending](#spending), [year in review](#year-in-review), [wish list](#wish-list), [fix](#fix), [adding](#adding-by-hand-and-from-your-photos), [backup](#backup)
 - [Data](#data) · [API](#api) · [Tests](#tests) · [Privacy](#privacy) · [Troubleshooting](#troubleshooting)
-- [Acknowledgements](#acknowledgements) · [License](#license)
+- [Support Cairn](#support-cairn) · [Acknowledgements](#acknowledgements) · [License](#license)
 
 ## Repository layout
 
@@ -298,7 +300,7 @@ cp default.secret secret
 | `csv_backup` | `""` | openflights.org CSV export to import on first run (see [Importing](#importing-from-openflightsorg)) |
 | `ground_file`, `stays_file`, `photos_file`, `timeline_file`, `strava_file`, `strava_token_file` | `data/…` | where the map's other data is kept (see [Data](#data)) |
 | `things_db` | `""` | `"auto"` to read your Things 3 to-dos on this Mac (read-only), for the coming trips' checks and the trips your to-dos mention; or the path of its `main.sqlite` |
-| `takeout_photos_dir` | `""` | your Google Takeout's Google Photos folder, for the album suggestions (see [Adding by hand, and from your photos](#adding-by-hand-and-from-your-photos)) |
+| `takeout_photos_dir` | `""` | your Google Takeout's Google Photos folder, for the album suggestions when there is no `data/photo_albums.json` (the Photos library's albums, from `imports/photos.py --albums`; see [Adding by hand, and from your photos](#adding-by-hand-and-from-your-photos)) |
 | `ground_lookups` | `true` | look up places and tracks of trains, buses, ferries and stays (see [Ground trips](#ground-trips)) |
 | `tripmail` | | tripmail settings (see [tripmail settings](#settings)) |
 
@@ -364,7 +366,7 @@ In short:
 - Adds the same flight to **Cairn**
 - Also adds **trains, buses and ferries** to the calendar, for example `🚆 EC9236: Breda - Bruxelles Midi` or `🚌 Lisboa (Oriente) - Porto (Campanhã)`, and to Cairn's map
 - Follows **schedule changes, rebookings and cancellations**
-- Reads **hotel, Airbnb and rental car** bookings (Booking.com, Airbnb, DiscoverCars, VIPCars, Rentalcars.com, Holiday Autos, Hertz and other brokers) for the trip docs and Cairn's map
+- Reads **hotel, hostel, Airbnb and rental car** bookings (Booking.com, Airbnb, Hostelworld, Trip.com, Hotels.com, Expedia, DiscoverCars, VIPCars, Rentalcars.com, Holiday Autos, Hertz and other brokers) for the trip docs and Cairn's map
 - Keeps **one Google Doc per trip** in a Drive folder: the Plan table gets each stay and rental car, the Transport table each flight, train, bus and ferry, without changing what you wrote (see [Trip docs](#trip-docs))
 - **Suggests things to do and an itinerary** in the doc of each coming trip, by Claude, written again whenever the doc changes
 - For every flight: a **check-in to-do in Things**, scheduled the day before, with the airline's check-in link; a **busy block in your work calendar** from 2 hours before departure to 1 hour after landing; and an all-day **trip banner** ("Tenerife", "Portugal") over each trip
@@ -382,7 +384,7 @@ Every hour tripmail reads the Gmail messages that arrived since its last run. Fo
 | **Rebooking** | The old flight is deleted from both places and the new one created with a `Rebooked from KL1234 on 2026-11-16` note. |
 | **Cancellation** | The event and the Cairn flight are deleted. |
 | **Train, bus or ferry ticket** | One calendar event per journey and the same trip in Cairn, for the map. Cancellations delete both, also when the email gives only the booking number. |
-| **Hotel, Airbnb or rental car** | Booking.com, Airbnb, DiscoverCars and VIPCars confirmations, and those of other car rental brokers and companies (Rentalcars.com, Holiday Autos, Argus Car Hire, Stressfree Car Rental, BSP Auto, EconomyBookings, QEEQ, Hertz, Thrifty, Goldcar), go into the trip docs (below) and to Cairn's map, not the calendar. Their cancellations undo that. |
+| **Hotel, Airbnb or rental car** | Booking.com, Airbnb, Hostelworld, Trip.com and Hotels.com stays, Expedia, DiscoverCars and VIPCars rental cars, and those of other car rental brokers and companies (Rentalcars.com, Holiday Autos, Argus Car Hire, Stressfree Car Rental, BSP Auto, EconomyBookings, QEEQ, Hertz, Thrifty, Goldcar), go into the trip docs (below) and to Cairn's map, not the calendar. Their cancellations undo that. |
 | **Anything else** | Ignored: check-in reminders, boarding passes, price alerts, surveys, newsletters, "choose an option" emails, replies and forwards. |
 
 Each event:
@@ -540,7 +542,7 @@ launchctl bootout gui/$(id -u)/nl.tue.tripmail; rm ~/Library/LaunchAgents/nl.tue
 
 The legend at the top right shows or hides each layer, with how many it holds in the period shown:
 - **Flights** (with their airports), **trains**, **🔁 commutes** (the trains between where you live and work; left out everywhere when the settings say not to count them), **buses**, **ferries**, hitchhiking and **🚙 car journeys**. Lines show as a line in the legend, markers as a dot, areas as a square.
-- **Stays** (bigger for more nights), a group in the legend with a row per kind of bed, in three shades of one family: pink for hotels and other, and (a ring) friends' places and family; violet for hostels, and (a ring) Couchsurfing and BeWelcome; amber for Airbnb, and (a ring) camping. A filled dot is a bed you paid for, a ring a free one. The group's box turns them all on or off; and **rental cars** (yellow, at the pick-up place). tripmail sends every Booking.com, Airbnb, DiscoverCars and VIPCars booking it reads to Cairn, which finds the place with Photon and keeps it.
+- **Stays** (bigger for more nights), a group in the legend with a row per kind of bed, in three shades of one family: pink for hotels and other, and (a ring) friends' places and family; violet for hostels, and (a ring) Couchsurfing and BeWelcome; amber for Airbnb, and (a ring) camping. A filled dot is a bed you paid for, a ring a free one. The group's box turns them all on or off; and **rental cars** (yellow, at the pick-up place). tripmail sends every hotel, hostel, Airbnb and rental car booking it reads to Cairn, which finds the place with Photon and keeps it.
 - **Photos**: where your photos were taken, about 1 km per dot, bigger for more photos. From `imports/photos.py` (below).
 - **Timeline**: the places and daily paths of Google Maps Timeline. From `imports/timeline.py` (below).
 - **Activities**: your sports activities (see [Sports activities](#sports-activities)), a group in the legend with a row per type, **Cycling**, **Running**, **Walks & hikes** and **Other sports** (orange, violet, magenta, yellow), and **Explored tiles**; the group's box turns them all on or off, a type's box shows it alone. Activities without a route (indoor, virtual, swims without GPS) are counted but not drawn.
@@ -585,6 +587,12 @@ python imports/photos.py --takeout ~/Downloads/takeout-*.zip --send mini:repos/c
 Sources can be combined in one run, for example the laptop's library copied to mini and the Google Takeout: `--library ~/Pictures/Laptop.photoslibrary --takeout ~/Takeout/takeout-*.zip`. A photo that is in both (the same moment and place) counts once; each run replaces the file, so give every source each time.
 
 Only the small `.json` file Google puts beside each photo is read (when it was taken and where, from the camera or a place you set in Google Photos), never the photo itself; a photo that is also in an album counts once. A new export replaces the last one, so export everything each time.
+
+On the Mac that runs Cairn, with the photos in its own Photos library (Google's imported into it, for example with `osxphotos import`), `--points data/photo_points.json` also writes every photo's exact place, time and file for the photo layer, trips and town pages, and `--albums data/photo_albums.json` the library's albums for the album suggestions (below), so neither the Takeout folder nor any export is needed once the photos are in the library:
+
+```
+uv run --with osxphotos python imports/photos.py --points data/photo_points.json --albums data/photo_albums.json
+```
 
 **Google Maps Timeline.** Export it on your phone (Android: Settings > Location > Location services > Timeline > Export Timeline data; iPhone: Google Maps > Settings > Personal content > Export Timeline data), or use an older Takeout of Location History, then:
 
@@ -718,7 +726,7 @@ Add `--send mini:repos/contrail/data/<file>.json` to copy the result to the Mac 
 - **🏨 Stay**: where, from and until, and what (hotel, hostel, flat, friends, family, camping, Couchsurfing).
 - **💡 To check**: trips your to-dos say you made (a "trip to X" to-do done in Things where nothing in Cairn puts you within 300 km of X in the 200 days either side), the trains, buses and ferries of your trip docs not on the map (`data/tripdoc_rows.json`), the albums below, and your photos, in the order you took them, put you in towns; where they jump from one town to another far away (60 km or more, within 6 days, at a speed a train or bus could do) and no flight, train, bus, ferry or ride of yours connects them, that leg is listed, grouped into journeys, with the last photo before and the first after. Choose how you went and **Add**, or **✕** when it was no trip (a photo's place is wrong, you drove); **None of these** for a whole journey. A flight opens the flight form with its date. Moves inside your home countries (to work, to family) and on days with a rental car are left out; your answers are kept in `data/suggestions.dismissed.json`. The older your photos in the index, the further back this reaches (see [The map](#the-map), Photos).
 
-  Above them, **albums that say where you went**: old photos often have no place (and Google's export can give them the day they were uploaded instead of taken), so the moves cannot show; an album's name still says where and when ("Saint Petersburg - 2009", "Crimea 2011", "GA of EMA in Krakow"). Each Google Photos album (from the Takeout folder set as `takeout_photos_dir` in `config`, e.g. `"~/Takeout/Takeout/Google Photos"`) whose photos mostly have no place is listed with its cover, the number of photos, its dates when they look real, and the place and year its name gives: the place is looked up once in the background (Photon; only a place of exactly that name, the most specific one the name holds, Chernihiv before Ukraine; everyday words such as Autumn, Christmas or Gigs are not places), kept in `data/albums.json`. Albums for a place and year your flights, trains or stays already cover are left out. Fill in where you came from (and correct the place or year), choose how, and **Add** makes the trip there and back, known to the year.
+  Above them, **albums that say where you went**: old photos often have no place (and Google's export can give them the day they were uploaded instead of taken), so the moves cannot show; an album's name still says where and when ("Saint Petersburg - 2009", "Crimea 2011", "GA of EMA in Krakow"). Each album (of the Photos library, `data/photo_albums.json` from `imports/photos.py --albums`; else of the Google Takeout folder set as `takeout_photos_dir` in `config`, e.g. `"~/Takeout/Takeout/Google Photos"`) whose photos mostly have no place is listed with its cover, the number of photos, its dates when they look real, and the place and year its name gives: the place is looked up once in the background (Photon; only a place of exactly that name, the most specific one the name holds, Chernihiv before Ukraine; everyday words such as Autumn, Christmas or Gigs are not places), kept in `data/albums.json`. Albums for a place and year your flights, trains or stays already cover are left out. Fill in where you came from (and correct the place or year), choose how, and **Add** makes the trip there and back, known to the year.
 
   Then **where your albums' photos are**: every album's photos with no place of their own go on the map (the 📷 layer, "placed by its album" in their popup) at the town its name gives (a country or region is too vague: those wait for you), or where you put them: **Put it in…** (type a town, pick it), **Not a place**, **Reset**, or **Photos…** to tick some of its photos and put them in another town (an album "Paris, Toulouse, Pyrenees"). Your choices are kept in `data/album_places.json`. An album's dates count as the photos' own unless most of it falls on a day most of several albums fall on (the day Google got them): then its photos keep only the album's year, show in that year and make no day in towns, countries or trips.
 
@@ -960,6 +968,12 @@ Without it the map still renders, but without route arcs and airport markers.
 **tripmail: "Expected one calendar".** `calendar_account` and `calendar_title` must match macOS Calendar exactly; `mail/tripmail.py calendars` lists them.
 
 **tripmail missed a booking.** Look for a "could not read" alert or the email's line in `run.log`. If the email has no flight words at all, widen `gmail_query`.
+
+## Support Cairn
+
+Cairn is free and stays free. If it is useful to you and you would like to give something back, you can
+[sponsor it on GitHub](https://github.com/sponsors/bazilinskyy) (monthly or once) or
+[buy me a coffee on Ko-fi](https://ko-fi.com/bazilinskyy). Bug reports, ideas and pull requests help just as much.
 
 ## Acknowledgements
 

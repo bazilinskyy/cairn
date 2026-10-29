@@ -1,8 +1,9 @@
 'use strict';
 // Trips your Google Photos albums name: "Saint Petersburg - 2009", "Crimea 2011", "Kharkov 2008". Old photos often
 // have no place (and Google's export can give them the day they were uploaded), so the photo suggestions cannot see
-// those trips; the album's name still says where and when. Each album (from Google Takeout, the folder given as
-// takeout_photos_dir in config) whose photos mostly have no place is suggested with the place and year of its name,
+// those trips; the album's name still says where and when. Each album (of the Photos library, data/photo_albums.json
+// written by imports/photos.py --albums; else of Google Takeout, the folder given as takeout_photos_dir in config) whose
+// photos mostly have no place is suggested with the place and year of its name,
 // unless a flight, train or stay already puts you there that year. The places are looked up once (Photon: a place of
 // exactly that name; everyday words like "Autumn" or "Gigs" are not places), in the background, kept in data/albums.json.
 // Their photos with no place of their own go on the map at the album's place (photoEntries): the place its name gives,
@@ -65,7 +66,7 @@ function candidates(place) {
 
 // "Copy of Crimea 2011" -> { place: "Crimea", year: 2011 }; "Saint Petersburg - 2009" -> Saint Petersburg, 2009
 function parse(name) {
-  const clean = name.replace(/^Copy of /i, '').replace(/\s*\(.*?\)/g, '');  // "Chernihiv (Chernigov), Ukraine": Chernihiv, Ukraine
+  const clean = name.replace(/^(Copy of|Facebook:) /i, '').replace(/\s*\(.*?\)/g, '');  // "Chernihiv (Chernigov), Ukraine": Chernihiv, Ukraine
   const m = clean.match(/\b(19[5-9]\d|20[0-4]\d)\b/);
   const place = clean.replace(/\b(19[5-9]\d|20[0-4]\d)\b/g, '').replace(/\bpart\s*\d+\b/ig, '').replace(/[-–_,()]+/g, ' ').replace(/\s+/g, ' ').trim();
   return { place, year: m ? +m[1] : null };
@@ -105,9 +106,27 @@ function create({ dir, cacheFile, placesFile, km, towns, near = () => null, flig
     }
     return scanned.dir === root && scanned.list ? scanned.list : [];
   }
-  async function read(root) {
+  // the albums of a Photos library (photos.py --albums): [{ album, photos: [[name, file, time, placed]] }]
+  function readLibrary(file) {
     const list = [];
-    for (const name of fs.readdirSync(root).sort()) {
+    for (const { album: name, photos } of JSON.parse(fs.readFileSync(file, 'utf8'))) {
+      if (SKIP.test(name) || !photos.length) continue;
+      const days = new Map(), loose = [];
+      for (const [f, file, t, here] of photos) {
+        if (t) { const d = new Date(t * 1000).toISOString().slice(0, 10); days.set(d, (days.get(d) || 0) + 1); }
+        if (!here) loose.push([f, t, file]);
+      }
+      if (!loose.length) continue;
+      const { place, year } = parse(name);
+      const cover = photos.find(([f]) => /\.(jpe?g|png|heic)$/i.test(f)) || photos[0];
+      list.push({ key: 'album|' + name, album: name, photos: photos.length, placed: photos.length - loose.length, place, year, days,
+        cover: cover[1], loose, suggest: loose.length > photos.length / 2 });
+    }
+    return list;
+  }
+  async function read(root) {
+    const list = root.endsWith('.json') ? readLibrary(root) : [];
+    for (const name of root.endsWith('.json') ? [] : fs.readdirSync(root).sort()) {
       const folder = path.join(root, name);
       if (SKIP.test(name) || !fs.statSync(folder).isDirectory()) continue;
       const files = fs.readdirSync(folder).filter(f => MEDIA.test(f));
@@ -266,13 +285,13 @@ function create({ dir, cacheFile, placesFile, km, towns, near = () => null, flig
     const c = choices(), out = [];
     for (const a of list) {
       const place = albumPlace(a), root = dir();
-      for (const [f, t] of a.loose || []) {
+      for (const [f, t, file] of a.loose || []) {
         const at = (c.photos[`${a.album}/${f}`] || place)?.at;
         if (!at) continue;
         // the photo's date when the album's dates are the photos' own; else only a year: the album's, else Google's
         const own = a.first && t, when = own ? t : yearOf(a) || t || (a.first ? Date.parse(a.first) / 1000 : 0);
         if (!when) continue;
-        out.push([when, at[0], at[1], path.join(root, a.album, f), own ? 'a' : 'y']);
+        out.push([when, at[0], at[1], file || path.join(root, a.album, f), own ? 'a' : 'y']);
       }
     }
     entries = out;
@@ -296,7 +315,8 @@ function create({ dir, cacheFile, placesFile, km, towns, near = () => null, flig
   // a file of an album's photos (for its thumbnail), only one the album has
   function albumFile(name, file) {
     const a = scan().find(x => x.album === name);
-    return a && (a.loose || []).some(([f]) => f === file) ? path.join(dir(), a.album, file) : null;
+    const hit = a && (a.loose || []).find(([f]) => f === file);
+    return hit ? hit[2] || path.join(dir(), a.album, file) : null;
   }
   // your choice for an album: { at, name }, false (not a place) or null (back to what its name gives)
   function chooseAlbum(name, place) {

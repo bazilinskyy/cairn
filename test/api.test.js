@@ -223,9 +223,13 @@ test('your places: picked by name, kept by Cairn, cleared one at a time', async 
 
 test('check-ins count for their town; payments abroad that no trip explains are listed until dismissed', async () => {
   fs.writeFileSync(path.join(dir, 'data', 'checkins.json'), JSON.stringify([
-    { t: Date.UTC(2023, 4, 2, 12) / 1000, lat: 51.44, lon: 5.48, name: 'Market square', source: 'facebook', kind: 'check-in' }]));
-  assert.strictEqual((await (await call('GET', '/api/checkins')).json()).length, 1);
-  assert.deepStrictEqual((await (await call('GET', '/api/cities?from=2023-01-01&to=2023-12-31')).json()).map(c => [c.name, c.days]), [['Eindhoven', 1]]);
+    { t: Date.UTC(2023, 4, 2, 12) / 1000, lat: 51.44, lon: 5.48, name: 'Market square', source: 'facebook', kind: 'check-in' },
+    // a place you were tagged in, found by its name: a namesake 7,000 km from the check-in that day is left out, one
+    // on a day nothing else knows counts
+    { t: Date.UTC(2023, 4, 2, 15) / 1000, lat: 21.3, lon: -157.8, name: 'Market Square', source: 'facebook', kind: 'tagged' },
+    { t: Date.UTC(2023, 6, 9, 15) / 1000, lat: 51.44, lon: 5.47, name: 'Eindhoven station', source: 'facebook', kind: 'tagged' }]));
+  assert.deepStrictEqual((await (await call('GET', '/api/checkins')).json()).map(c => c.name), ['Market square', 'Eindhoven station']);
+  assert.deepStrictEqual((await (await call('GET', '/api/cities?from=2023-01-01&to=2023-12-31')).json()).map(c => [c.name, c.days]), [['Eindhoven', 2]]);
   fs.writeFileSync(path.join(dir, 'data', 'transactions.json'), JSON.stringify([
     { date: '2022-02-02', amount: -30, currency: 'EUR', description: 'RESTAURANT X MADRID ESP', country: 'ES' },
     { date: '2022-02-03', amount: -12, currency: 'EUR', description: 'MUSEO DEL PRADO MADRID ESP', country: 'ES' },

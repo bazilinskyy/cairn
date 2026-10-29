@@ -38,6 +38,25 @@ test('a train between them, or saying it was no trip, takes it away', () => {
   assert.ok(!m.list().some(s => s.from === 'Paris'));
 });
 
+test('albums: read from a Photos library\'s albums (photos.py --albums), the photos with no place of their own', async () => {
+  const albums = require('../albums');
+  const file = path.join(dir, 'photo_albums.json');
+  fs.writeFileSync(file, JSON.stringify([
+    { album: 'Facebook: Paris 2009', photos: [['fb_1.jpg', '/lib/originals/1/A.jpeg', t('2009-05-01T10:00:00Z'), false],
+      ['fb_2.jpg', '/lib/originals/2/B.jpeg', t('2009-05-02T10:00:00Z'), false], ['IMG_3.jpg', '/lib/originals/3/C.jpeg', 0, true]] },
+    { album: 'Photos from 2009', photos: [['IMG_4.jpg', '/lib/originals/4/D.jpeg', 0, false]] },
+    { album: 'Holiday', photos: [['IMG_5.jpg', '/lib/originals/5/E.jpeg', 0, true]] }]));
+  const a = albums.create({ dir: () => file, cacheFile: path.join(dir, 'albums.json'), placesFile: path.join(dir, 'album_places.json'),
+    km: () => 0, towns: () => grid, flights: () => [], airports: () => ({}), groundTrips: () => [], stays: () => [], dismissed: () => new Set(), log: () => {} });
+  a.albums();
+  for (let i = 0; i < 50 && !a.ready(); i++) await new Promise(r => setTimeout(r, 20));
+  const list = a.albums();
+  assert.deepStrictEqual(list.map(x => [x.album, x.photos, x.loose, x.year]), [['Facebook: Paris 2009', 3, 2, 2009]]);
+  assert.deepStrictEqual(albums.parse('Facebook: Paris 2009'), { place: 'Paris', year: 2009 });
+  assert.strictEqual(a.albumFile('Facebook: Paris 2009', 'fb_2.jpg'), '/lib/originals/2/B.jpeg');
+  assert.strictEqual(a.albumFile('Facebook: Paris 2009', 'IMG_3.jpg'), null);  // has a place of its own
+});
+
 test('albums: the place and year a name gives, and the places to look up, best first', () => {
   const { parse, candidates } = require('../albums');
   assert.deepStrictEqual(parse('Copy of Crimea 2011'), { place: 'Crimea', year: 2011 });
