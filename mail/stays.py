@@ -1,5 +1,5 @@
-"""Hotel, Airbnb and rental car bookings from emails (Booking.com, Airbnb, DiscoverCars, VIPCars), and stays with hosts
-(Couchsurfing, BeWelcome), for the trip docs.
+"""Hotel, Airbnb and rental car bookings from emails (Booking.com, Airbnb, Hostelworld, Trip.com, Hotels.com, Expedia,
+DiscoverCars, VIPCars and other car hire sites), and stays with hosts (Couchsurfing, BeWelcome), for the trip docs.
 Text rules only: these emails carry no schema.org markup."""
 import re
 from dataclasses import dataclass
@@ -60,7 +60,9 @@ def price(text):
 
 
 def _date(text, hint):
-    """A date in text: '16 December 2026', '26 sep 2026', '2026-09-28', '05-08-2026', or 'Jul 21' (year from hint)."""
+    """A date in text: '16 December 2026', '26 sep 2026', '9th Jan 2024', '2026-09-28', '05-08-2026', or 'Jul 21' (year
+    from hint)."""
+    text = re.sub(r"\b(\d{1,2})(?:st|nd|rd|th)\b", r"\1", text)
     found = _dates(text, hint)
     if found:
         return found[0][1].date()
@@ -339,14 +341,130 @@ def _bewelcome(subject, lines, html, received):
                 place=town.group(1) if town else f"BeWelcome host {name}", start=start, end=end, type=f"with {name}")
 
 
+# --- Hostelworld, Trip.com, Hotels.com and Expedia ---
+
+def _price_after(lines, label):
+    """The first price within two lines after a line that is just this label ("Total" then "Prepay Online", "€20.00")."""
+    for i, line in enumerate(lines):
+        if re.fullmatch(rf"(?i)(?:{label})\s*:?", line):
+            found = next((p for p in map(price, lines[i + 1:i + 3]) if p), "")
+            if found:
+                return found
+    return ""
+
+
+def _town(address):
+    """The town in an address like '1 Main Street, Charlotte Amalie, 00802, VI' or '..., Dubai, ARE, DXB': the last
+    part that is not a postcode or a code."""
+    parts = [p.strip() for p in address.split(",") if p.strip() and not re.fullmatch(r"[A-Z]{2,3}|[\w-]*\d[\w-]*", p.strip())]
+    return parts[-1] if parts else ""
+
+
+def _hostelworld(subject, lines, html, received):
+    """'Confirmed booking from hostelworld.com - Some Hostel, Cork' and '... Booking Cancelled - ...' (Dutch:
+    'Reservatie geannuleerd'). Since about 2020 'Check In:'/'Check Out:'; before, one row a night."""
+    cancelled = re.search(r"(?i)booking cancell?ed|geannuleerd", subject)
+    if not (cancelled or re.match(r"(?i)confirmed booking from hostelworld", subject)):
+        return None
+    text = "\n".join(lines)
+    code = re.search(r"(?i)(?:Reference Number|Reserveringsaantal|reference number is)\s*:?\s*(\d+-\d+)", text)
+    name, _, town = subject.rpartition(" - ")[2].rpartition(", ")
+    if not code:
+        return None
+    start, end = _after(lines, r"Check ?In", received), _after(lines, r"Check ?Out", received)
+    country = ""
+    info = next((i for i, l in enumerate(lines) if re.fullmatch(r"(?i)booking ?information|boekingsinformatie", l)), None)
+    if info is not None and info + 2 < len(lines) and lines[info + 2].count(","):  # name, then "Calle Mayor 1, Madrid, Spain"
+        parts = [p.strip() for p in lines[info + 2].split(",")]
+        town, country = town or parts[-2], parts[-1]
+    old = next((i for i, l in enumerate(lines) if l.startswith("p. ")), None)
+    if old:  # the old layout: name, street, town, ..., country, then the phone
+        town, country = town or lines[old - 2], lines[old - 1]
+    if not start:  # the old layout: a row for each night, "Sat 3rd May 2014 | 14 Bed Mixed Dorm Ensuite | £13.00 | ..."
+        nights = [_date(l, received) for l in lines if re.match(r"[A-Z][a-z]{2} \d{1,2}(?:st|nd|rd|th) [A-Z][a-z]{2} \d{4}\b", l)]
+        if nights:
+            start, end = nights[0], date.fromordinal(nights[-1].toordinal() + 1)
+    common = dict(provider="Hostelworld", code=code.group(1), place=town, country=country, start=start, end=end)
+    if cancelled:
+        return Stay("cancel", "stay", **common)
+    named = next((n for n, rx in TYPES if re.search(rx, name, re.I)), "Hostel")  # a hostel unless its name says otherwise
+    return Stay("booking", "stay", **common, type=named,
+                price=price(_after(lines, r"Total Cost|Totaalbedrag|TOTAL \(taxes included\)|Total(?!\s*Paid)")))
+
+
+def _tripcom(subject, lines, html, received):
+    """Trip.com hotels: '[Booking confirmation] Your booking at X has been confirmed'. Its flights are left to parse.py."""
+    m = re.search(r"(?i)your booking at (.+?) has been (confirmed|cancell?ed)", subject)
+    if not m:
+        return None
+    text = "\n".join(lines)
+    code = re.search(r"(?i)Booking No\.?\s*([\d ]{10,}\d)", text)
+    if not code:
+        return None
+    town = re.search(r"(?i)your stay in (.+?) is (?:confirmed|cancell?ed)", text)
+    address = _after(lines, r"Address")
+    common = dict(provider="Trip.com", code=code.group(1).replace(" ", ""),
+                  place=town.group(1) if town else _town(address), country=address.rpartition(",")[2].strip() if address else "",
+                  start=_after(lines, r"Check-in(?=$)", received), end=_after(lines, r"Check-out(?=$)", received))
+    if m.group(2).lower().startswith("cancel"):
+        return Stay("cancel", "stay", **common)
+    room = next((l for l in lines if re.search(r"(?i)\b(room|bed|dorm|apartment|suite|villa)\b", l) and len(l) < 60), "")
+    return Stay("booking", "stay", **common, type=type_of(m.group(1), room), price=_price_after(lines, r"Total"))
+
+
+def _hotelscom(subject, lines, html, received):
+    """'Hotels.com reservation confirmation 9100000000001 - Some Villa - Some Town' and 'Your reservation has been
+    canceled - confirmation no: 9100000000001, Some Villa'."""
+    booked = re.search(r"(?i)reservation confirmation\s+(\d{6,})\s+-\s+(.+?)\s+-\s+(.+)$", subject)
+    cancelled = re.search(r"(?i)cancell?ed\b.*?(?:confirmation no\.?|#)\s*:?\s*(\d{6,})", subject)
+    if not (booked or cancelled):
+        return None
+    address = next((l for l in lines if l.count(",") >= 2 and re.search(r"\d", l)), "")
+    common = dict(provider="Hotels.com", code=(booked or cancelled).group(1), place=booked.group(3) if booked else _town(address),
+                  start=_after(lines, r"Check-in", received), end=_after(lines, r"Check-out", received))
+    if cancelled:
+        return Stay("cancel", "stay", **common)
+    room = next((l for l in lines if re.search(r"(?i)\b(room|bed|apartment|suite|villa|studio)\b", l) and len(l) < 60), "")
+    return Stay("booking", "stay", **common, type=type_of(booked.group(2), room), price=_price_after(lines, r"Total price"))
+
+
+def _expedia(subject, lines, html, received):
+    """Expedia car rentals: 'Expedia car rental confirmation - Sat, May 2 - (Itinerary # 7200...)', in Dutch
+    'Reisbevestiging van Expedia - 2 mei - (Reisplannr. 7500...)' or 'Bevestiging Expedia-autoverhuur: ... (reisplannr.
+    ...)', and 'Confirmed: Expedia Car Rental Cancellation - ... (Itinerary #...)'. A cancellation without the
+    itinerary's number cannot be matched to its booking."""
+    code = re.search(r"(?i)(?:Itinerary\s*#|reisplannr\.?)\s*(\d{8,})", subject)
+    text = "\n".join(lines)
+    if not code or not re.search(r"(?i)car rental|autoverhuur|huurauto|car reservation", subject + "\n" + text[:2000]):
+        return None
+    common = dict(provider="Expedia", code=code.group(1), type="Rental car")
+    if re.search(r"(?i)cancel|geannuleerd", subject):
+        return Stay("cancel", "car", **common)
+    lines = [re.sub(r"(?i)\s*\d{1,2}[.:]\d{2}\s*(?:uur|[ap]m)\b", "", l) for l in lines]  # "di. 6 mei, 09.00 uur"
+    start = end = None
+    for line in lines:  # "2 mei 2025 - 9 mei 2025", "di. 6 mei - wo. 7 mei"
+        halves = re.split(r"\s+[-–]\s+", line)
+        if len(halves) == 2 and all(_date(h, received) for h in halves):
+            start, end = (_date(h, received) for h in halves)
+            break
+    start = start or _after(lines, r"Pick-up|Ophalen", received)
+    end = end or _after(lines, r"Drop-off|Inleveren", received)
+    town = re.search(r"(?i)(?:autoverhuur|car rental|rental car) in (.+)", text)
+    address = next((l for l in lines if l.count(",") >= 2), "")
+    place = town.group(1).strip() if town else _town(address)
+    return Stay("booking", "car", **common, place=place, start=start, end=end or start, price=_price_after(lines, r"Total|Totaal"))
+
+
 PROVIDERS = {"booking.com": _booking, "airbnb.": _airbnb, "discovercars.com": _discovercars, "vipcars.com": _vipcars,
-             "couchsurfing.com": _couchsurfing, "bewelcome.org": _bewelcome,
+             "couchsurfing.com": _couchsurfing, "bewelcome.org": _bewelcome, "hostelworld.com": _hostelworld,
+             "trip.com": _tripcom, "hotels.com": _hotelscom, "expedia": _expedia,
              **{k: _rental(*v) for k, v in RENTALS.items()}}
 
 
 def parse_email(msg):
     """The Stay in a booking email from a known provider, else None."""
     subject, sender, received, html, plain = message_parts(msg)
+    subject = " ".join(subject.split())  # unfolded
     domain = sender.rsplit("@", 1)[-1].lower()
     rule = next((f for k, f in PROVIDERS.items() if k in domain), None)
     if not rule:

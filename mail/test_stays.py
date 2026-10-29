@@ -129,6 +129,75 @@ def test_bewelcome_accepted():
     assert mail("message@bewelcome.org", "Re: Coming to Palermo (Tentatively accepted)", body) is None
 
 
+def test_hostelworld():
+    body = ("Hi Test, your booking is confirmed\nReference Number: 10000-100000001\nManage Booking\nBooking Information\n"
+            "Test Hostel\nTeststraat 1, Ghent, Belgium\ntest@example.com\nCheck In: Tue 9th Feb 2027\nCheck Out: Thu 11th Feb 2027\n"
+            "Arrival Time: 18:00\nTue 9th Feb 2027\n6 Bed Mixed Dorm\n1 Bed\n€20.00\nTotal Cost: €40.00\nTotal Paid: €6.00\n")
+    s = mail("bookings@hostelworld.com", "Confirmed booking from hostelworld.com - Test Hostel, Ghent", body)
+    assert (s.kind, s.what, s.provider, s.code) == ("booking", "stay", "Hostelworld", "10000-100000001"), s
+    assert (s.place, s.country, s.start, s.end, s.type, s.price) == ("Ghent", "Belgium", date(2027, 2, 9), date(2027, 2, 11), "Hostel", "40€"), s
+    s = mail("bookings@hostelworld.com", "Hostelworld.com - Reservatie geannuleerd - Test Hostel, Ghent",
+             "Hallo Test,\nje boeking is gratis geannuleerd.\nReserveringsaantal: 10000-100000001\nboekingsinformatie\nTest Hostel\n"
+             "Teststraat 1, Ghent, België\nCHECKIN: Din 9 feb 2027\nCHECKOUT: Don 11 feb 2027\nStatus: Geannuleerd\n")
+    assert (s.kind, s.code, s.start) == ("cancel", "10000-100000001", date(2027, 2, 9)), s
+    assert mail("bookings@hostelworld.com", "Hi Test, how was your stay at Test Hostel?", body) is None
+
+
+def test_hostelworld_old_layout():  # before about 2016: a <head> never closed, one row a night, no check-out
+    m = email.message.EmailMessage()
+    m["From"], m["Subject"], m["Date"] = "bookings@hostelworld.com", "Confirmed booking from hostelworld.com - Test Hostel, Cork", \
+        "Thu, 01 May 2014 13:58:43 +0000"
+    m.set_content("<html><head><style>p { margin: 0 }</style><body><table><tr><td>Your booking is confirmed. Your reference "
+                  "number is 20000-200000002</td></tr><tr><td>Test Hostel</td></tr><tr><td>1 Test Road</td></tr><tr><td>Cork"
+                  "</td></tr><tr><td>Ireland</td></tr><tr><td>p. +000 0000</td></tr><tr><td>Date</td><td>Room Details</td></tr>"
+                  "<tr><td>Sat 3rd May 2014</td><td>6 Bed Mixed Dorm</td><td>&euro;13.00</td></tr><tr><td>Sun 4th May 2014</td>"
+                  "<td>6 Bed Mixed Dorm</td><td>&euro;13.00</td></tr><tr><td>Total: &euro;26.00</td></tr></table></body></html>",
+                  subtype="html")
+    s = stays.parse_email(m)
+    assert (s.code, s.place, s.country, s.start, s.end, s.price) == ("20000-200000002", "Cork", "Ireland", date(2014, 5, 3),
+                                                                       date(2014, 5, 5), "26€"), s
+
+
+def test_tripcom_hotel():  # a folded subject; its flight mails are left to parse.py
+    m = email.message_from_bytes((
+        "From: EN_HTL_NoReply@trip.com\nSubject: [Booking confirmation] Your booking at Test Inn has\n been confirmed-NoReply\n"
+        "Date: Mon, 03 Jun 2024 18:27:57 +0000\nContent-Type: text/plain; charset=utf-8\n\nBooking No. 1 600 000 000 000 001\nHi TEST! The booking for your stay in Ghent "
+        "is confirmed.\nCheck-in and check-out times\nFor the room type you selected, check-in is from 13:00.\nTest Inn\n"
+        "Check-in\nApr 3, 2024 After 13:00 Hotel's local time\nCheck-out\nApr 4, 2024 10:00–12:00 Hotel's local time\n"
+        "Address\nTeststraat 1, Ghent, 9000, Belgium\nTotal\nPrepay Online\n€20.00\nStandard Room with City View\n").encode())
+    s = stays.parse_email(m)
+    assert (s.provider, s.code, s.place, s.country) == ("Trip.com", "1600000000000001", "Ghent", "Belgium"), s
+    assert (s.start, s.end, s.type, s.price) == (date(2024, 4, 3), date(2024, 4, 4), "Hotel", "20€"), s
+    assert mail("trip.com@trip.com", "Flight Booking Confirmed (PIN: 0000, Booking No.: 10000000001)", "Booking No. 10000000001") is None
+
+
+def test_hotelscom():
+    s = mail("confirmation@mail.hotels.com", "Hotels.com reservation confirmation 9100000000001 - Test Villa - Test Town",
+             "Test Villa\n1 Test Road, Test Town, 00000, VI\nCheck-in\nFriday, March 4, 2022 (3 PM-10:00 PM local time)\n"
+             "Check-out\nSunday, March 6, 2022 (Before 11 AM local time)\nTotal price\n$180.00\n")
+    assert (s.provider, s.code, s.place, s.start, s.end, s.type, s.price) == (
+        "Hotels.com", "9100000000001", "Test Town", date(2022, 3, 4), date(2022, 3, 6), "House", "180 USD"), s
+    s = mail("info@reply.mail.hotels.com", "Your reservation has been canceled - confirmation no: 9100000000001, Test Villa",
+             "Test Villa\n1 Test Road, Test Town, 00000, VI\nCheck-in\nFriday, March 4, 2022\n")
+    assert (s.kind, s.code, s.place) == ("cancel", "9100000000001", "Test Town"), s
+
+
+def test_expedia_cars():
+    s = mail("Expedia@expediamail.com", "Expedia car rental confirmation - Tue, Jun 4 - (Itinerary # 72000000000001)",
+             "Thank you Test, your car reservation is confirmed\nPick-up\nTue, Jun 4 at 2:00pm\nTest Cars\n"
+             "1 Test Road, Test Area, Ponce, PRI\nDrop-off\nSat, Jun 8 at 2:00pm\nTotal\n$120.50\n")
+    assert (s.what, s.provider, s.code, s.place) == ("car", "Expedia", "72000000000001", "Ponce"), s
+    assert (s.start, s.end, s.price) == (date(2024, 6, 4), date(2024, 6, 8), "120.50 USD"), s
+    s = mail("expedia@eg.expedia.com", "Bevestiging Expedia-autoverhuur: do. 6 jun. (reisplannr. 73000000000001)",
+             "Je autoboeking is bevestigd.\nTest Cars autoverhuur in Dubai\nOphalen en inleveren\n"
+             "do. 6 jun., 09.00 uur - vr. 7 jun., 09.00 uur\nTest Airport, Dubai, ARE, DXB\nTotaal\n€ 30,00\n")
+    assert (s.code, s.place, s.start, s.end, s.price) == ("73000000000001", "Dubai", date(2024, 6, 6), date(2024, 6, 7), "30€"), s
+    s = mail("Expedia@expediamail.com", "Confirmed: Expedia Car Rental Cancellation - Hertz, Tue, Jun 4 - Fri, Jun 7 "
+             "(Itinerary #72000000000002)", "Hi Test, your car reservation was cancelled")
+    assert (s.kind, s.what, s.code) == ("cancel", "car", "72000000000002"), s
+    assert mail("Expedia@nl.expediamail.com", "Autoreservering van Expedia geannuleerd", "Je autoreservering is geannuleerd.") is None
+
+
 if __name__ == "__main__":
     tests = [f for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
     for t in tests:

@@ -48,7 +48,8 @@ GMAIL_QUERY = ("flight OR flights OR vlucht OR vluchten OR flug OR vol OR vuelo 
                "e-ticket OR geannuleerd OR cancelled OR rebooked OR omgeboekt OR category:reservations OR "
                "train OR trein OR treinreis OR bus OR busreis OR coach OR ferry OR veerboot OR bilhete OR billet OR "
                "flixbus OR sncf OR nsinternational OR redbus OR 12go OR rnetickets OR "
-               "from:booking.com OR from:airbnb.com OR from:discovercars.com OR from:vipcars.com")
+               "from:booking.com OR from:airbnb.com OR from:hostelworld.com OR from:trip.com OR from:hotels.com OR "
+               "from:expediamail.com OR from:expedia.com OR from:discovercars.com OR from:vipcars.com")
 
 
 def home():
@@ -722,7 +723,8 @@ def run(args, cfg, sec):
 
 
 # Senders and words of the stays, rental cars and tickets of the past (tripmail's own query is about flights)
-HISTORY_QUERY = ("from:booking.com OR from:airbnb.com OR from:hostelworld.com OR from:discovercars.com OR from:vipcars.com OR "
+HISTORY_QUERY = ("from:booking.com OR from:airbnb.com OR from:hostelworld.com OR from:trip.com OR from:hotels.com OR "
+                 "from:expediamail.com OR from:expedia.com OR from:discovercars.com OR from:vipcars.com OR "
                  "rentalcars OR holidayautos OR stressfreecarrental OR bsp-auto OR goldcar OR arguscarhire OR bookinggroup OR "
                  "from:hertz.com OR from:thrifty.com OR qeeq OR economybookings OR \"car rental\" OR \"car hire\" OR huurauto OR "
                  "flixbus OR meinfernbus OR from:bahn.de OR from:deutschebahn.com OR nsinternational OR sncf OR trainline OR "

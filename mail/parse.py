@@ -101,7 +101,9 @@ class _Text(HTMLParser):
         self.parts, self.skip = [], 0
 
     def handle_starttag(self, tag, attrs):
-        if tag in SKIP:
+        if tag == "body":  # some mails never close their <head>
+            self.skip = 0
+        elif tag in SKIP:
             self.skip += 1
         elif tag in BLOCK:
             self.parts.append("\n")
