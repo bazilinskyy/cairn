@@ -79,7 +79,7 @@ function stayForm() {
   return `<div class="form-step"><h3>A stay</h3>` +
     `<div class="form-row">${field('Where (town)', '<input id="s-place" placeholder="St Petersburg" autocomplete="off">')}${field('Country', '<input id="s-country" placeholder="optional" autocomplete="off">', 'flex:0 0 160px')}</div>` +
     `<div class="form-row">${field('From', '<input id="s-start" type="date">')}${field('Until', '<input id="s-end" type="date">')}</div>` +
-    `<div class="form-row">${field('What', '<select id="s-type"><option>hotel</option><option>hostel</option><option>flat</option><option>friends</option><option>family</option><option>camping</option><option>Couchsurfing</option><option>other</option></select>', 'flex:0 0 160px')}` +
+    `<div class="form-row">${field('What', '<select id="s-type"><option>hotel</option><option>hostel</option><option>flat</option><option>friends</option><option>family</option><option>camping</option><option>Couchsurfing</option><option>BeWelcome</option><option>Trustroots</option><option>other</option></select>', 'flex:0 0 160px')}` +
     field('Name', '<input id="s-hotel" placeholder="optional" autocomplete="off">') + '</div>' +
     `<div class="form-actions"><button class="btn btn-primary" id="s-save">Add</button></div></div>`;
 }
@@ -88,7 +88,7 @@ function hookStayForm() {
     const $ = id => document.getElementById(id).value.trim();
     if (!$('s-place') || !$('s-start')) return toast('Where and from when are needed', 'error');
     const s = { code: 'manual-' + rand(), what: 'stay', place: $('s-place'), country: $('s-country'), start: $('s-start'), end: $('s-end') || $('s-start'),
-      type: $('s-type') === 'other' ? '' : $('s-type'), hotel: $('s-hotel'), provider: $('s-type') === 'Couchsurfing' ? 'Couchsurfing' : '', price: '', source: 'manual' };
+      type: $('s-type') === 'other' ? '' : $('s-type'), hotel: $('s-hotel'), provider: ['Couchsurfing', 'BeWelcome', 'Trustroots'].includes($('s-type')) ? $('s-type') : '', price: '', source: 'manual' };
     const saved = await fetch('/api/stays', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(s) }).then(r => r.json());
     allStays.push(saved);
     toast(`Added: ${s.place}, ${s.start}. Its place is looked up in a minute.`);

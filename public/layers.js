@@ -116,7 +116,7 @@ function weatherText(w, short = false) {
 // ring]: three shades of one family, a bed you paid for filled, a free one (with friends, hosts, in a tent) a ring
 const STAY_KINDS = { hotel: ['Hotel and other', '🏨 Hotels and other', '--stay'], friend: ["Friend's place", "🛋️ Friends' places", '--stay', true],
   family: ['Family', '👪 Family', '--stay', true], hostel: ['Hostel', '🛏️ Hostels', '--stay2'], couchsurfing: ['Couchsurfing', '🏄 Couchsurfing', '--stay2', true],
-  bewelcome: ['BeWelcome', '🤝 BeWelcome', '--stay2', true], airbnb: ['Airbnb', '🏠 Airbnb', '--stay3'], camping: ['Camping', '🏕️ Camping', '--stay3', true] };
+  bewelcome: ['BeWelcome', '🤝 BeWelcome', '--stay2', true], trustroots: ['Trustroots', '🌳 Trustroots', '--stay2', true], airbnb: ['Airbnb', '🏠 Airbnb', '--stay3'], camping: ['Camping', '🏕️ Camping', '--stay3', true] };
 const stayKindOf = s => Object.keys(STAY_KINDS).find(k => STAY_KINDS[k][0] === s.kind) || 'hotel';
 const stayLayers = Object.fromEntries(Object.keys(STAY_KINDS).map(k => [k, L.layerGroup()]));
 const carLayer = L.layerGroup(), photoLayer = L.layerGroup();

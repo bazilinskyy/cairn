@@ -35,6 +35,7 @@ test("a night at a friend's place is its own kind, apart from family; a friendly
   assert.strictEqual(stayKind({ type: 'friends', provider: '' }), "Friend's place");
   assert.strictEqual(stayKind({ type: 'family', provider: '' }), 'Family');
   assert.strictEqual(stayKind({ type: 'Hostel', hotel: 'Friends guest house', provider: 'Booking.com' }), 'Hostel');
+  assert.strictEqual(stayKind({ type: '', provider: 'Trustroots' }), 'Trustroots');  // a host, as on Couchsurfing and BeWelcome
 });
 
 test('music: the top of the days asked, per day its most played track', () => {

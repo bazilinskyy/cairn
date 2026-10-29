@@ -245,7 +245,7 @@ function create({ days, towns, cities, activities, stays, flights, airports, gro
 
 // The kind of bed a stay was, for counting nights: at a friend's place (a trip doc's "with a friend", the form's
 // friends), with family (the form's family, a relative), both by its kind only, so a "Friends guest house" stays a
-// hostel; Couchsurfing, BeWelcome, a hostel, an Airbnb, camping, else a hotel or other
+// hostel; Couchsurfing, BeWelcome, Trustroots, a hostel, an Airbnb, camping, else a hotel or other
 // A train between the town you live in and the one you work in (data/home.json: residence, work) is a commute, counted
 // apart from the other trains: from the first month with COMMUTE_MONTH of them on (the job's start; the odd one before
 // it, to the airport there, stays a train)
@@ -271,6 +271,7 @@ function groundKind(t, home = {}, since = null) {
 function stayKind(s) {
   const kind = `${s.type || ''} ${s.hotel || ''}`;
   return /couchsurf/i.test(s.provider) ? 'Couchsurfing' : /bewelcome/i.test(s.provider) ? 'BeWelcome'
+    : /trustroots/i.test(s.provider) ? 'Trustroots'
     : /friend/i.test(s.type || '') ? "Friend's place" : /family|relative/i.test(s.type || '') ? 'Family'
     : /hostel/i.test(kind) ? 'Hostel' : /airbnb/i.test(s.provider) ? 'Airbnb' : /camp/i.test(kind) ? 'Camping' : 'Hotel and other';
 }
