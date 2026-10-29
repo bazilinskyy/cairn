@@ -235,9 +235,11 @@ class EventKitCalendar:
         from Foundation import NSTimeZone
         dep, arr = leg.instants(self.airports)
         ev.setTitle_(event_title(leg, self.airports))
+        # the zone first: set after the dates, EventKit keeps their clock time in this Mac's zone and reads it in the
+        # new one (a 10:00 Azores ferry became 12:00 there)
+        ev.setTimeZone_(NSTimeZone.timeZoneWithName_(leg.tz(self.airports)[0]))
         ev.setStartDate_(self._ns(dep))
         ev.setEndDate_(self._ns(arr))
-        ev.setTimeZone_(NSTimeZone.timeZoneWithName_(leg.tz(self.airports)[0]))
         a = self.airports.get(leg.dep) if leg.mode == "flight" else None
         ev.setLocation_(f"{a.name}, {a.city}" if a else leg.dep)
 
