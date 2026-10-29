@@ -41,6 +41,38 @@ function baseSource() {
   return { type: 'raster', tiles: [url.replace('{s}', 'a')], tileSize: 256, attribution, maxzoom };
 }
 
+// The base map toned as in 2D (where CSS filters do it): dark when following a dark theme or chosen dark grey (lightness
+// turned round, the hues kept), grey, or a little dimmed under a dark theme; so the lines, coloured for the map's tone,
+// stand out on it
+function baseTone() {
+  const b = BASEMAPS[prefs.basemap] ? prefs.basemap : 'auto', dark = document.documentElement.dataset.theme !== 'light';
+  const plain = { 'raster-brightness-min': 0, 'raster-brightness-max': 1, 'raster-hue-rotate': 0, 'raster-saturation': 0, 'raster-contrast': 0 };
+  if (b === 'auto' && dark) return { ...plain, 'raster-brightness-min': 0.85, 'raster-brightness-max': 0, 'raster-hue-rotate': 180, 'raster-saturation': -0.4 };
+  if (b === 'grey-dark') return { ...plain, 'raster-brightness-min': 0.8, 'raster-brightness-max': 0, 'raster-saturation': -1, 'raster-contrast': -0.25 };
+  if (b === 'grey') return { ...plain, 'raster-saturation': -1, 'raster-contrast': -0.2 };
+  return dark && b !== 'auto' ? { ...plain, 'raster-brightness-max': 0.85 } : plain;
+}
+
+// The colours of the layers, for the map's tone (set again when the theme or the base map changes)
+function colours3d() {
+  const col = k => mapVar('--' + k), stay = ['match', ['get', 'shade'], 'stay2', col('stay2'), 'stay3', col('stay3'), col('stay')];
+  return {
+    base: baseTone(),
+    country: { 'fill-color': col('country') },
+    acts: { 'line-color': ['match', ['get', 'kind'], 'ride', col('ride'), 'run', col('run'), 'walk', col('walk'), col('sport')] },
+    ground: { 'line-color': ['match', ['get', 'mode'], 'train', col('train'), 'commute', col('commute'), 'bus', col('bus'), 'hitch', col('hitch'), 'drive', col('drive'), col('ferry')] },
+    flightLines: { 'line-color': col('accent') },
+    climbLines: { 'line-color': col('climb') },
+    stays: { 'circle-color': ['match', ['get', 'shade'], 'car', col('car'), 'stay2', col('stay2'), 'stay3', col('stay3'), col('stay')],
+      'circle-stroke-color': ['case', ['get', 'ring'], stay, '#fff'] },
+    'photo-groups': { 'circle-color': col('photo') },
+    photo: { 'circle-color': col('photo') },
+    cities: { 'circle-color': col('city'), 'circle-stroke-color': col('city') },
+    climbs: { 'circle-color': ['case', ['==', ['get', 'done'], 1], col('climb'), 'rgba(0,0,0,0)'],
+      'circle-stroke-color': ['case', ['==', ['get', 'done'], 1], '#ffffff', col('climb')] }
+  };
+}
+
 // --- what is shown: the 2D map's layers, for the period chosen ---
 
 const fc = features => ({ type: 'FeatureCollection', features });
@@ -117,7 +149,7 @@ async function open3D() {
     map3d.resize();
     return;
   }
-  const st = lineStyle(), col = k => mapVar('--' + k), grey = /^grey/.test(prefs.basemap);
+  const st = lineStyle(), c3 = colours3d();
   map3d = new maplibregl.Map({
     container: 'map3d-canvas', center: [c.lng, c.lat], zoom: z, pitch: z > 7 ? 60 : 0, maxPitch: 80,
     style: {
@@ -130,32 +162,29 @@ async function open3D() {
         photos: { type: 'geojson', data: fc([]), cluster: true, clusterRadius: 40, clusterMaxZoom: 15 }
       },
       layers: [
-        { id: 'base', type: 'raster', source: 'base', paint: grey ? { 'raster-saturation': -1, 'raster-contrast': -0.15 } : {} },
+        { id: 'base', type: 'raster', source: 'base', paint: c3.base },
         { id: 'hills', type: 'hillshade', source: 'dem', paint: { 'hillshade-exaggeration': 0.35 } },
-        { id: 'country', type: 'fill', source: 'countries', paint: { 'fill-color': col('country'), 'fill-opacity': 0.15 } },
+        { id: 'country', type: 'fill', source: 'countries', paint: { ...c3.country, 'fill-opacity': 0.15 } },
         { id: 'acts', type: 'line', source: 'acts', layout: { 'line-join': 'round', 'line-cap': 'round' },
-          paint: { 'line-color': ['match', ['get', 'kind'], 'ride', col('ride'), 'run', col('run'), 'walk', col('walk'), col('sport')],
+          paint: { ...c3.acts,
             'line-width': ['interpolate', ['linear'], ['zoom'], 5, 1 * st.w, 12, 2.5 * st.w, 16, 4 * st.w], 'line-opacity': Math.min(1, 0.85 * st.o) } },
         { id: 'ground', type: 'line', source: 'ground', layout: { 'line-join': 'round' },
-          paint: { 'line-color': ['match', ['get', 'mode'], 'train', col('train'), 'commute', col('commute'), 'bus', col('bus'), 'hitch', col('hitch'), 'drive', col('drive'), col('ferry')], 'line-width': 2.5 * st.w, 'line-opacity': 0.9 } },
-        { id: 'flightLines', type: 'line', source: 'flightLines', paint: { 'line-color': col('accent'), 'line-width': 1.5, 'line-opacity': 0.7 } },
-        { id: 'climbLines', type: 'line', source: 'climbLines', paint: { 'line-color': col('climb'), 'line-width': 4 * st.w, 'line-opacity': 0.9 } },
+          paint: { ...c3.ground, 'line-width': 2.5 * st.w, 'line-opacity': 0.9 } },
+        { id: 'flightLines', type: 'line', source: 'flightLines', paint: { ...c3.flightLines, 'line-width': 1.5, 'line-opacity': 0.7 } },
+        { id: 'climbLines', type: 'line', source: 'climbLines', paint: { ...c3.climbLines, 'line-width': 4 * st.w, 'line-opacity': 0.9 } },
         { id: 'stays', type: 'circle', source: 'stays', paint: { 'circle-radius': 5 * st.r,  // by kind of bed, as in 2D: a free one a ring
-          'circle-color': ['match', ['get', 'shade'], 'car', col('car'), 'stay2', col('stay2'), 'stay3', col('stay3'), col('stay')],
-          'circle-opacity': ['case', ['get', 'ring'], 0.15, 1],
-          'circle-stroke-color': ['case', ['get', 'ring'], ['match', ['get', 'shade'], 'stay2', col('stay2'), 'stay3', col('stay3'), col('stay')], '#fff'],
+          ...c3.stays, 'circle-opacity': ['case', ['get', 'ring'], 0.15, 1],
           'circle-stroke-width': ['case', ['get', 'ring'], 2.5, 1] } },
         { id: 'photo-groups', type: 'circle', source: 'photos', filter: ['has', 'point_count'],
-          paint: { 'circle-radius': ['step', ['get', 'point_count'], 12, 50, 16, 500, 22], 'circle-color': col('photo'), 'circle-opacity': 0.8, 'circle-stroke-color': '#fff', 'circle-stroke-width': 1.5 } },
+          paint: { 'circle-radius': ['step', ['get', 'point_count'], 12, 50, 16, 500, 22], ...c3['photo-groups'], 'circle-opacity': 0.8, 'circle-stroke-color': '#fff', 'circle-stroke-width': 1.5 } },
         { id: 'photo-count', type: 'symbol', source: 'photos', filter: ['has', 'point_count'],
           layout: { 'text-field': ['get', 'point_count_abbreviated'], 'text-size': 11, 'text-font': ['Noto Sans Regular'] } },
         { id: 'photo', type: 'circle', source: 'photos', filter: ['!', ['has', 'point_count']],
-          paint: { 'circle-radius': 5, 'circle-color': col('photo'), 'circle-stroke-color': '#fff', 'circle-stroke-width': 1.5 } },
+          paint: { 'circle-radius': 5, ...c3.photo, 'circle-stroke-color': '#fff', 'circle-stroke-width': 1.5 } },
         { id: 'cities', type: 'circle', source: 'cities', paint: { 'circle-radius': ['interpolate', ['linear'], ['get', 'days'], 1, 3, 100, 9, 1000, 16],
-          'circle-color': col('city'), 'circle-opacity': 0.35, 'circle-stroke-color': col('city'), 'circle-stroke-width': 1.5 } },
+          ...c3.cities, 'circle-opacity': 0.35, 'circle-stroke-width': 1.5 } },
         { id: 'climbs', type: 'circle', source: 'climbs', paint: { 'circle-radius': ['case', ['==', ['get', 'done'], 1], 6 * st.r, 4 * st.r],
-          'circle-color': ['case', ['==', ['get', 'done'], 1], col('climb'), 'rgba(0,0,0,0)'],
-          'circle-stroke-color': ['case', ['==', ['get', 'done'], 1], '#ffffff', col('climb')], 'circle-stroke-width': 1.5 } }
+          ...c3.climbs, 'circle-stroke-width': 1.5 } }
       ],
       glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
       terrain: { source: 'dem', exaggeration: 1.4 },
@@ -194,6 +223,10 @@ function refresh3D() {
   const d = data3d();
   const set = (src, features) => map3d.getSource(src)?.setData(fc(features));
   const vis = (layer, on) => map3d.getLayer(layer) && map3d.setLayoutProperty(layer, 'visibility', on ? 'visible' : 'none');
+  // the theme or the base map may have changed: the tiles, their tone and the colours again
+  const base = baseSource().tiles[0], src = map3d.getSource('base');
+  if (src.tiles?.[0] !== base) src.setTiles([base]);
+  Object.entries(colours3d()).forEach(([layer, paint]) => Object.entries(paint).forEach(([k, v]) => map3d.setPaintProperty(layer, k, v)));
   const kinds = Object.keys(ACT_KINDS).filter(shown);
   set('acts', d.acts.filter(f => kinds.includes(f.properties.kind)));
   set('ground', d.ground.filter(f => shown(f.properties.mode)));
