@@ -1365,7 +1365,8 @@ function decodePath(str) {
 const escapeHTML = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
 // Trains, buses, ferries and car journeys (also the drives with a rental car): one line per route and mode, along the track Cairn found (dashed when it is a
-// straight line between the two places)
+// straight line between the two places); a trip between the same places along another way (a track of clearly another
+// length: out one way, back another) gets a line of its own
 // a train between the towns you live and work in is a 🔁 commute (marked by /api/ground), left out when the settings
 // say not to count them
 const groundKind = t => (t.commute ? 'commute' : t.mode);
@@ -1378,12 +1379,15 @@ function drawGround() {
     if (t.from_lat == null || t.to_lat == null || !groundLayer[groundKind(t)]) return;
     const ends = [[t.from_lat, t.from_lon], [t.to_lat, t.to_lon]].map(p => p.map(x => x.toFixed(2)).join(',')).sort();
     const key = groundKind(t) + '|' + ends.join('|');
-    const r = routes[key] = routes[key] || { trips: [] };
+    const ways = routes[key] = routes[key] || [];
+    const other = (a, b) => a?.path && b.path && Math.abs(a.distance - b.distance) > Math.max(15, 0.1 * Math.min(a.distance, b.distance));
+    let r = ways.find(w => !other(w.best, t));
+    if (!r) ways.push(r = { trips: [] });
     r.trips.push(t);
     if (!r.best || (!r.best.path && t.path)) r.best = t;
   });
   const how = { transitous: 'timetable track (Transitous)', osrm: 'road route (OSRM)', clues: 'the likeliest road through your photos on the way (OSRM)', sea: 'the ferry line (OpenStreetMap, OSRM)', direct: 'straight across the water', road: 'along the roads: no railway found, a guess', rail: 'likeliest railway line, a best guess (BRouter)', straight: 'straight line: no track found' };
-  Object.values(routes).forEach(({ trips, best }) => {
+  Object.values(routes).flat().forEach(({ trips, best }) => {
     const pts = best.path ? decodePath(best.path) : [[best.from_lat, best.from_lon], [best.to_lat, best.to_lon]];
     // a trip added by hand may know only its year or month, and stand for several
     const when = t => (t.approx === 'year' ? t.date.slice(0, 4) : t.approx === 'month' ? t.date.slice(0, 7) : (t.date || '').slice(0, 10)) + (t.times > 1 ? ` (×${t.times})` : '');

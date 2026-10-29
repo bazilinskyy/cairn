@@ -676,7 +676,9 @@ function afterToggle() {
 // too, the biggest connected group of them) and the max square (the biggest square of explored tiles)
 function computeExplored() {
   const tiles = new Set();
-  const kinds = shownKinds();  // the tiles of the types shown: cycling alone, running alone, or together
+  // the tiles of the types shown: cycling alone, running alone, or together; with no type shown, of them all (the tiles
+  // without the lines)
+  const kinds = shownKinds().length ? shownKinds() : Object.keys(ACT_KINDS);
   allActivities.forEach(a => { if (inWin(a.date) && kinds.includes(a.kind)) actTiles(a).forEach(k => tiles.add(k)); });
   const size = new Map();
   let square = { x: 0, y: 0, size: 0 };
