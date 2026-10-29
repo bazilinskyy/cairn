@@ -699,7 +699,7 @@ Each of these reads a data download as it comes (zip or unpacked folder) and wri
 | **Google Maps reviews** | takeout.google.com → "Maps (your places)" | `python imports/checkins.py ~/Downloads/takeout-*.zip` |
 | **Uber** | uber.com → Privacy → *Download your data* (`Rider/trips_data.csv`) | `python imports/checkins.py ~/Downloads/Uber\ Data` |
 | **Bolt** | in the app: Profile → Privacy → *Request a copy of your data*; any ride CSV with pick-up and drop-off coordinates | `python imports/checkins.py ~/Downloads/bolt-rides.csv` |
-| **Calendars** (Google, Outlook, Apple) | takeout.google.com → "Calendar" (an `.ics` per calendar); Outlook: *Save calendar* as `.ics` | `python imports/calendar_events.py ~/Downloads/takeout-*.zip` |
+| **Calendars** (Google, Outlook, Apple) | takeout.google.com → "Calendar" (an `.ics` per calendar); Outlook: *Save calendar* as `.ics`; or straight from the Mac's Calendar app: `mail/tripmail.py events --calendar Work` (run as the tripmail app, which may read calendars) writes `~/.flightmail/events-Work.json` | `python imports/calendar_events.py ~/Downloads/takeout-*.zip` (or the `events-*.json` files) |
 | **Bank and card payments** | Revolut: Statement → CSV; ING, ABN AMRO, Rabobank, bunq: *Download transactions* as CSV | `python imports/bank.py ~/Downloads/*.csv` |
 | **OV-chipkaart** | ov-chipkaart.nl → Mijn OV-chip → card → *Reishistorie* → CSV (18 months back at most; per card) | `python imports/ovchipkaart.py ~/Downloads/reizen*.csv` (sends to Cairn) |
 

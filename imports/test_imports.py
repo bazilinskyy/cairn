@@ -330,6 +330,18 @@ def test_calendar_events():
     assert got == [{"start": "2024-03-10", "end": "2024-03-12", "title": "CHI 2024 conference", "location": "Honolulu, HI", "calendar": "Work"},
                    {"start": "2024-04-01", "end": "2024-04-01", "title": "Project meeting", "location": "Gothenburg", "calendar": "Work"}], got
 
+    with tempfile.TemporaryDirectory() as d:  # a calendar as tripmail exports it: a repeat once, an hour with no place left out
+        Path(d, "events-Life.json").write_text(json.dumps([
+            {"id": "a", "title": "Scotland", "start": "2014-12-02T00:00", "end": "2014-12-05T00:00", "all_day": True, "location": "", "notes": ""},
+            {"id": "b", "title": "Bus to London", "start": "2014-12-04T21:40", "end": "2014-12-05T07:45", "all_day": False,
+             "location": "Seagate bus station\nDundee", "notes": ""},
+            {"id": "c", "title": "Dentist", "start": "2014-12-03T10:00", "end": "2014-12-03T11:00", "all_day": False, "location": "", "notes": ""},
+            {"id": "b", "title": "Bus to London", "start": "2014-12-11T21:40", "end": "2014-12-12T07:45", "all_day": False,
+             "location": "Seagate bus station\nDundee", "notes": ""}]))
+        got = calendar_events.read([str(Path(d, "events-Life.json"))])
+    assert got == [{"start": "2014-12-02", "end": "2014-12-04", "title": "Scotland", "location": "", "calendar": "Life"},
+                   {"start": "2014-12-04", "end": "2014-12-05", "title": "Bus to London", "location": "Seagate bus station Dundee", "calendar": "Life"}], got
+
 
 def test_bank_statements():
     import bank

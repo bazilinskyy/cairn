@@ -3,10 +3,12 @@
 meeting abroad. Cairn marks the trips that have such an event (💼) and lists the events on the trip's page.
 
 Reads .ics files: Google Takeout's "Calendar" folder (one .ics per calendar, in the zip as it came), an Outlook or
-Apple Calendar export, or any .ics file:
+Apple Calendar export, or any .ics file; or a calendar of the Mac's Calendar app as tripmail exports it
+(`tripmail.py events --calendar Work` writes ~/.flightmail/events-Work.json):
 
   python imports/calendar_events.py ~/Downloads/takeout-*.zip
   python imports/calendar_events.py ~/Downloads/Calendar/*.ics --send mini:repos/contrail/data/calendar.json
+  python imports/calendar_events.py ~/.flightmail/events-Work.json ~/.flightmail/events-Life.json
 
 Writes data/calendar.json: [{"start": "YYYY-MM-DD", "end": "YYYY-MM-DD", "title", "location", "calendar"}]: events
 that last a day or more or have a location, each once (a repeating event: its first, as repeats are routine
@@ -86,10 +88,30 @@ def events(name, data):
     return out
 
 
+def exported(path):
+    """A calendar as tripmail exports it ([{id, title, start, end, all_day, location, notes}], times local): its name
+    from the file's (events-Work.json: Work), a repeating event once (its first)."""
+    name, out, ids = re.sub(r"^events-?", "", path.stem) or "Travel", [], set()
+    for e in sorted(json.loads(path.read_text()), key=lambda e: e["start"]):
+        if e.get("id") in ids:
+            continue
+        ids.add(e.get("id"))
+        start, end = date.fromisoformat(e["start"][:10]), date.fromisoformat(e["end"][:10])
+        if e.get("all_day") and end > start and e["end"][11:16] in ("", "00:00"):
+            end -= timedelta(days=1)  # all-day events end the day after (exclusive)
+        title, location = (e.get("title") or "").strip(), " ".join((e.get("location") or "").split())
+        if end < start or (not location and not e.get("all_day") and (end - start).days < 1):
+            continue
+        out.append({"start": start.isoformat(), "end": end.isoformat(), "title": title, "location": location, "calendar": name})
+    return out
+
+
 def read(paths):
     seen, out = set(), []
-    for name, data in ics_files(paths):
-        for e in events(name, data):
+    lists = [exported(Path(p)) for p in paths if str(p).lower().endswith(".json")]
+    lists += [events(name, data) for name, data in ics_files([p for p in paths if not str(p).lower().endswith(".json")])]
+    for found in lists:
+        for e in found:
             key = (e["start"], e["title"].lower(), e["location"].lower())
             if key not in seen:
                 seen.add(key)
@@ -99,7 +121,7 @@ def read(paths):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("paths", nargs="+", help=".ics files, folders of them, or a Takeout zip")
+    ap.add_argument("paths", nargs="+", help=".ics files, folders of them, a Takeout zip, or tripmail's events-*.json")
     data_dir = HERE.parent / "data"
     ap.add_argument("--out", default=str(data_dir / "calendar.json" if data_dir.is_dir() else "calendar.json"))
     ap.add_argument("--send", metavar="HOST:PATH", help="also copy the result there with scp")

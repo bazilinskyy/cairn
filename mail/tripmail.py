@@ -794,9 +794,11 @@ def history(args, cfg, sec):
 
 
 def dump_events(args, cfg):
-    """The Travel calendar's events of the last --days days as JSON in ~/.flightmail/events.json (title, start, end,
-    location, notes, id), to read them where EventKit's permission is only this app's. Changes nothing."""
-    cal = EventKitCalendar(cfg.get("calendar_account", "Google"), cfg.get("calendar_title", "Travel"), {})
+    """The Travel calendar's events (or --calendar's, of the same account) of the last --days days as JSON in
+    ~/.flightmail/events.json (events-<calendar>.json for another calendar: title, start, end, location, notes, id), to
+    read them where EventKit's permission is only this app's. Changes nothing."""
+    title = args.calendar or cfg.get("calendar_title", "Travel")
+    cal = EventKitCalendar(cfg.get("calendar_account", "Google"), title, {})
     end, out = datetime.now() + timedelta(days=400), []
     start = end - timedelta(days=args.days + 400)
     while start < end:  # EventKit answers at most about four years at a time
@@ -809,8 +811,9 @@ def dump_events(args, cfg):
                         "location": str(ev.location() or ""), "notes": str(ev.notes() or "")})
         start = stop
     out = list({(e["id"], e["start"]): e for e in out}.values())
-    (home() / "events.json").write_text(json.dumps(sorted(out, key=lambda e: e["start"]), ensure_ascii=False, indent=1))
-    log(f"wrote {len(out)} Travel calendar events to {home() / 'events.json'}")
+    file = home() / ("events.json" if not args.calendar else f"events-{args.calendar}.json")
+    file.write_text(json.dumps(sorted(out, key=lambda e: e["start"]), ensure_ascii=False, indent=1))
+    log(f"wrote {len(out)} {title} calendar events to {file}")
 
 
 def main(argv=None):
@@ -818,6 +821,7 @@ def main(argv=None):
     p.add_argument("command", nargs="?", choices=["run", "calendars", "history", "events"], default="run")
     p.add_argument("--days", type=int, default=6000, metavar="N", help="history: how far back to read (default 6000)")
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--calendar", metavar="TITLE", help="events: this calendar of the account instead of the travel calendar")
     p.add_argument("--query", help="history: a Gmail search instead of all travel mail (from:couchsurfing.com OR ...)")
     p.add_argument("--rescan-days", type=int, metavar="N", help="read all matching mail of the last N days again")
     args = p.parse_args(argv)
