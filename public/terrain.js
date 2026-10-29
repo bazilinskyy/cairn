@@ -48,11 +48,16 @@ const pt = (lat, lon, props = {}) => ({ type: 'Feature', properties: props, geom
 const line = (latlons, props = {}) => ({ type: 'Feature', properties: props, geometry: { type: 'LineString', coordinates: latlons.map(([a, b]) => [b, a]) } });
 
 const LAYERS3D = {  // key in the 2D legend -> what it is, and its 2D layer
-  flight: () => routeLayer, train: () => groundLayer.train, bus: () => groundLayer.bus, ferry: () => groundLayer.ferry, hitch: () => groundLayer.hitch,
-  stay: () => stayLayer, car: () => carLayer, photo: () => photoLayer, ride: () => kindLayer.ride, run: () => kindLayer.run,
+  flight: () => routeLayer, train: () => groundLayer.train, commute: () => groundLayer.commute, bus: () => groundLayer.bus, ferry: () => groundLayer.ferry,
+  hitch: () => groundLayer.hitch, drive: () => groundLayer.drive, car: () => carLayer, photo: () => photoLayer, ride: () => kindLayer.ride, run: () => kindLayer.run,
   walk: () => kindLayer.walk, sport: () => kindLayer.sport, climb: () => climbLayer, country: () => countryLayer, city: () => cityLayer
 };
-const shown = key => map.hasLayer(LAYERS3D[key]());
+// stays: one switch here for the kinds of bed the 2D legend lists apart; on while any of its rows is
+const shown = key => {
+  if (key !== 'stay') return map.hasLayer(LAYERS3D[key]());
+  const g = document.querySelector('#map-legend [data-group="stay"]');
+  return g ? g.checked || g.indeterminate : false;
+};
 
 function data3d() {
   const acts = allActivities.filter(a => a.pts && a.pts.length > 3 && inWin(a.date)).map(a => {
@@ -60,10 +65,11 @@ function data3d() {
     for (let i = 0; i < a.pts.length; i += 2) c.push([a.pts[i + 1], a.pts[i]]);
     return { type: 'Feature', properties: { kind: a.kind, id: a.id, name: a.name || a.sport, date: day(a.date) }, geometry: { type: 'LineString', coordinates: c } };
   });
-  const ground = allTrips.filter(t => inWin(t.date) && t.from_lat != null && t.to_lat != null)
-    .map(t => line(t.path ? decodePath(t.path) : [[t.from_lat, t.from_lon], [t.to_lat, t.to_lon]], { mode: t.mode, name: `${t.from} → ${t.to}`, date: day(t.date) }));
+  const ground = shownGround().filter(t => t.from_lat != null && t.to_lat != null)
+    .map(t => line(t.path ? decodePath(t.path) : [[t.from_lat, t.from_lon], [t.to_lat, t.to_lon]], { mode: groundKind(t), name: `${t.from} → ${t.to}`, date: day(t.date) }));
   const stays = allStays.filter(s => s.lat != null && overlapsWin(s.start, s.end))
-    .map(s => pt(s.lat, s.lon, { what: s.what, name: s.hotel || s.type || s.place, place: s.place, date: s.start }));
+    .map(s => pt(s.lat, s.lon, { what: s.what, kind: s.what === 'car' ? '' : stayKindOf(s), shade: s.what === 'car' ? 'car' : STAY_KINDS[stayKindOf(s)][2].slice(2),
+      ring: s.what !== 'car' && !!STAY_KINDS[stayKindOf(s)][3], name: s.hotel || s.type || s.place, place: s.place, date: s.start }));
   const photos = (allPhotoPoints || []).filter(p => inWin(photoDay(p))).map(p => pt(p[2], p[3], { id: p[0], t: p[1] }));
   const climbs = allClimbs.map(c => pt(c.lat, c.lon, { id: c.id, name: c.name, ele: c.ele || 0, done: climbDone(c) ? 1 : 0, times: c.times }));
   const climbLines = allClimbs.flatMap(c => [...(c.ascents || []).filter(a => a.times).map(a => a.path), ...(c.other || []).map(o => o.path)]
@@ -131,11 +137,14 @@ async function open3D() {
           paint: { 'line-color': ['match', ['get', 'kind'], 'ride', col('ride'), 'run', col('run'), 'walk', col('walk'), col('sport')],
             'line-width': ['interpolate', ['linear'], ['zoom'], 5, 1 * st.w, 12, 2.5 * st.w, 16, 4 * st.w], 'line-opacity': Math.min(1, 0.85 * st.o) } },
         { id: 'ground', type: 'line', source: 'ground', layout: { 'line-join': 'round' },
-          paint: { 'line-color': ['match', ['get', 'mode'], 'train', col('train'), 'bus', col('bus'), 'hitch', col('hitch'), 'drive', col('drive'), col('ferry')], 'line-width': 2.5 * st.w, 'line-opacity': 0.9 } },
+          paint: { 'line-color': ['match', ['get', 'mode'], 'train', col('train'), 'commute', col('commute'), 'bus', col('bus'), 'hitch', col('hitch'), 'drive', col('drive'), col('ferry')], 'line-width': 2.5 * st.w, 'line-opacity': 0.9 } },
         { id: 'flightLines', type: 'line', source: 'flightLines', paint: { 'line-color': col('accent'), 'line-width': 1.5, 'line-opacity': 0.7 } },
         { id: 'climbLines', type: 'line', source: 'climbLines', paint: { 'line-color': col('climb'), 'line-width': 4 * st.w, 'line-opacity': 0.9 } },
-        { id: 'stays', type: 'circle', source: 'stays', paint: { 'circle-radius': 5 * st.r, 'circle-color': ['match', ['get', 'what'], 'car', col('car'), col('stay')],
-          'circle-stroke-color': '#fff', 'circle-stroke-width': 1 } },
+        { id: 'stays', type: 'circle', source: 'stays', paint: { 'circle-radius': 5 * st.r,  // by kind of bed, as in 2D: a free one a ring
+          'circle-color': ['match', ['get', 'shade'], 'car', col('car'), 'stay2', col('stay2'), 'stay3', col('stay3'), col('stay')],
+          'circle-opacity': ['case', ['get', 'ring'], 0.15, 1],
+          'circle-stroke-color': ['case', ['get', 'ring'], ['match', ['get', 'shade'], 'stay2', col('stay2'), 'stay3', col('stay3'), col('stay')], '#fff'],
+          'circle-stroke-width': ['case', ['get', 'ring'], 2.5, 1] } },
         { id: 'photo-groups', type: 'circle', source: 'photos', filter: ['has', 'point_count'],
           paint: { 'circle-radius': ['step', ['get', 'point_count'], 12, 50, 16, 500, 22], 'circle-color': col('photo'), 'circle-opacity': 0.8, 'circle-stroke-color': '#fff', 'circle-stroke-width': 1.5 } },
         { id: 'photo-count', type: 'symbol', source: 'photos', filter: ['has', 'point_count'],
@@ -188,7 +197,7 @@ function refresh3D() {
   const kinds = Object.keys(ACT_KINDS).filter(shown);
   set('acts', d.acts.filter(f => kinds.includes(f.properties.kind)));
   set('ground', d.ground.filter(f => shown(f.properties.mode)));
-  set('stays', d.stays.filter(f => shown(f.properties.what === 'car' ? 'car' : 'stay')));
+  set('stays', d.stays.filter(f => (f.properties.what === 'car' ? shown('car') : map.hasLayer(stayLayers[f.properties.kind]))));
   set('photos', d.photos);
   set('climbs', d.climbs);
   set('climbLines', d.climbLines);
@@ -218,7 +227,7 @@ function refresh3D() {
 function draw3dPanel() {
   const box = document.getElementById('map3d-panel');
   const trip = document.getElementById('p-trip');
-  const labels = { flight: '✈️ Flights', train: '🚆 Trains', bus: '🚌 Buses', ferry: '⛴️ Ferries', hitch: '👍 Hitchhiking', drive: '🚙 By car', stay: '🏨 Stays', car: '🚗 Rental cars',
+  const labels = { flight: '✈️ Flights', train: '🚆 Trains', commute: '🔁 Commutes', bus: '🚌 Buses', ferry: '⛴️ Ferries', hitch: '👍 Hitchhiking', drive: '🚙 By car', stay: '🏨 Stays', car: '🚗 Rental cars',
     photo: '📷 Photos', ride: '🚴 Cycling', run: '🏃 Running', walk: '🥾 Walks & hikes', sport: '🏅 Other sports', climb: '⛰️ Climbs',
     country: '🌍 Countries', city: '🏙️ Cities' };
   box.innerHTML = `<button class="btn btn-primary map3d-back" onclick="close3D()" title="Back to the 2D map (Esc)">← 2D map</button>` +
@@ -244,9 +253,10 @@ function draw3dPanel() {
     if (b) map3d.fitBounds([[b.getWest(), b.getSouth()], [b.getEast(), b.getNorth()]], { padding: 60, maxZoom: 9 });
   });
   box.querySelectorAll('[data-layer3d]').forEach(i => i.addEventListener('change', () => {
-    const twin = document.querySelector(`#map-legend input[data-layer="${i.dataset.layer3d === 'ride' || i.dataset.layer3d === 'run' || i.dataset.layer3d === 'walk' || i.dataset.layer3d === 'sport' ? 'act-' + i.dataset.layer3d : i.dataset.layer3d}"]`);
+    const k = i.dataset.layer3d, layers = k === 'stay' ? Object.values(stayLayers) : [LAYERS3D[k]()];
+    const twin = document.querySelector(k === 'stay' ? '#map-legend input[data-group="stay"]' : `#map-legend input[data-layer="${ACT_KINDS[k] ? 'act-' + k : k}"]`);
     if (twin && twin.checked !== i.checked) twin.click();  // the 2D legend switches the layer (and remembers it)
-    else (i.checked ? LAYERS3D[i.dataset.layer3d]().addTo(map) : map.removeLayer(LAYERS3D[i.dataset.layer3d]()));
+    else layers.forEach(l => (i.checked ? l.addTo(map) : map.removeLayer(l)));
     refresh3D();
   }));
 }

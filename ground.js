@@ -1,7 +1,8 @@
 'use strict';
 // Ground trips (trains, buses, ferries, by car) for the map: where their stations are and the track between them; and where
 // stays and rental cars are. Places come from Photon (OpenStreetMap), biased towards where the traveller was just
-// before; tracks from Transitous (timetabled trains and coaches), else for a train the likeliest railway line (BRouter),
+// before; tracks from Transitous (timetabled trains and coaches), else for a train the likeliest railway line
+// (OpenStreetMap's tracks from Overpass, else BRouter),
 // for a bus the roads (OSRM); else a straight line.
 // Each trip or stay is looked up once, in the background, and the result is kept in it.
 
@@ -12,6 +13,7 @@ const TRANSITOUS = 'https://api.transitous.org/api/v5/plan';
 const OSRM = 'https://router.project-osrm.org/route/v1/driving/';
 const BIKE = 'https://routing.openstreetmap.de/routed-bike/route/v1/driving/';  // FOSSGIS's OSRM with the bicycle profile
 const BROUTER = 'https://brouter.de/brouter';
+const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];  // the second when the first is busy
 const TRANSIT_MODES = { train: 'RAIL', bus: 'COACH,BUS', ferry: 'FERRY' };
 const NOT_TRANSIT = new Set(['WALK', 'BIKE', 'CAR', 'RENTAL', 'CAR_PARKING', 'FLEX', 'ODM']);
 const PLACE_TAGS = ['place', 'boundary:administrative', 'railway:station', 'railway:halt', 'public_transport:station',
@@ -135,7 +137,7 @@ async function getJSON(url) {
   last[host] = Date.now();
   let res;
   try {
-    res = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(OK_FAILS[host] ? 60000 : 30000) });
+    res = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(SLOW[host] || (OK_FAILS[host] ? 60000 : 30000)) });
   } catch (e) {
     if (OK_FAILS[host] && e.name === 'TimeoutError') return {};  // a route BRouter takes too long over: none, not an outage
     throw e;
@@ -144,6 +146,7 @@ async function getJSON(url) {
   if (res.status === 429 || res.status === 403 || (res.status >= 500 && !OK_FAILS[host])) throw new Error(`${host}: HTTP ${res.status}`);
   return res.json().catch(() => ({}));  // BRouter's "no track found" is plain text: no route
 }
+const SLOW = { 'overpass-api.de': 300000, 'overpass.kumi.systems': 300000 };  // the railways along a long way take Overpass a while
 const OK_FAILS = { 'brouter.de': true };  // a route BRouter gives up on (too long, no track) is an answer, not an outage
 const REST_MS = 30 * 60e3;
 
@@ -284,17 +287,39 @@ function planTime(date, today = new Date()) {
 async function transitous(a, b, mode, date) {
   const time = planTime(date);
   if (!TRANSIT_MODES[mode] || !time) return null;
+  return timetableTrack(a, b, mode, time, true);
+}
+
+async function timetableTrack(a, b, mode, time, fill) {
   const p = new URLSearchParams({
     fromPlace: `${a[0]},${a[1]}`, toPlace: `${b[0]},${b[1]}`, time, transitModes: TRANSIT_MODES[mode],
     numItineraries: '1', maxItineraries: '3', maxPreTransitTime: '1800', maxPostTransitTime: '1800'
   });
   const d = await getJSON(`${TRANSITOUS}?${p}`);
   for (const it of d.itineraries || []) {
-    const pts = (it.legs || []).filter(l => !NOT_TRANSIT.has(l.mode) && l.legGeometry)
+    let pts = (it.legs || []).filter(l => !NOT_TRANSIT.has(l.mode) && l.legGeometry)
       .flatMap(l => decode(l.legGeometry.points, l.legGeometry.precision || 6));
+    if (fill && mode !== 'ferry') pts = await fillGaps(pts, mode, time);
     if (plausible(pts, a, b) && (mode === 'ferry' || !gappy(pts))) return pts;
   }
   return null;
+}
+
+// A leg the timetable has no track for (a regional line in the middle of a long journey) leaves a straight
+// jump between the legs around it: each jump over GAP_KM (a few at most) is looked up on its own, and its track put in
+// when one is found
+const GAP_KM = 20, GAPS = 3;
+async function fillGaps(pts, mode, time) {
+  const out = pts.slice(0, 1);
+  let tries = 0;
+  for (let i = 1; i < pts.length; i++) {
+    if (km(pts[i - 1], pts[i]) > GAP_KM && tries++ < GAPS) {
+      const piece = await timetableTrack(pts[i - 1], pts[i], mode, time, false);
+      if (piece) out.push(...piece);
+    }
+    out.push(pts[i]);
+  }
+  return out;
 }
 
 // The likeliest railway line between two places (BRouter's rail profile on OpenStreetMap's tracks): a best guess for
@@ -341,6 +366,199 @@ async function railPiece(a, b, depth) {
   if (!mid || km(mid, a) < 10 || km(mid, b) < 10) return null;
   const first = await railPiece(a, mid, depth - 1), second = first && await railPiece(mid, b, depth - 1);
   return first && second ? [...first, ...second] : null;
+}
+
+// The railway between two stations on OpenStreetMap's tracks, worked out here: the main lines (no sidings, yards or
+// industrial spurs) within about RAIL_KM of the road between them (from Overpass, once; wider when they do not connect: at
+// RAIL_MAIN_KM the main lines alone, as a railway can run far from the road), and
+// the shortest way along them from the track nearest one end to the track nearest the other. Without BRouter: its
+// public server turns Cairn away.
+const RAIL_KM = [25, 60, 150], RAIL_MAIN_KM = 150, RAIL_BRIDGES = 3, RAIL_OLD = '2014', RAIL_DETOUR = 1.5, RAIL_END_KM = 10, RAIL_SAMPLE_KM = 40, RAIL_BOXES = 3;
+const railCache = new Map();
+// each piece Overpass gave, kept on disk (setRailCache: a folder), so a lookup cut short goes on from where it was
+let railDir = null;
+const setRailCache = dir => { railDir = dir; };
+function keptPiece(q) {
+  if (!railDir) return null;
+  try { return JSON.parse(require('fs').readFileSync(require('path').join(railDir, require('crypto').createHash('sha1').update(q).digest('hex') + '.json'), 'utf8')); } catch (_) { return null; }
+}
+function keepPiece(q, elements) {
+  if (!railDir) return;
+  const fs = require('fs');
+  fs.mkdirSync(railDir, { recursive: true });
+  fs.writeFileSync(require('path').join(railDir, require('crypto').createHash('sha1').update(q).digest('hex') + '.json'), JSON.stringify(elements));
+}
+const railRest = new Map();  // after Overpass failed on a train: until when its railway guess waits (the other trains go on)
+const RAIL_REST_MS = 5 * 60e3;  // a few minutes: Overpass is slow at busy times, but most of its answers come
+async function railOverpass(a, b, old = false) {
+  const key = [...a, ...b].map(x => x.toFixed(2)).join(',') + (old ? '|old' : '');
+  if (railCache.has(key)) return railCache.get(key);
+  if ((railRest.get(key) || 0) > Date.now()) throw new Error('overpass: resting after a failure');
+  // along the road, or the straight line every RAIL_SAMPLE_KM: when there is no road (OSRM busy), or it goes far round
+  // (more than RAIL_DETOUR times the way: round by another border crossing, those on the way being closed)
+  const steps = Math.ceil(km(a, b) / 10);
+  const straight = Array.from({ length: steps + 1 }, (_, i) => [a[0] + (b[0] - a[0]) * i / steps, a[1] + (b[1] - a[1]) * i / steps]);
+  const byRoad = await osrmPoints(a, b), road = byRoad && pathKm(byRoad) <= RAIL_DETOUR * km(a, b) ? byRoad : straight;
+  const line = [road[0]];
+  let run = 0;
+  for (let i = 1; i < road.length; i++) {
+    run += km(road[i - 1], road[i]);
+    if (run >= RAIL_SAMPLE_KM || i === road.length - 1) { line.push(road[i]); run = 0; }
+  }
+  // a piece of Overpass' answer: kept on disk, else asked for (the second server when the first fails)
+  const piece = async q => {
+    const kept = keptPiece(q);
+    if (kept) return kept;
+    let d = null;
+    for (const [j, host] of OVERPASS.entries()) {
+      try { d = await getJSON(`${host}?data=${encodeURIComponent(q)}`); break; } catch (e) {
+        if (j === OVERPASS.length - 1) { railRest.set(key, Date.now() + RAIL_REST_MS); throw new Error(`overpass: ${e.message}`); }
+      }
+    }
+    if (d.remark) throw new Error(`overpass: ${d.remark}`);  // cut off (timeout, memory): not a piece to keep
+    keepPiece(q, d.elements || []);
+    return d.elements || [];
+  };
+  const rails = (bb, which, kind = 'rail') => `way["railway"="${kind}"]${which}(${bb});`, LINES = '[!"service"]["usage"!~"industrial|military|tourism"]';
+  let pts = null;
+  const elements = [];  // every corridor's tracks together
+  const add = list => { for (const e of list) elements.push(e); };  // (one by one: a piece of the Ruhr's is too many to spread)
+  for (const r of RAIL_KM) {
+    // a box around each stretch of the road, widened by r (Overpass finds what lies in boxes quickly, near a line slowly)
+    const pad = r / 111, boxes = line.slice(1).map((p, i) => {
+      const q = line[i], wide = pad / Math.cos(p[0] * Math.PI / 180);
+      return [Math.min(p[0], q[0]) - pad, Math.min(p[1], q[1]) - wide, Math.max(p[0], q[0]) + pad, Math.max(p[1], q[1]) + wide].map(x => x.toFixed(3)).join(',');
+    });
+    // in pieces of RAIL_BOXES boxes (about 120 km): one query for a long way is too much for Overpass at a busy time
+    const which = r >= RAIL_MAIN_KM ? '["usage"="main"]' : LINES;  // the widest: main lines only
+    // a train of before 2014 (old) also on the main lines closed since (cut by a war or at a border)
+    const lines = bb => rails(bb, which) + (old ? rails(bb, '["usage"="main"]', 'disused') : '');
+    const ask = list => piece(`[out:json][timeout:240];(${list.map(lines).join('')});(._;>;);out skel qt;`);
+    for (let i = 0; i < boxes.length; i += RAIL_BOXES) {
+      const some = boxes.slice(i, i + RAIL_BOXES);
+      try {
+        add(await ask(some));
+      } catch (e) {  // too much for Overpass at once (the Ruhr's tracks): each box alone
+        if (some.length === 1 || !/overpass/.test(e.message)) throw e;
+        railRest.delete(key);
+        for (const bb of some) add(await ask([bb]));
+      }
+    }
+    pts = shortestRail(elements, a, b);
+    if (pts) break;
+  }
+  // still two networks that do not meet (a main line marked disused since, used by the trains of years before; lines
+  // joined only by a station's sidings): every track in a box around where they come closest, sidings and disused lines
+  // too, at most RAIL_BRIDGES times
+  for (let k = 0; !pts && k < RAIL_BRIDGES; k++) {
+    const gap = railGap(elements, a, b);
+    if (!gap || gap.km > 150) break;
+    const [p, q] = gap.ends, pad = 0.2;
+    const bb = [Math.min(p[0], q[0]) - pad, Math.min(p[1], q[1]) - pad * 1.5, Math.max(p[0], q[0]) + pad, Math.max(p[1], q[1]) + pad * 1.5].map(x => x.toFixed(3)).join(',');
+    add(await piece(`[out:json][timeout:240];(${rails(bb, '')}${rails(bb, '[!"service"]', 'disused')});(._;>;);out skel qt;`));
+    pts = shortestRail(elements, a, b);
+  }
+  pts = pts && plausible(pts, a, b) ? pts : null;
+  railCache.set(key, pts);
+  return pts;
+}
+
+// The tracks as a graph: each node's position and neighbours (with the km between), and the size of the network
+// (connected part) each node is in
+function railGraph(elements) {
+  const at = new Map(), next = new Map();
+  for (const e of elements) if (e.type === 'node') at.set(e.id, [e.lat, e.lon]);
+  const link = (x, y, w) => { if (!next.has(x)) next.set(x, []); next.get(x).push([y, w]); };
+  for (const e of elements) {
+    if (e.type !== 'way') continue;
+    for (let i = 1; i < e.nodes.length; i++) {
+      const p = at.get(e.nodes[i - 1]), q = at.get(e.nodes[i]);
+      if (!p || !q) continue;
+      const w = km(p, q);
+      link(e.nodes[i - 1], e.nodes[i], w); link(e.nodes[i], e.nodes[i - 1], w);
+    }
+  }
+  const part = new Map(), size = [];
+  for (const id of next.keys()) {
+    if (part.has(id)) continue;
+    const n = size.length, stack = [id];
+    part.set(id, n); size.push(0);
+    while (stack.length) {
+      size[n]++;
+      for (const [m] of next.get(stack.pop())) if (!part.has(m)) { part.set(m, n); stack.push(m); }
+    }
+  }
+  return { at, next, part, size };
+}
+
+// The few nodes nearest a place (within RAIL_END_KM), on a network of some size when there is one near: a station's
+// own tracks are yards and sidings, left out, which leaves bits of line near it that lead nowhere
+const RAIL_NET = 500;
+function railEnds({ at, next, part, size }, c, n = 5) {
+  const near = [...next.keys()].map(id => [id, km(at.get(id), c)]).filter(([, d]) => d < RAIL_END_KM).sort((x, y) => x[1] - y[1]);
+  const big = near.filter(([id]) => size[part.get(id)] >= RAIL_NET);
+  return (big.length ? big : near).slice(0, n);
+}
+
+// Dijkstra over the tracks' nodes, from the few nodes nearest a to the first of those nearest b
+function shortestRail(elements, a, b) {
+  const graph = railGraph(elements), { at, next } = graph;
+  const starts = railEnds(graph, a), ends = new Map(railEnds(graph, b));
+  if (!starts.length || !ends.size) return null;
+  const dist = new Map(), prev = new Map(), heap = [];
+  const push = (id, d) => {
+    heap.push([d, id]);
+    for (let i = heap.length - 1; i > 0;) { const j = (i - 1) >> 1; if (heap[j][0] <= heap[i][0]) break; [heap[i], heap[j]] = [heap[j], heap[i]]; i = j; }
+  };
+  const pop = () => {
+    const top = heap[0], end = heap.pop();
+    if (heap.length) {
+      heap[0] = end;
+      for (let i = 0; ;) {
+        const l = 2 * i + 1, r = l + 1;
+        let m = i;
+        if (l < heap.length && heap[l][0] < heap[m][0]) m = l;
+        if (r < heap.length && heap[r][0] < heap[m][0]) m = r;
+        if (m === i) break;
+        [heap[i], heap[m]] = [heap[m], heap[i]]; i = m;
+      }
+    }
+    return top;
+  };
+  for (const [id, d] of starts) { dist.set(id, d); push(id, d); }
+  let best = null, bestCost = Infinity;
+  while (heap.length) {
+    const [d, id] = pop();
+    if (d > (dist.get(id) ?? Infinity) || d >= bestCost) continue;
+    if (ends.has(id) && d + ends.get(id) < bestCost) { best = id; bestCost = d + ends.get(id); }
+    for (const [n, w] of next.get(id) || []) {
+      if (d + w < (dist.get(n) ?? Infinity)) { dist.set(n, d + w); prev.set(n, id); push(n, d + w); }
+    }
+  }
+  if (best == null) return null;
+  const path = [];
+  for (let id = best; id != null; id = prev.get(id)) path.push(at.get(id));
+  return [a, ...path.reverse(), b];
+}
+
+// Where the network reached from a and the one reached from b come closest: { km, ends: [on a's side, on b's side] }
+function railGap(elements, a, b) {
+  const graph = railGraph(elements), { at, part } = graph;
+  const [sa] = railEnds(graph, a, 1), [sb] = railEnds(graph, b, 1);
+  if (!sa || !sb) return null;
+  const pa = part.get(sa[0]), pb = part.get(sb[0]);
+  if (pa === pb) return null;
+  const from = [], to = [];
+  for (const [id, n] of part) { if (n === pa) from.push(at.get(id)); else if (n === pb) to.push(at.get(id)); }
+  // a few thousand points a side are enough to find the spot; flat distances to compare (cheap), the true one for it
+  const thin = list => list.filter((_, i) => i % Math.max(1, Math.floor(list.length / 3000)) === 0);
+  const cos = Math.cos(((a[0] + b[0]) / 2) * Math.PI / 180), some = thin(to);
+  let best = null, d2 = Infinity;
+  for (const p of thin(from)) for (const q of some) {
+    const dy = p[0] - q[0], dx = (p[1] - q[1]) * cos, e = dy * dy + dx * dx;
+    if (e < d2) d2 = e, best = [p, q];
+  }
+  return best && { km: km(...best), ends: best };
 }
 
 async function osrmPoints(a, b) {
@@ -441,12 +659,12 @@ function startNear(trip, flights, trips, airports) {
 
 // known(name): the biggest town of that name Cairn knows (GeoNames: { lat, lon, pop }), or null. A town of 100,000 or
 // more is the one meant (Paris, not Paris in Tennessee; Skopje, not a farm of that name near the trip before) unless
-// it is an ocean away from the trip before; a smaller one unless that trip points elsewhere. Then the name is looked
-// up near it.
-const KNOWN_KM = 40, BIG_TOWN = 100000, FAR_KM = 3000;  // not even a big town an ocean away (Santiago de Chile for Cape Verde's)
+// it is an ocean away from the trip before; a smaller one only within SMALL_KM of that trip (a village near the border
+// crossed, not a bigger town of that name across the sea). Then the name is looked up near it.
+const KNOWN_KM = 40, BIG_TOWN = 100000, FAR_KM = 3000, SMALL_KM = 1000;  // not even a big town an ocean away (Santiago de Chile for Cape Verde's)
 async function nearKnown(name, near, known) {
   const t = known((name || '').replace(/\s*\(.*?\)/g, '').split('/')[0].trim());
-  if (!t || (near && km([t.lat, t.lon], near) > (t.pop < BIG_TOWN ? START_KM : FAR_KM))) return null;
+  if (!t || (near && km([t.lat, t.lon], near) > (t.pop < BIG_TOWN ? SMALL_KM : FAR_KM))) return null;
   return await geocode(name, [t.lat, t.lon], KNOWN_KM) || [t.lat, t.lon];
 }
 
@@ -490,10 +708,15 @@ async function route(trip, clues = null) {
   if (!pts && trip.mode === 'ferry') pts = await seaRoute(a, b), source = 'sea';
   if (!pts && trip.mode === 'train') {  // from stations: BRouter starts on a track (the nearest may be a park railway: then the next)
     const [as, bs] = [await placesNear('railway:station', a, 3), await placesNear('railway:station', b, 3)];
+    pts = await railOverpass(as[0] && km(as[0], a) < 15 ? as[0] : a, bs[0] && km(bs[0], b) < 15 ? bs[0] : b, (trip.date || '') < RAIL_OLD);
     const pairs = [[0, 0], [1, 1], [0, 1], [1, 0], [2, 2]].filter(([i, j]) => as[i] && bs[j] && km(as[i], a) < 15 && km(bs[j], b) < 15);
-    for (const [i, j] of pairs) if (!pts) pts = await railGuess(as[i], bs[j]);
-    if (!pts) pts = await railGuess(a, b);
-    if (!pts && km(a, b) > LEG_STEP_KM) pts = await railGuessLong(as[0] || a, bs[0] || b);
+    try {  // else BRouter, when it answers; when it does not, Overpass' "no railway" stands: the road for now (tried again later)
+      for (const [i, j] of pairs) if (!pts) pts = await railGuess(as[i], bs[j]);
+      if (!pts) pts = await railGuess(a, b);
+      if (!pts && km(a, b) > LEG_STEP_KM) pts = await railGuessLong(as[0] || a, bs[0] || b);
+    } catch (e) {
+      if (!/brouter\.de/.test(e.message)) throw e;
+    }
     source = 'rail';
   }
   if (!pts && trip.mode === 'train') pts = await osrm(a, b), source = 'road';  // no railway found: along the roads, a guess
@@ -553,7 +776,7 @@ async function enrich(store, log = console.log) {
         store.save();
       }
     } catch (e) {
-      if (/brouter\.de/.test(e.message)) {  // the railway guess: this train waits, the rest go on
+      if (/brouter\.de|overpass/.test(e.message)) {  // the railway guess: this train waits, the rest go on
         if (!later) log(`[ground] railway guesses wait: ${e.message}`);
         later = true;
         continue;
@@ -601,4 +824,4 @@ async function bikeRoute(points) {
   return route ? { path: route.geometry.coordinates.map(([lon, lat]) => [lat, lon]), km: route.distance / 1000 } : null;
 }
 
-module.exports = { viaPoints, bikeRoute, setCoast, km, decode, encode, simplify, plausible, gappy, planTime, startNear, forget, forgetStay, enrich, pick, similar, geocode, placeStay };
+module.exports = { setRailCache, shortestRail, railGap, railOverpass, viaPoints, bikeRoute, setCoast, km, decode, encode, simplify, plausible, gappy, planTime, startNear, forget, forgetStay, enrich, pick, similar, geocode, placeStay };

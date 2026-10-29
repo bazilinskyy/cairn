@@ -150,3 +150,22 @@ test('a car journey goes through the photos on the way: between the ends, spread
   assert.deepStrictEqual(g.viaPoints(lyon, valence, photos), [[45.52, 4.87], [45.27, 4.83]]);
   assert.deepStrictEqual(g.viaPoints(lyon, valence, []), []);
 });
+
+test('a railway from OpenStreetMap tracks: the shortest way along them, from the track nearest one end to the one nearest the other', () => {
+  // two lines from A: one straight to B, one round by a detour; a siding not reaching B
+  const n = (id, lat, lon) => ({ type: 'node', id, lat, lon });
+  const elements = [n(1, 52.00, 5.00), n(2, 52.10, 5.00), n(3, 52.20, 5.00), n(4, 52.10, 5.30), n(5, 52.00, 5.60),
+    { type: 'way', nodes: [1, 2, 3] }, { type: 'way', nodes: [1, 4, 3] }, { type: 'way', nodes: [4, 5] }];
+  const a = [51.99, 5.0], b = [52.21, 5.0];
+  assert.deepStrictEqual(g.shortestRail(elements, a, b), [a, [52.0, 5.0], [52.1, 5.0], [52.2, 5.0], b]);
+  assert.strictEqual(g.shortestRail(elements, a, [53, 7]), null);  // no track near the far end
+});
+
+test('two railway networks that do not meet: where they come closest', () => {
+  const n = (id, lat, lon) => ({ type: 'node', id, lat, lon });
+  const elements = [n(1, 52.0, 5.0), n(2, 52.0, 5.5), n(3, 52.0, 6.0), n(4, 52.0, 6.3),
+    { type: 'way', nodes: [1, 2] }, { type: 'way', nodes: [3, 4] }];
+  const gap = g.railGap(elements, [52.0, 5.0], [52.0, 6.3]);
+  assert.deepStrictEqual(gap.ends, [[52.0, 5.5], [52.0, 6.0]]);
+  assert.ok(gap.km > 30 && gap.km < 40);
+});

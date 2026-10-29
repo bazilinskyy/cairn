@@ -227,7 +227,7 @@ function lookUpTrips() {
   if (towns === undefined) towns = cities.load(path.join(DATA_DIR, 'cities1000.txt'));
   const known = name => (towns ? cities.biggestNamed(towns, name) : null);
   const store = { trips, stays, flights: () => flights, airports: () => airports, save: saveTrips, saveStays, seen, known, clues: journeyClues };
-  ground.enrich(store).then(r => { if (r?.later) setTimeout(lookUpTrips, 31 * 60e3).unref(); })  // trains waiting for BRouter
+  ground.enrich(store).then(r => { if (r?.later) setTimeout(lookUpTrips, 6 * 60e3).unref(); })  // trains waiting for Overpass or BRouter
     .catch(e => console.warn('[ground]', e.message)).finally(() => {
     lookingUp = false;
     if (lookAgain) { lookAgain = false; lookUpTrips(); }
@@ -415,8 +415,12 @@ app.delete('/api/flights/:id', (req, res) => {
 
 // --- Ground trips (trains, buses, ferries) ---
 
+const { stayKind, groundKind, commuteSince } = require('./stats');
+
+// each train between the towns you live and work in marked commute: true (stats.js), for the map
 app.get('/api/ground', (_req, res) => {
-  res.json(trips);
+  const home = homePlaces(), since = commuteSince(trips, home);
+  res.json(trips.map(t => (groundKind(t, home, since) === 'commute' ? { ...t, commute: true } : t)));
 });
 
 // One trip per calendar event, and one per departure minute and mode: posting the same trip again updates it
@@ -446,9 +450,11 @@ app.post('/api/ground', (req, res) => {
   res.json(t);
 });
 
-// The car journeys' roads again (after new photos or Timeline came in): { mode: 'drive' } by default
+// The car journeys' roads again (after new photos or Timeline came in): { mode: 'drive' } by default; { ids: [..] }
+// those trips
 app.post('/api/ground/reroute', (req, res) => {
-  const mode = (req.body && req.body.mode) || 'drive', again = trips.filter(t => t.mode === mode && t.path_source);
+  const { mode = 'drive', ids } = req.body || {};
+  const again = trips.filter(t => (ids ? ids.includes(t.id) : t.mode === mode) && t.path_source);
   again.forEach(t => ground.forget(t, { from_lat: null }));
   saveTrips();
   lookUpTrips();
@@ -476,8 +482,9 @@ app.delete('/api/ground/:id', (req, res) => {
 
 // --- Stays and rental cars (from tripmail), photos and Timeline (from the import scripts) ---
 
+// each with its kind of bed (stats.js: Hostel, Friend's place, ...), for the map
 app.get('/api/stays', (_req, res) => {
-  res.json(stays);
+  res.json(stays.map(s => (s.what === 'car' ? s : { ...s, kind: stayKind(s) })));
 });
 
 // One per booking code: posting the same booking again updates it
@@ -979,7 +986,7 @@ const curiosities = require('./stats').create({
   days: (from, to) => placesAndDays(from, to), towns: () => (towns === undefined ? (towns = cities.load(path.join(DATA_DIR, 'cities1000.txt'))) : towns),
   cities, activities: () => activities.list(), stays: () => stays, flights: () => flights, airports: () => airports, groundTrips: () => trips,
   trips: () => tripStore.list(), weather: () => weather.all(), wellness: wellnessDays,
-  homeAirports, places: homePlaces, drives: () => derivedDrives(),
+  homeAirports, places: homePlaces, commutes: commutesCounted, drives: () => derivedDrives(),
   heightsFile: path.join(DATA_DIR, 'heights.json'), coastFile: path.join(DATA_DIR, 'coastline.geojson'), download: httpsGet, log: m => console.log(m)
 });
 // --- Backup (backup.js): everything you imported or added, out as one .tar.gz and back in ---
@@ -987,6 +994,7 @@ const curiosities = require('./stats').create({
 // ferries with no terminal on the map leave from their island's coast nearest the other end (ground.js): Natural
 // Earth's closed coastlines, each with its box
 let coastRingsOnce;
+ground.setRailCache(path.join(DATA_DIR, 'rail'));  // the railways along trains no timetable knows, from Overpass
 ground.setCoast(() => {
   if (coastRingsOnce === undefined) {
     try {
@@ -1130,7 +1138,7 @@ const yearReview = require('./review').create({
   townOf: p => { if (towns === undefined) towns = cities.load(path.join(DATA_DIR, 'cities1000.txt')); return towns && ((p.city && cities.townNamed(towns, p.city, p.at[0], p.at[1])) || cities.townAt(towns, p.at[0], p.at[1])); },
   trips: () => tripStore.list(), flights: () => flights, groundTrips: () => trips, stays: () => stays, activities: () => activities.list(),
   climbs: () => climbs.list(), photos: datedPhotos, music: range => music.top(range), wellness: wellnessDays, weather: () => weather.all(),
-  spending: () => spending.summary(), places: homePlaces, drives: () => derivedDrives()
+  spending: () => spending.summary(), places: homePlaces, commutes: commutesCounted, drives: () => derivedDrives()
 });
 app.get('/api/review/years', (_req, res) => res.json(yearReview.years()));
 app.get('/api/review/by-year', (_req, res) => res.json(yearReview.byYear()));  // every year side by side
@@ -1323,6 +1331,12 @@ app.get('/api/cities', (req, res) => {
 // town { id, name, cc, lat, lon } or null; set in the settings, marked apart on the map
 const HOME_FILE = path.join(DATA_DIR, 'home.json');
 const HOME_ROLES = ['hometown', 'residence', 'work'];
+// whether the trains between them count as 🔁 commutes in the distances and on the map (the settings; yes unless
+// turned off)
+function commutesCounted() {
+  return readImport(HOME_FILE, {}).commutes !== false;
+}
+
 function homePlaces() {
   const h = readImport(HOME_FILE, {});
   return Object.fromEntries(HOME_ROLES.map(r => [r, h[r] || null]));
@@ -1330,7 +1344,7 @@ function homePlaces() {
 
 // What the map needs: the airports trips start from and return to (config), and your places
 app.get('/api/settings', (_req, res) => {
-  res.json({ home_airports: homeAirports(), home: homePlaces() });
+  res.json({ home_airports: homeAirports(), home: homePlaces(), commutes: commutesCounted() });
 });
 
 // Towns by name, for picking your places: ?q=Chern
@@ -1340,11 +1354,12 @@ app.get('/api/towns', (req, res) => {
   res.json(cities.search(towns, String(req.query.q || '')).map(t => ({ id: t.id, name: t.name, cc: t.cc, lat: t.lat, lon: t.lon, pop: t.pop })));
 });
 
-// { hometown, residence, work }: each a town id, or null to clear it; a role left out stays as it was
+// { hometown, residence, work }: each a town id, or null to clear it; a role left out stays as it was; commutes: false
+// leaves the commutes out
 app.put('/api/home', (req, res) => {
   if (towns === undefined) towns = cities.load(path.join(DATA_DIR, 'cities1000.txt'));
   if (!towns) return res.status(503).json({ error: 'no town list (data/cities1000.txt)' });
-  const home = homePlaces();
+  const home = homePlaces(), counted = 'commutes' in (req.body || {}) ? req.body.commutes !== false : commutesCounted();
   for (const r of HOME_ROLES) {
     if (!(r in (req.body || {}))) continue;
     const id = req.body[r];
@@ -1353,7 +1368,7 @@ app.put('/api/home', (req, res) => {
     if (!t) return res.status(400).json({ error: `no town ${id}` });
     home[r] = { id: t.id, name: t.name, cc: t.cc, lat: t.lat, lon: t.lon };
   }
-  fs.writeFileSync(HOME_FILE, JSON.stringify(home, null, 1));
+  fs.writeFileSync(HOME_FILE, JSON.stringify(counted ? home : { ...home, commutes: false }, null, 1));
   res.json(home);
 });
 

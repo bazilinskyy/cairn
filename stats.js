@@ -77,7 +77,7 @@ async function lookUpHeights(cells, known, save, log) {
 }
 
 // sources: getters; days() = [{ at, day, city }] from every source; towns() the town grid (cities.js)
-function create({ days, towns, cities, activities, stays, flights, airports, groundTrips, trips, weather, wellness, homeAirports, places = () => ({}), drives = () => [],
+function create({ days, towns, cities, activities, stays, flights, airports, groundTrips, trips, weather, wellness, homeAirports, places = () => ({}), commutes = () => true, drives = () => [],
   heightsFile, coastFile, download, log = console.log }) {
   let memo = { key: null, value: null }, working = null, coast = null, heights = null;
   const loadHeights = () => {
@@ -93,7 +93,7 @@ function create({ days, towns, cities, activities, stays, flights, airports, gro
 
   function key() {
     return [new Date().toISOString().slice(0, 10), activities().length, stays().length, flights().length, groundTrips().length, Object.keys(weather()).length,
-      Object.keys(wellness()).length].join('|');
+      Object.keys(wellness()).length, commutes()].join('|');
   }
 
   // the numbers; null until worked out the first time (then the last ones while new ones are made); made again when
@@ -177,7 +177,10 @@ function create({ days, towns, cities, activities, stays, flights, airports, gro
     const fl = flights().filter(f => past(f.date)), gt = groundTrips().filter(t => past(t.date)), tr = trips().filter(t => past(t.start));
     const by = { flight: fl.reduce((n, f) => n + (f.distance || 0), 0) };
     const mine = places(), since = commuteSince(groundTrips(), mine);
-    for (const t of gt) { const k = groundKind(t, mine, since); by[k] = (by[k] || 0) + (t.distance || 0) * (t.times || 1); }  // a trip added by hand can stand for several
+    for (const t of gt) {  // a trip added by hand can stand for several; commutes only when counted (the settings)
+      const k = groundKind(t, mine, since);
+      if (k !== 'commute' || commutes()) by[k] = (by[k] || 0) + (t.distance || 0) * (t.times || 1);
+    }
     for (const d of drives()) if (past(d.date)) by.drive = (by.drive || 0) + d.distance;  // and the drives with a rental car
     const kind = s => (/Ride|Velomobile|Handcycle/.test(s || '') ? 'ride' : /Run/.test(s || '') ? 'run' : /Walk|Hike/.test(s || '') ? 'walk' : null);
     for (const a of acts) { const k = kind(a.sport); if (k && !a.trainer) by[k] = (by[k] || 0) + (a.distance || 0); }

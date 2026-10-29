@@ -28,7 +28,7 @@ async function yearsSideBySide() {
     ['Days', r => r.days, 'with a place'], ['Away', r => r.away, 'days on trips'], ['Trips', r => r.trips],
     ['Countries', r => r.countries, r => (r.newCountries ? `${r.newCountries} new` : '')], ['Towns', r => r.towns, r => (r.newTowns ? `${r.newTowns} new` : '')],
     [`Flown, ${DU()}`, r => Math.round(dist(r.distance.flight || 0))],
-    [`Overland, ${DU()}`, r => Math.round(dist(sum(r.distance, GROUND))), r => GROUND.filter(k => r.distance[k]).map(k => `${({ ...groundModes, commute: '🔁' }[k] || k).split(' ')[0]} ${Math.round(dist(r.distance[k])).toLocaleString()}`).join(' ')],
+    [`Overland, ${DU()}`, r => Math.round(dist(sum(r.distance, GROUND))), r => GROUND.filter(k => r.distance[k]).map(k => `${(groundModes[k] || k).split(' ')[0]} ${Math.round(dist(r.distance[k])).toLocaleString()}`).join(' ')],
     [`Own power, ${DU()}`, r => Math.round(dist(sum(r.distance, SPORT))), r => ['ride', 'run', 'walk'].filter(k => r.distance[k]).map(k => `${{ ride: '🚴', run: '🏃', walk: '🚶' }[k]} ${Math.round(dist(r.distance[k])).toLocaleString()}`).join(' ')],
     ['Nights', r => sum(r.nights, Object.keys(r.nights)), null, r => Object.entries(r.nights).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${n} ${k.toLowerCase()}`).join(', ')],
     ['Photos', r => r.photos], ['Climbs', r => r.climbs, 'first time'], ['Stays, €', r => r.eur ?? 0],

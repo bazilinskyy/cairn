@@ -13,7 +13,7 @@ const ground = require('./ground');
 
 const OSRM = 'https://router.project-osrm.org/route/v1/driving/';
 const WORK = /conferen|congress|symposi|workshop|summit|seminar|colloqui|summer school|winter school|meeting|kick-?off|defen[cs]e|viva|keynote|invited talk|panel|committee|review|project|hackathon|expo\b|trade fair|training|course\b|lecture|visit to|site visit|retreat|plenary/i;
-const MIN_DAYS = 3, MAX_FLOWN_DAYS = 90, MOVE_KM = 1, ROAD_KM = 10, ROAD_MAX_KM = 900, CAR_KMH = 140;
+const MIN_DAYS = 3, MAX_FLOWN_DAYS = 90, MOVE_KM = 1, ROAD_KM = 10, ROAD_MAX_KM = 900, CAR_KMH = 140, FERRY_KM = 20, ROAD_V = 2;
 const regionName = (() => {
   try { const n = new Intl.DisplayNames(['en'], { type: 'region' }); return cc => { try { return n.of(cc); } catch (_) { return cc; } }; } catch (_) { return cc => cc; }
 })();
@@ -168,7 +168,10 @@ function create({ towns, cities, days, flights, airports, groundTrips, stays, ac
     for (const m of moves) {
       if (m.kind === 'move') continue;
       const k = driveKey(m.from, m.to);
-      if (k in known) { if (known[k]) m.path = known[k].path, m.km = known[k].km; else m.kind = m.kind === 'drive' ? 'drive' : 'move'; } else missing.push(m);
+      if (known[k]) m.path = known[k].path, m.km = known[k].km;
+      else if (k in known) m.kind = 'move';  // no road there: no drive either
+      // a drive's road from before the ferry check (ROAD_V) is looked up again (kept until then)
+      if (!(k in known) || (m.kind === 'drive' && known[k] && known[k].v !== ROAD_V)) missing.push(m);
     }
     if (missing.length) lookUp(missing);
 
@@ -210,7 +213,7 @@ function create({ towns, cities, days, flights, airports, groundTrips, stays, ac
   let queue = [], running = false;
   function lookUp(moves) {
     const known = loadDrives(), have = new Set(queue.map(m => driveKey(m.from, m.to)));
-    queue.push(...moves.filter(m => !(driveKey(m.from, m.to) in known) && !have.has(driveKey(m.from, m.to))));
+    queue.push(...moves.filter(m => !have.has(driveKey(m.from, m.to))));
     if (running) return;
     running = true;
     (async () => {
@@ -218,13 +221,15 @@ function create({ towns, cities, days, flights, airports, groundTrips, stays, ac
         const m = queue.shift(), k = driveKey(m.from, m.to);
         try {
           await new Promise(r => setTimeout(r, 1100));
-          const res = await fetch(`${OSRM}${m.from[1]},${m.from[0]};${m.to[1]},${m.to[0]}?overview=full&geometries=polyline6`,
+          const res = await fetch(`${OSRM}${m.from[1]},${m.from[0]};${m.to[1]},${m.to[0]}?overview=full&geometries=polyline6&steps=true`,
             { headers: { 'User-Agent': 'cairn (personal travel log; https://github.com/bazilinskyy/cairn)' }, signal: AbortSignal.timeout(30000) });
           if (res.status === 429 || res.status >= 500) throw new Error('OSRM: HTTP ' + res.status);
           const d = await res.json(), pts = d.code === 'Ok' && d.routes?.[0] ? ground.decode(d.routes[0].geometry, 6) : [];
-          // a route much longer than the way there (across water, a closed border): no road; the move stays a line
-          known[k] = ground.plausible(pts, m.from, m.to) && ground.km(pts[0], m.from) < 2 && ground.km(pts[pts.length - 1], m.to) < 2
-            ? { path: ground.encode(ground.simplify(pts)), km: Math.round(d.routes[0].distance / 100) / 10 } : null;
+          // a route much longer than the way there (across water, a closed border), or over the sea by ferry (more than
+          // FERRY_KM: across to another island or country): no road; the move stays a line
+          const ferry = (d.routes?.[0]?.legs || []).flatMap(l => l.steps || []).filter(s => s.mode === 'ferry').reduce((n, s) => n + s.distance, 0) / 1000;
+          known[k] = ground.plausible(pts, m.from, m.to) && ground.km(pts[0], m.from) < 2 && ground.km(pts[pts.length - 1], m.to) < 2 && ferry <= FERRY_KM
+            ? { path: ground.encode(ground.simplify(pts)), km: Math.round(d.routes[0].distance / 100) / 10, v: ROAD_V } : null;
           fs.writeFileSync(file, JSON.stringify(known));
         } catch (e) {
           log(`[trips] road lookups paused: ${e.message}`);

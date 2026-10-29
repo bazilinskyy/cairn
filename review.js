@@ -6,12 +6,12 @@ const { stayKind, groundKind, commuteSince } = require('./stats');
 // what Cairn already has; worked out when asked, kept until the data changes.
 
 // sources: getters; days(from, to): every place and day; townOf(point): its town (cities.js)
-function create({ days, townOf, trips, flights, groundTrips, stays, activities, climbs, photos, music, wellness, weather, spending, places = () => ({}), drives = () => [] }) {
+function create({ days, townOf, trips, flights, groundTrips, stays, activities, climbs, photos, music, wellness, weather, spending, places = () => ({}), commutes = () => true, drives = () => [] }) {
   const cache = new Map();
 
   function review(year) {
     const y = String(year), from = `${y}-01-01`, to = `${y}-12-31`, inYear = d => (d || '').slice(0, 4) === y;
-    const key = [y, days('', '').length, activities().length, stays().length, flights().length, groundTrips().length, drives().length].join('|');
+    const key = [y, days('', '').length, activities().length, stays().length, flights().length, groundTrips().length, drives().length, commutes()].join('|');
     if (cache.has(y) && cache.get(y).key === key) return cache.get(y).value;
 
     // the towns and countries of every day, this year and before it (for the firsts)
@@ -37,7 +37,7 @@ function create({ days, townOf, trips, flights, groundTrips, stays, activities, 
     const kind = s => (/Ride|Velomobile|Handcycle/.test(s || '') ? 'ride' : /Run/.test(s || '') ? 'run' : /Walk|Hike/.test(s || '') ? 'walk' : 'sport');
     const by = { flight: fl.reduce((n, f) => n + (f.distance || 0), 0) };
     const mine = places(), since = commuteSince(groundTrips(), mine);
-    gt.forEach(t => { const k = groundKind(t, mine, since); by[k] = (by[k] || 0) + (t.distance || 0) * (t.times || 1); });
+    gt.forEach(t => { const k = groundKind(t, mine, since); if (k !== 'commute' || commutes()) by[k] = (by[k] || 0) + (t.distance || 0) * (t.times || 1); });
     drives().filter(d => inYear(d.date)).forEach(d => { by.drive = (by.drive || 0) + d.distance; });
     acts.filter(a => !a.trainer).forEach(a => { const k = kind(a.sport); by[k] = (by[k] || 0) + (a.distance || 0); });
     Object.keys(by).forEach(k => { by[k] = Math.round(by[k]); });
@@ -88,7 +88,7 @@ function create({ days, townOf, trips, flights, groundTrips, stays, activities, 
   // distance by each means, nights by kind of bed, photos, climbs ridden for the first time, and what stays cost
   let allYears = { key: '', value: null };
   function byYear() {
-    const key = [days('', '').length, activities().length, stays().length, flights().length, groundTrips().length, drives().length].join('|');
+    const key = [days('', '').length, activities().length, stays().length, flights().length, groundTrips().length, drives().length, commutes()].join('|');
     if (allYears.key === key) return allYears.value;
     const rows = new Map(), row = y => {
       if (!rows.has(y)) rows.set(y, { year: +y, days: new Set(), away: 0, trips: 0, countries: new Set(), newCountries: 0, towns: new Set(), newTowns: 0,
@@ -113,7 +113,7 @@ function create({ days, townOf, trips, flights, groundTrips, stays, activities, 
     const add = (y, k, km) => { if (y && km) { const r = row(y); r.distance[k] = (r.distance[k] || 0) + km; } };
     flights().forEach(f => add((f.date || '').slice(0, 4), 'flight', f.distance || 0));
     const mine = places(), since = commuteSince(groundTrips(), mine);
-    groundTrips().forEach(t => add((t.date || '').slice(0, 4), groundKind(t, mine, since), (t.distance || 0) * (t.times || 1)));
+    groundTrips().forEach(t => { const k = groundKind(t, mine, since); if (k !== 'commute' || commutes()) add((t.date || '').slice(0, 4), k, (t.distance || 0) * (t.times || 1)); });
     drives().forEach(d => add(d.date.slice(0, 4), 'drive', d.distance));
     const kind = s => (/Ride|Velomobile|Handcycle/.test(s || '') ? 'ride' : /Run/.test(s || '') ? 'run' : /Walk|Hike/.test(s || '') ? 'walk' : 'sport');
     activities().filter(a => !a.trainer).forEach(a => add((a.date || '').slice(0, 4), kind(a.sport), a.distance || 0));

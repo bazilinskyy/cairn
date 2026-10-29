@@ -146,7 +146,7 @@ test('photos and Timeline come from the import files, read again when they chang
   const cells = [{ lat: 51.44, lon: 5.47, year: 2024, count: 2, days: ['2024-06-01'] }];
   fs.writeFileSync(path.join(dir, 'data', 'photos.json'), JSON.stringify(cells));
   assert.deepStrictEqual(await (await call('GET', '/api/photos')).json(), cells);
-  assert.deepStrictEqual(await (await call('GET', '/api/settings')).json(), { home_airports: ['AMS', 'EIN', 'RTM'], home: { hometown: null, residence: null, work: null } });
+  assert.deepStrictEqual(await (await call('GET', '/api/settings')).json(), { home_airports: ['AMS', 'EIN', 'RTM'], home: { hometown: null, residence: null, work: null }, commutes: true });
 });
 
 test('activities: Strava not set up, then the Garmin file read when it appears, gzipped and cached', async () => {

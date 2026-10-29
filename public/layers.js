@@ -112,7 +112,14 @@ function weatherText(w, short = false) {
     `${w.gust ? `, gusts ${fmtWind(w.gust)}` : ''}${w.rain ? ` · rain ${w.rain} mm` : ''}`;
 }
 
-const stayLayer = L.layerGroup(), carLayer = L.layerGroup(), photoLayer = L.layerGroup();
+// Stays by kind of bed (/api/stays gives each its kind, stats.js): a legend row each, under Stays; [kind, label, colour,
+// ring]: three shades of one family, a bed you paid for filled, a free one (with friends, hosts, in a tent) a ring
+const STAY_KINDS = { hotel: ['Hotel and other', '🏨 Hotels and other', '--stay'], friend: ["Friend's place", "🛋️ Friends' places", '--stay', true],
+  family: ['Family', '👪 Family', '--stay', true], hostel: ['Hostel', '🛏️ Hostels', '--stay2'], couchsurfing: ['Couchsurfing', '🏄 Couchsurfing', '--stay2', true],
+  bewelcome: ['BeWelcome', '🤝 BeWelcome', '--stay2', true], airbnb: ['Airbnb', '🏠 Airbnb', '--stay3'], camping: ['Camping', '🏕️ Camping', '--stay3', true] };
+const stayKindOf = s => Object.keys(STAY_KINDS).find(k => STAY_KINDS[k][0] === s.kind) || 'hotel';
+const stayLayers = Object.fromEntries(Object.keys(STAY_KINDS).map(k => [k, L.layerGroup()]));
+const carLayer = L.layerGroup(), photoLayer = L.layerGroup();
 const timelineLayer = L.layerGroup(), countryLayer = L.layerGroup(), activityLayer = L.layerGroup(), tileLayer = L.layerGroup();
 const climbLayer = L.layerGroup();
 let allClimbs = [];  // famous cycling climbs and the rides over them (/api/climbs); none without rides
@@ -142,22 +149,24 @@ function fmtDate(d) {
   return new Date(day(d) + 'T12:00:00Z').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-// Legend rows of these layers: [label, layer, colour variable]
+// Legend rows of these layers: [label, layer, colour variable, swatch: a line, or 'dot' for markers, 'area' for areas]
 function extraLayers() {
   return {
-    stay: ['🏨 Stays', stayLayer, '--stay'], car: ['🚗 Rental cars', carLayer, '--car'],
-    photo: ['📷 Photos', photoLayer, '--photo'], timeline: ['🧭 Timeline', timelineLayer, '--timeline'],
+    ...Object.fromEntries(Object.entries(STAY_KINDS).map(([k, [, label, color, ring]]) => ['stay-' + k, [label, stayLayers[k], color, ring ? 'ring' : 'dot']])),
+    car: ['🚗 Rental cars', carLayer, '--car', 'dot'],
+    photo: ['📷 Photos', photoLayer, '--photo', 'dot'], timeline: ['🧭 Timeline', timelineLayer, '--timeline', 'dot'],
     ...Object.fromEntries(Object.entries(ACT_KINDS).map(([k, label]) => ['act-' + k, [label, kindLayer[k], '--' + k]])),
-    tile: ['🟩 Explored tiles', tileLayer, '--tile'], climb: ['⛰️ Climbs', climbLayer, '--climb'],
-    country: ['🌍 Countries', countryLayer, '--country'], city: ['🏙️ Cities', cityLayer, '--city'],
-    checkin: ['📍 Check-ins', checkinLayer, '--checkin'], home: ['🌱 Your places', homeLayer, '--home']
+    tile: ['🟩 Explored tiles', tileLayer, '--tile', 'area'], climb: ['⛰️ Climbs', climbLayer, '--climb', 'dot'],
+    country: ['🌍 Countries', countryLayer, '--country', 'area'], city: ['🏙️ Cities', cityLayer, '--city', 'dot'],
+    checkin: ['📍 Check-ins', checkinLayer, '--checkin', 'dot'], home: ['🌱 Your places', homeLayer, '--home', 'dot']
   };
 }
 
 function extraCounts() {
   const shown = allStays.filter(s => s.lat != null && overlapsWin(s.start, s.end));
   return {
-    stay: shown.filter(s => s.what !== 'car').length, car: shown.filter(s => s.what === 'car').length,
+    stays: shown.filter(s => s.what !== 'car').length, car: shown.filter(s => s.what === 'car').length,
+    ...Object.fromEntries(Object.keys(STAY_KINDS).map(k => ['stay-' + k, shown.filter(s => s.what !== 'car' && stayKindOf(s) === k).length])),
     photo: allPhotoPoints?.length && (prefs.photos || 'clusters') !== 'places' ? shownPhotoPoints().length : photoCells().reduce((n, c) => n + c.count, 0),
     timeline: allTimeline.visits.filter(v => overlapsWin(v.start, v.end)).length, country: visitedCount ? `${visitedCount} / ${countryTotal}` : 0,
     ...Object.fromEntries(Object.keys(ACT_KINDS).map(k => ['act-' + k, allActivities.filter(a => a.kind === k && inWin(a.date)).length])),
@@ -287,20 +296,20 @@ function drawClimbs() {
 
 // --- stays and rental cars ---
 
-// Stays at the same spot are one marker (a booking email gives only the town, so every hotel in Brussels lands on
+// Stays of one kind at the same spot are one marker (a booking email gives only the town, so every hotel in Brussels lands on
 // Brussels): its size follows the nights there, its popup lists each stay, newest first
 function drawStays() {
-  stayLayer.clearLayers();
+  Object.values(stayLayers).forEach(l => l.clearLayers());
   carLayer.clearLayers();
   const spots = new Map();
   allStays.filter(s => s.lat != null && overlapsWin(s.start, s.end)).forEach(s => {
-    const key = `${s.what === 'car'}|${s.lat.toFixed(4)},${s.lon.toFixed(4)}`;
+    const key = `${s.what === 'car' ? 'car' : stayKindOf(s)}|${s.lat.toFixed(4)},${s.lon.toFixed(4)}`;
     if (!spots.has(key)) spots.set(key, []);
     spots.get(key).push(s);
   });
   spots.forEach(list => {
     list.sort((a, b) => b.start.localeCompare(a.start));
-    const s = list[0], car = s.what === 'car', color = mapVar(car ? '--car' : '--stay');
+    const s = list[0], car = s.what === 'car', [, , shade, ring] = car ? [] : STAY_KINDS[stayKindOf(s)], color = mapVar(car ? '--car' : shade);
     const total = list.reduce((t, x) => t + nights(x), 0);
     const count = n => (car ? `${n} day${n !== 1 ? 's' : ''}` : `${n} night${n !== 1 ? 's' : ''}`);
     const line = x => `${fmtDate(x.start)} – ${fmtDate(x.end || x.start)} · ${count(nights(x))}` +
@@ -310,10 +319,11 @@ function drawStays() {
       : `${car ? '🚗 Rental car' : '🏨 ' + escapeHTML(s.type || 'Stay')}, ${escapeHTML(s.place)}</b>`;
     const lines = list.slice(0, 20).map(line).join('<br>') + (list.length > 20 ? `<br>and ${list.length - 20} more` : '');
     L.circleMarker([s.lat, s.lon], {
-      // small and half see-through, so routes and places show through; an invisible ring keeps them easy to click
-      radius: car ? Math.min(3 + (list.length - 1) * 0.5, 5) : Math.min(2.5 + Math.sqrt(total) * 0.8, 7),
-      color, opacity: 0, weight: 8, fillColor: color, fillOpacity: 0.55
-    }).bindPopup(`<b>${head}<br><small>${lines}</small>`, { maxWidth: 300 }).addTo(car ? carLayer : stayLayer);
+      // small and half see-through, so routes and places show through; an invisible ring keeps them easy to click (a
+      // free bed's ring is drawn, a little bigger so it reads as one)
+      radius: car ? Math.min(3 + (list.length - 1) * 0.5, 5) : Math.min(2.5 + Math.sqrt(total) * 0.8, 7) + (ring ? 1 : 0),
+      color, opacity: ring ? 0.9 : 0, weight: ring ? 2 : 8, fillColor: color, fillOpacity: ring ? 0.08 : 0.55
+    }).bindPopup(`<b>${head}<br><small>${lines}</small>`, { maxWidth: 300 }).addTo(car ? carLayer : stayLayers[stayKindOf(s)]);
   });
 }
 
@@ -846,11 +856,11 @@ function drawHome() {
     byTown.get(t.id).roles.push(role);
   });
   byTown.forEach(({ town, roles }) => {
-    const big = roles.includes('hometown'), size = big ? 38 : 28;
-    const icon = L.divIcon({ className: '', iconSize: [size, size], iconAnchor: [size / 2, size / 2],
-      html: `<div class="home-pin${big ? ' hometown' : ''}">${roles.map(r => HOME_ROLE[r][0]).join('')}</div>` });
+    const size = 28, wide = size + (roles.length - 1) * 18;  // one emoji a role
+    const icon = L.divIcon({ className: '', iconSize: [wide, size], iconAnchor: [wide / 2, size / 2],
+      html: `<div class="home-pin" style="width:${wide}px">${roles.map(r => HOME_ROLE[r][0]).join('')}</div>` });
     L.marker([town.lat, town.lon], { icon, pane: 'home', zIndexOffset: 1000, keyboard: false })
-      .bindTooltip(`${roles.map(r => HOME_ROLE[r][1]).join(' · ')}: ${escapeHTML(town.name)}`, { permanent: true, direction: 'right', offset: [size / 2 + 2, 0], className: 'home-label', pane: 'home' })
+      .bindTooltip(`${roles.map(r => HOME_ROLE[r][1]).join(' · ')}: ${escapeHTML(town.name)}`, { permanent: true, direction: 'right', offset: [wide / 2 + 2, 0], className: 'home-label', pane: 'home' })
       .bindPopup(`<b>${roles.map(r => HOME_ROLE[r][0]).join('')} ${flagOf(town.cc)}${escapeHTML(town.name)}</b><br><small>${roles.map(r => HOME_ROLE[r][2]).join(', ')}</small>` +
         `<br><a href="#city=${town.id}" class="popup-link" onclick="event.preventDefault(); openCityReport(${town.id})">Open report →</a>`)
       .addTo(homeLayer);

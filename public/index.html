@@ -39,11 +39,14 @@
       --chart-tick: #8888aa;
       --chart-grid: rgba(255,255,255,0.04);
       --train:    #ffb74d;
+      --commute:  #bcaaa4;
       --bus:      #81c784;
       --ferry:    #b39ddb;
       --hitch:    #ff8a65;
       --checkin:  #ffd180;
-      --stay:     #f06292;
+      --stay:     #e45a96;  /* stays by kind of bed: pink, violet, amber (validated together, dataviz) */
+      --stay2:    #9a70f0;
+      --stay3:    #cc7a2e;
       --car:      #ffd54f;
       --drive:    #64b5f6;
       --photo:    #4dd0e1;
@@ -63,7 +66,7 @@
        dark outline, as the photos underneath are both dark and light */
     [data-theme="sat"] {
       --surface: #111111; --surface2: #222222; --text: #ffffff; --text2: #dddddd; --accent: #00e5ff; --accent2: #d500f9;
-      --train: #ffab00; --bus: #76ff03; --ferry: #ea80fc; --hitch: #ff9e80; --checkin: #ffe57f; --stay: #ff4081; --car: #ffea00; --drive: #40c4ff; --photo: #18ffff;
+      --train: #ffab00; --commute: #d7ccc8; --bus: #76ff03; --ferry: #ea80fc; --hitch: #ff9e80; --checkin: #ffe57f; --stay: #ff4f93; --stay2: #b388ff; --stay3: #ffa040; --car: #ffea00; --drive: #40c4ff; --photo: #18ffff;
       --timeline: #ffffff; --country: #b388ff; --ride: #ff6e40; --run: #b388ff; --walk: #ff80ab; --sport: #ffd740;
       --tile: #69f0ae; --city: #ffffff; --home: #ffc400; --climb: #eeff41;
     }
@@ -81,11 +84,14 @@
       --chart-tick: #556688;
       --chart-grid: rgba(0,0,0,0.06);
       --train:     #c77700;
+      --commute:   #795548;
       --bus:       #1e8449;
       --ferry:     #8e44ad;
       --hitch:     #d84315;
       --checkin:   #6d4c41;
       --stay:      #c2185b;
+      --stay2:     #6f42c1;
+      --stay3:     #a8600c;
       --car:       #9a7d0a;
       --drive:     #1565c0;
       --photo:     #00838f;
@@ -161,11 +167,9 @@
     .place-list div { padding: 6px 10px; cursor: pointer; display: flex; gap: 8px; }
     .place-list div small { color: var(--text2); margin-left: auto; }
     .place-list div.on, .place-list div:hover { background: var(--surface2); }
-    /* your places on the map: the hometown bigger, with a halo */
-    .home-pin { width: 28px; height: 28px; border-radius: 50%; background: var(--surface); border: 2px solid var(--home);
+    /* your places on the map, all one size: a town that is two or three of them is a pill with each */
+    .home-pin { height: 28px; border-radius: 14px; background: var(--surface); border: 2px solid var(--home); box-sizing: border-box;
       display: flex; align-items: center; justify-content: center; font-size: 15px; box-shadow: 0 1px 4px rgba(0,0,0,0.45); }
-    .home-pin.hometown { width: 38px; height: 38px; font-size: 20px; border-width: 3px;
-      box-shadow: 0 0 0 5px color-mix(in srgb, var(--home) 35%, transparent), 0 1px 6px rgba(0,0,0,0.5); }
     .leaflet-tooltip.home-label { background: var(--surface); color: var(--text); border: 1px solid var(--home); font-weight: 600; font-size: 11px; padding: 1px 6px; }
     .modal .settings-group input { accent-color: var(--accent); width: auto; margin: 0; padding: 0; flex: none; }
 
@@ -211,11 +215,16 @@
     /* Which lines the map shows (not inverted in dark mode, so its colours match the lines) */
     .leaflet-control.map-legend {
       filter: none; background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
-      padding: 6px 10px; color: var(--text); font-size: 12px; line-height: 1.9;
+      padding: 6px 10px; color: var(--text); font-size: 12px; line-height: 1.6;
     }
     .map-legend label { display: flex; align-items: center; gap: 7px; cursor: pointer; white-space: nowrap; }
     .map-legend input { accent-color: var(--accent); margin: 0; }
     .map-legend .swatch { width: 18px; height: 0; border-top: 3px solid; display: inline-block; }
+    .map-legend .swatch.dot { width: 9px; height: 9px; border: 0; border-radius: 50%; margin: 0 4.5px; }  /* markers, not lines */
+    .map-legend .swatch.ring { width: 9px; height: 9px; border: 2px solid; border-radius: 50%; margin: 0 4.5px; box-sizing: border-box; }  /* free beds */
+    .map-legend label[hidden] { display: none; }
+    .map-legend .fold { background: none; border: 0; padding: 0 2px; color: var(--text2); cursor: pointer; font: inherit; width: 14px; }
+    .map-legend .swatch.area { width: 12px; height: 12px; border: 2px solid; border-radius: 2px; margin: 0 3px; box-sizing: border-box; }
     .map-legend .count { color: var(--text2); margin-left: auto; padding-left: 8px; }
     .map-locate { display: flex !important; align-items: center; justify-content: center; color: #333; }
     .map-3d { display: flex !important; align-items: center; justify-content: center; color: #333 !important; font-weight: 700; font-size: 12px; }
@@ -869,6 +878,7 @@
       <div class="place-row"><span>🌱 Hometown</span><div class="place-pick"><input id="set-hometown" data-role="hometown" placeholder="The town you grew up in" autocomplete="off"><div class="place-list" hidden></div></div></div>
       <div class="place-row"><span>🏠 Where you live</span><div class="place-pick"><input id="set-residence" data-role="residence" placeholder="Your town now" autocomplete="off"><div class="place-list" hidden></div></div></div>
       <div class="place-row"><span>💼 Where you work</span><div class="place-pick"><input id="set-work" data-role="work" placeholder="The town you work in" autocomplete="off"><div class="place-list" hidden></div></div></div>
+      <label><input type="checkbox" id="set-commutes"> 🔁 Count the trains between where you live and work (commutes) in the distances and on the map</label>
     </fieldset>
     <fieldset class="settings-group">
       <legend>Distances</legend>
@@ -959,7 +969,7 @@ function toggleTheme() {
 let airportLayer = null;
 let clusterMode  = localStorage.getItem('clusterMode') === '1';  // remembered in this browser
 const routeLayer  = L.layerGroup();  // flights
-const groundModes = { train: '🚆 Trains', bus: '🚌 Buses', ferry: '⛴️ Ferries', hitch: '👍 Hitchhiking', drive: '🚙 By car' };
+const groundModes = { train: '🚆 Trains', commute: '🔁 Commutes', bus: '🚌 Buses', ferry: '⛴️ Ferries', hitch: '👍 Hitchhiking', drive: '🚙 By car' };
 const groundLayer = Object.fromEntries(Object.keys(groundModes).map(m => [m, L.layerGroup()]));
 
 applyTheme(localStorage.getItem('theme') || 'dark');
@@ -1085,6 +1095,7 @@ const townLabel = t => (t ? `${t.name}, ${t.cc}` : '');
 const pickedTown = {};  // role -> the town picked in the dialog since it opened
 function fillPlaces() {
   document.querySelectorAll('#set-home-group input[data-role]').forEach(i => { i.value = townLabel(settings.home?.[i.dataset.role]); });
+  document.getElementById('set-commutes').checked = settings.commutes !== false;
   Object.keys(pickedTown).forEach(k => delete pickedTown[k]);
 }
 document.querySelectorAll('#set-home-group input[data-role]').forEach(input => attachTownPicker(input, {
@@ -1104,11 +1115,14 @@ async function savePlaces() {
       if (first) body[role] = first.id;
     }
   }
+  const counted = document.getElementById('set-commutes').checked;
+  if (counted !== (settings.commutes !== false)) body.commutes = counted;
   if (!Object.keys(body).length) return;
   const r = await fetch('/api/home', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   if (!r.ok) return toast('Your places were not saved', 'error');
   settings.home = await r.json();
-  if (map) { drawHome(); paintCities(); drawLegend(); }
+  settings.commutes = counted;
+  if (map) { drawHome(); paintCities(); drawGround(); }
 }
 
 function saveSettings() {
@@ -1193,7 +1207,7 @@ function initMap() {
   // Which lines to show; remembered in this browser
   let hidden = [];
   try { hidden = JSON.parse(localStorage.getItem('hiddenLines') || '[]'); } catch (_) {}
-  const layers = { flight: ['✈️ Flights', routeLayer, '--accent'],
+  const layers = { flight: ['✈️ Flights', routeLayer, '--accent'],  // [label, layer, colour, swatch: a line, or 'dot', 'area']
     ...Object.fromEntries(Object.entries(groundModes).map(([m, label]) => [m, [label, groundLayer[m], '--' + m]])),
     ...extraLayers() };
   Object.entries(layers).forEach(([k, [, layer]]) => { if (!hidden.includes(k)) layer.addTo(map); });
@@ -1208,7 +1222,16 @@ function initMap() {
       const box = L.DomUtil.create('div', 'map-legend foldable');
       box.id = 'map-legend';
       L.DomEvent.disableClickPropagation(box);
-      box.addEventListener('click', e => { if (e.target.closest('.panel-toggle')) box.classList.toggle('open'); });  // on a phone
+      box.addEventListener('click', e => {
+        if (e.target.closest('.panel-toggle')) box.classList.toggle('open');  // on a phone
+        const f = e.target.closest('.fold');
+        if (f) {  // a group opened or folded (remembered in this browser)
+          e.preventDefault();
+          openGroups = openGroups.includes(f.dataset.fold) ? openGroups.filter(g => g !== f.dataset.fold) : [...openGroups, f.dataset.fold];
+          try { localStorage.setItem('legendOpen', JSON.stringify(openGroups)); } catch (_) {}
+          drawLegend();
+        }
+      });
       const show = (k, on) => {
         const layer = layers[k][1];
         on ? layer.addTo(map) : map.removeLayer(layer);
@@ -1216,9 +1239,9 @@ function initMap() {
         hidden = on ? hidden.filter(h => h !== k) : [...new Set([...hidden, k])];
       };
       box.addEventListener('change', e => {
-        const k = e.target.dataset.layer;
-        if (k === 'all') box.querySelectorAll('input[data-layer]:not([data-layer="all"]):not([data-layer="act-group"])').forEach(i => show(i.dataset.layer, e.target.checked));
-        else if (k === 'act-group') box.querySelectorAll('label.child input').forEach(i => show(i.dataset.layer, e.target.checked));
+        const k = e.target.dataset.layer, g = e.target.dataset.group;
+        if (k === 'all') box.querySelectorAll('input[data-layer]:not([data-layer="all"])').forEach(i => show(i.dataset.layer, e.target.checked));
+        else if (g) box.querySelectorAll(`label.child[data-in="${g}"] input`).forEach(i => show(i.dataset.layer, e.target.checked));
         else show(k, e.target.checked);
         rememberLayers();
         afterToggle();  // activities by type: redrawn when the types shown change
@@ -1230,25 +1253,28 @@ function initMap() {
   new Legend().addTo(map);
   drawLegend = () => {
     const n = { flight: allFlights.filter(f => inWin(f.date)).length, ...extraCounts() };
-    [...allTrips, ...allDrives].forEach(t => { if (inWin(t.date)) n[t.mode] = (n[t.mode] || 0) + 1; });
+    shownGround().forEach(t => { n[groundKind(t)] = (n[groundKind(t)] || 0) + 1; });
     // the tiles row stays while there are activities: hiding every type empties it, and the group must reach it again
     const rows = Object.entries(layers).filter(([k]) => k === 'flight' || n[k] || (k === 'tile' && allActivities.length));
-    const on = rows.filter(([, [, layer]]) => map.hasLayer(layer)).length;
-    const inGroup = k => k.startsWith('act-') || k === 'tile';
-    const group = rows.filter(([k]) => inGroup(k)), groupOn = group.filter(([, [, layer]]) => map.hasLayer(layer)).length;
-    const row = ([k, [label, layer, color]]) => `<label class="${inGroup(k) ? 'child' : ''}"><input type="checkbox" data-layer="${k}" ${map.hasLayer(layer) ? 'checked' : ''}>` +
-      `<span class="swatch" style="border-color:${mapVar(color)}"></span>${label}<span class="count">${n[k] || 0}</span></label>`;
-    const activities = allActivities.filter(a => inWin(a.date)).length;
+    const lit = list => list.filter(([, [, layer]]) => map.hasLayer(layer)).length, on = lit(rows);
+    // rows under a heading that switches them all: activities by type (and their tiles), stays by kind of bed
+    const groups = { act: ['Activities', k => k.startsWith('act-') || k === 'tile', allActivities.filter(a => inWin(a.date)).length],
+      stay: ['🏨 Stays', k => k.startsWith('stay-'), n.stays || 0] };
+    const groupOf = k => Object.keys(groups).find(g => groups[g][1](k)) || '';
+    const kids = g => rows.filter(([k]) => groupOf(k) === g);
+    const swatch = (color, shape) => `<span class="swatch ${shape || ''}" style="${shape === 'dot' ? 'background' : 'border-color'}:${mapVar(color)}"></span>`;  // dot, ring, area or a line
+    const row = ([k, [label, layer, color, shape]]) => `<label class="${groupOf(k) ? 'child' : ''}" data-in="${groupOf(k)}" ${groupOf(k) && !openGroups.includes(groupOf(k)) ? 'hidden' : ''}>` +
+      `<input type="checkbox" data-layer="${k}" ${map.hasLayer(layer) ? 'checked' : ''}>${swatch(color, shape)}${label}<span class="count">${n[k] || 0}</span></label>`;
+    const head = g => `<label class="group"><input type="checkbox" data-group="${g}" ${lit(kids(g)) === kids(g).length ? 'checked' : ''}>${groups[g][0]}` +
+      `<button type="button" class="fold" data-fold="${g}" title="${openGroups.includes(g) ? 'Fold' : 'Show each'}">${openGroups.includes(g) ? '▾' : '▸'}</button>` +
+      `<span class="count">${groups[g][2].toLocaleString()}</span></label>`;
+    const firsts = new Map(Object.keys(groups).map(g => [kids(g)[0]?.[0], g]));
     const box = document.getElementById('map-legend');
     box.innerHTML = '<button class="panel-toggle" type="button">Layers ▾</button>' +
       `<label class="all"><input type="checkbox" data-layer="all" ${on === rows.length ? 'checked' : ''}>All layers</label>` +
-      rows.map(r => r[0] === group[0]?.[0]
-        ? `<label class="group"><input type="checkbox" data-layer="act-group" ${groupOn === group.length ? 'checked' : ''}>Activities` +
-          `<span class="count">${activities.toLocaleString()}</span></label>` + row(r)
-        : row(r)).join('');
+      rows.map(r => (firsts.has(r[0]) ? head(firsts.get(r[0])) : '') + row(r)).join('');
     box.querySelector('[data-layer="all"]').indeterminate = on > 0 && on < rows.length;
-    const g = box.querySelector('[data-layer="act-group"]');
-    if (g) g.indeterminate = groupOn > 0 && groupOn < group.length;
+    box.querySelectorAll('[data-group]').forEach(i => { const n = lit(kids(i.dataset.group)); i.indeterminate = n > 0 && n < kids(i.dataset.group).length; });
   };
 
   addPeriodControl();
@@ -1256,6 +1282,8 @@ function initMap() {
 }
 
 let drawLegend = () => {}, rememberLayers = () => {};
+let openGroups = [];  // the legend's groups shown row by row; the others folded into their heading
+try { openGroups = JSON.parse(localStorage.getItem('legendOpen') || '[]'); } catch (_) {}
 
 // Everything on the map, for the period shown (layers.js)
 function redrawMap() {
@@ -1338,13 +1366,18 @@ const escapeHTML = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;'
 
 // Trains, buses, ferries and car journeys (also the drives with a rental car): one line per route and mode, along the track Cairn found (dashed when it is a
 // straight line between the two places)
+// a train between the towns you live and work in is a 🔁 commute (marked by /api/ground), left out when the settings
+// say not to count them
+const groundKind = t => (t.commute ? 'commute' : t.mode);
+const shownGround = () => [...allTrips, ...allDrives].filter(t => inWin(t.date) && !(t.commute && settings.commutes === false));
+
 function drawGround() {
   Object.values(groundLayer).forEach(l => l.clearLayers());
   const routes = {};
-  [...allTrips, ...allDrives].forEach(t => {
-    if (t.from_lat == null || t.to_lat == null || !groundLayer[t.mode] || !inWin(t.date)) return;
+  shownGround().forEach(t => {
+    if (t.from_lat == null || t.to_lat == null || !groundLayer[groundKind(t)]) return;
     const ends = [[t.from_lat, t.from_lon], [t.to_lat, t.to_lon]].map(p => p.map(x => x.toFixed(2)).join(',')).sort();
-    const key = t.mode + '|' + ends.join('|');
+    const key = groundKind(t) + '|' + ends.join('|');
     const r = routes[key] = routes[key] || { trips: [] };
     r.trips.push(t);
     if (!r.best || (!r.best.path && t.path)) r.best = t;
@@ -1355,14 +1388,14 @@ function drawGround() {
     // a trip added by hand may know only its year or month, and stand for several
     const when = t => (t.approx === 'year' ? t.date.slice(0, 4) : t.approx === 'month' ? t.date.slice(0, 7) : (t.date || '').slice(0, 10)) + (t.times > 1 ? ` (×${t.times})` : '');
     const dates = trips.map(when).sort().reverse(), count = trips.reduce((n, t) => n + (t.times || 1), 0);
-    const popup = `<b>${groundModes[best.mode].split(' ')[0]} ${escapeHTML(best.from)} → ${escapeHTML(best.to)}</b><br>` +
+    const popup = `<b>${groundModes[groundKind(best)].split(' ')[0]} ${escapeHTML(best.from)} → ${escapeHTML(best.to)}</b><br>` +
       `<small>${count} trip${count !== 1 ? 's' : ''} · ${fmtDist(best.distance || 0)} · ` +
       `${how[best.path_source] || 'looking up the track…'}</small><br>` +
       `<small>${dates.slice(0, 6).join(', ')}${dates.length > 6 ? ', …' : ''}</small>`;
     L.polyline(pts, {
-      color: mapVar('--' + best.mode), weight: Math.min(2.4 + Math.log2(trips.length) * 0.5, 4), opacity: 0.85,
+      color: mapVar('--' + groundKind(best)), weight: Math.min(2.4 + Math.log2(trips.length) * 0.5, 4), opacity: 0.85,
       dashArray: best.path ? null : '4 6', smoothFactor: 1
-    }).bindPopup(popup, { maxWidth: 280 }).addTo(groundLayer[best.mode]);
+    }).bindPopup(popup, { maxWidth: 280 }).addTo(groundLayer[groundKind(best)]);
   });
   drawLegend();
 }
