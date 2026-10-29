@@ -242,6 +242,17 @@ test('check-ins count for their town; payments abroad that no trip explains are 
   fs.rmSync(path.join(dir, 'data', 'transactions.json'));
 });
 
+test('photos taken from a plane do not count as places you went', async () => {
+  // AMS 16:10 (15:10 UTC) to LIS, 2 h 55 (fixture flight 1): a photo at 16:30 UTC, far from both airports, was taken in
+  // the air; one after landing counts
+  fs.writeFileSync(path.join(dir, 'data', 'photo_points.json'), JSON.stringify([
+    [Date.UTC(2026, 10, 16, 16, 30) / 1000, 48.292, 25.936, '/photos/a.jpg'],
+    [Date.UTC(2026, 10, 16, 20, 0) / 1000, 51.505, 31.287, '/photos/b.jpg']]));
+  const names = (await (await call('GET', '/api/cities?from=2026-11-16&to=2026-11-16')).json()).map(c => c.name);
+  assert.ok(names.includes('Chernihiv') && !names.includes('Chernivtsi'), names.join());
+  fs.rmSync(path.join(dir, 'data', 'photo_points.json'));
+});
+
 test('backup: out as a .tar.gz with its manifest, and back in (what changed since is undone, the data before kept)', async () => {
   const { execFileSync } = require('child_process');
   const res = await call('GET', '/api/backup');

@@ -111,7 +111,8 @@ function parseAirports(dat) {
       city:    f[2].replace(/"/g, '').trim(),
       country: f[3].replace(/"/g, '').trim(),
       lat:     parseFloat(f[6]),
-      lon:     parseFloat(f[7])
+      lon:     parseFloat(f[7]),
+      tz:      (f[11] || '').replace(/"/g, '').trim()
     };
   }
   return result;
@@ -679,6 +680,18 @@ function placesAndDays(from, to, { stays: withStays = true } = {}) {
   if (!m || m.refs.some((r, i) => r !== refs[i])) placesMemo.set(withStays, m = { refs, list: allPlacesAndDays(withStays) });
   return from || to ? m.list.filter(p => (!from || p.day >= from) && (!to || p.day <= to)) : m.list.slice();
 }
+// Unix seconds of a local time ("2017-02-12 06:25") in a time zone (an airport's); null without a time or zone
+function localTime(s, tz) {
+  const m = /^(\d{4})-(\d\d)-(\d\d)[ T](\d\d):(\d\d)/.exec(s || '');
+  if (!m || !tz || tz === '\\N') return null;
+  const guess = Date.UTC(+m[1], m[2] - 1, +m[3], +m[4], +m[5]);
+  try {
+    const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: tz, hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric',
+      hour: 'numeric', minute: 'numeric' }).formatToParts(guess).map(x => [x.type, x.value]));
+    return (2 * guess - Date.UTC(+p.year, p.month - 1, +p.day, +p.hour, +p.minute)) / 1000;
+  } catch (_) { return null; }
+}
+
 const TAGGED_KM = 300;
 let untrusted = new Set();  // the check-ins left out (allPlacesAndDays)
 function allPlacesAndDays(withStays) {
@@ -706,11 +719,21 @@ function allPlacesAndDays(withStays) {
     else eachDay(s.start, s.end, d => add([s.lat, s.lon], d));
   });
   // photos: each from the photo index, where and when it was taken (once per place and day); without the index, the
-  // older photo places file
+  // older photo places file. Not those taken from a plane (between a flight's take-off and landing, over 100 km from
+  // both airports): they show what you flew over, not where you went
+  const flying = fl.map(f => {
+    const off = localTime(f.date, airports[f.from].tz);
+    if (off == null) return null;
+    const [h, m] = (f.duration || '').split(':').map(Number), landed = localTime(f.arrival, airports[f.to].tz);
+    const on = landed > off ? landed : off + (h * 60 + m > 0 ? (h * 60 + m) * 60 : ((f.distance || 0) / 800 + 0.5) * 3600);
+    return [off + 900, on - 900, at(f.from), at(f.to)];
+  }).filter(Boolean);
+  const inAir = (t, p) => flying.some(([a, b, x, y]) => t > a && t < b && ground.km(p, x) > 100 && ground.km(p, y) > 100);
   const shot = datedPhotos();
   if (shot.length) {
     const seen = new Set();
     shot.forEach(p => {
+      if (inAir(p[1], [p[2], p[3]])) return;
       const d = new Date(p[1] * 1000).toISOString().slice(0, 10), key = `${d}|${p[2].toFixed(2)}|${p[3].toFixed(2)}`;
       if (!seen.has(key)) { seen.add(key); add([p[2], p[3]], d); }
     });
