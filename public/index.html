@@ -207,7 +207,9 @@
     .leaflet-popup-content b { color: var(--accent); font-size: 15px; }
     .leaflet-popup-content small { color: var(--text2); }
 
-    /* Map control buttons (cluster toggle etc.) */
+    /* Map control buttons: how airports and photos are drawn */
+    .map-ctrl-row { display: flex; gap: 6px; flex-wrap: wrap; }
+    .map-ctrl-row [hidden] { display: none; }
     .map-ctrl-btn {
       background: var(--surface) !important; border: 1px solid var(--border) !important;
       color: var(--accent) !important; padding: 5px 10px; border-radius: 6px;
@@ -1221,22 +1223,20 @@ function initMap() {
   setBasemap();
   initExtraPanes();
 
-  // Cluster toggle control
-  const ClusterToggle = L.Control.extend({
+  // How airports and photos are drawn, switched on the map; each button shows while its layer is on
+  const MapButtons = L.Control.extend({
     options: { position: 'bottomleft' },
     onAdd() {
-      const btn = L.DomUtil.create('button');
-      btn.id = 'cluster-toggle';
-      btn.className = 'map-ctrl-btn';
-      btn.innerHTML = '· Individual';
-      btn.title = 'Switch to clustered markers';
-      btn.style.opacity = '0.6';
-      L.DomEvent.on(btn, 'click', L.DomEvent.stopPropagation);
-      L.DomEvent.on(btn, 'click', toggleCluster);
-      return btn;
+      const box = L.DomUtil.create('div', 'map-ctrl-row');
+      box.innerHTML = '<button id="cluster-toggle" class="map-ctrl-btn" type="button"></button>' +
+        '<button id="photo-mode" class="map-ctrl-btn" type="button"></button>';
+      L.DomEvent.disableClickPropagation(box);
+      box.querySelector('#cluster-toggle').addEventListener('click', toggleCluster);
+      box.querySelector('#photo-mode').addEventListener('click', nextPhotoMode);
+      return box;
     }
   });
-  new ClusterToggle().addTo(map);
+  new MapButtons().addTo(map);
   showClusterMode();
 
   // Which lines to show; remembered in this browser
@@ -1310,6 +1310,7 @@ function initMap() {
       rows.map(r => (firsts.has(r[0]) ? head(firsts.get(r[0])) : '') + row(r)).join('');
     box.querySelector('[data-layer="all"]').indeterminate = on > 0 && on < rows.length;
     box.querySelectorAll('[data-group]').forEach(i => { const n = lit(kids(i.dataset.group)); i.indeterminate = n > 0 && n < kids(i.dataset.group).length; });
+    showClusterMode();  // the airport and photo buttons, with their layers
   };
 
   addPeriodControl();
@@ -1495,9 +1496,30 @@ function toggleCluster() {
 }
 function showClusterMode() {
   const btn = document.getElementById('cluster-toggle');
-  btn.innerHTML = clusterMode ? '⊕ Cluster' : '· Individual';
-  btn.title     = clusterMode ? 'Switch to individual markers' : 'Switch to clustered markers';
-  btn.style.opacity = clusterMode ? '1' : '0.6';
+  if (!btn) return;
+  btn.textContent = clusterMode ? '✈️ Airports: grouped' : '✈️ Airports: each one';
+  btn.title = clusterMode ? 'Airports close together are one circle with their number. Click to show each airport'
+    : 'Each airport is its own dot. Click to group airports close together';
+  btn.hidden = !airportLayer || !map.hasLayer(airportLayer);
+  showPhotoMode();
+}
+
+// How photos are drawn, as in the settings: a click takes the next way
+const PHOTO_MODES = { clusters: ['grouped', 'Every photo, grouped when zoomed out; click one to see it'],
+  heat: ['heatmap', 'Heatmap: where you take the most photos'], places: ['places', 'A dot per place, sized by the number of photos'] };
+function nextPhotoMode() {
+  const modes = Object.keys(PHOTO_MODES);
+  savePrefs({ photos: modes[(modes.indexOf(prefs.photos || 'clusters') + 1) % modes.length] });
+  drawPhotos();
+  drawLegend();
+}
+function showPhotoMode() {
+  const btn = document.getElementById('photo-mode');
+  if (!btn) return;
+  const modes = Object.keys(PHOTO_MODES), now = prefs.photos || 'clusters', next = modes[(modes.indexOf(now) + 1) % modes.length];
+  btn.textContent = `📷 Photos: ${PHOTO_MODES[now][0]}`;
+  btn.title = `${PHOTO_MODES[now][1]}. Click for: ${PHOTO_MODES[next][1].toLowerCase()}`;
+  btn.hidden = !map.hasLayer(photoLayer);
 }
 
 // --- Stats ---

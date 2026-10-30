@@ -253,6 +253,15 @@ test('photos taken from a plane do not count as places you went', async () => {
   fs.rmSync(path.join(dir, 'data', 'photo_points.json'));
 });
 
+test('a data file not there: each asks for its own empty value (the timeline still has its lists)', async () => {
+  const file = path.join(dir, 'data', 'timeline.json');
+  fs.writeFileSync(file, JSON.stringify({ visits: [], paths: [] }));
+  await call('GET', '/api/timeline');
+  fs.rmSync(file);  // gone again: what Cairn kept of it is dropped
+  await call('GET', '/api/checkins');  // reads the missing timeline as {} first
+  assert.deepStrictEqual(await (await call('GET', '/api/timeline')).json(), { visits: [], paths: [] });
+});
+
 test('photos with no place: listed with their albums, placed by hand (on the map at once), and taken back', async () => {
   const lib = '/Pictures/Photos Library.photoslibrary/originals/1/';
   fs.writeFileSync(path.join(dir, 'data', 'photo_unplaced.json'), JSON.stringify([

@@ -197,9 +197,10 @@ function readImport(file, empty) {
     const mtime = fs.statSync(file).mtimeMs;
     if (imported[file]?.mtime !== mtime) imported[file] = { mtime, data: JSON.parse(fs.readFileSync(file, 'utf8')) };
     return imported[file].data;
-  } catch (_) {  // no such file: the same empty value each time, so what is worked out from it is kept
-    if (imported[file]?.mtime !== 'missing') imported[file] = { mtime: 'missing', data: empty };
-    return imported[file].data;
+  } catch (_) {  // no such file: the same empty value each time, so what is worked out from it is kept (one per shape asked)
+    if (imported[file]?.mtime !== 'missing') imported[file] = { mtime: 'missing', empties: {} };
+    const shape = JSON.stringify(empty);
+    return imported[file].empties[shape] ??= empty;
   }
 }
 
