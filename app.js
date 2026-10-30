@@ -214,10 +214,18 @@ function journeyClues(t, a, b) {
   const dayOnly = !t.arrival && /12:00:00$/.test(t.date || ''), start = unix(dayOnly ? `${t.date.slice(0, 10)} 00:00` : t.date, a[1]);
   if (start == null) return [];
   const end = t.arrival ? unix(t.arrival, b[1]) : start + (dayOnly ? 30 : ground.km(a, b) / 50 + 2) * 3600;
-  const seen = ownPlacePhotos().filter(p => p[1] >= start && p[1] <= end).map(p => [p[1], p[2], p[3]]);
+  const flying = flyingSpans().filter(([off, on]) => on > start && off < end);  // a flight home after the drive: its photos are no road
+  const seen = ownPlacePhotos().filter(p => p[1] >= start && p[1] <= end && !flying.some(([off, on]) => p[1] > off && p[1] < on)).map(p => [p[1], p[2], p[3]]);
   (readImport(TIMELINE_FILE, {}).visits || []).forEach(v => { const s = unix(v.start, v.lon); if (s >= start && s <= end) seen.push([s, v.lat, v.lon]); });
+  // nor one too far from the last to have been driven to (over 200 km/h: a flight with no times, its photos the plane's)
   const out = [];
-  for (const [, lat, lon] of seen.sort((x, y) => x[0] - y[0])) { out.push([lat, lon]); if (ground.km([lat, lon], b) < 10) break; }
+  let last = [start, ...a];
+  for (const [t, lat, lon] of seen.sort((x, y) => x[0] - y[0])) {
+    if (ground.km([lat, lon], last.slice(1)) > 200 * Math.max(t - last[0], 60) / 3600) continue;
+    out.push([lat, lon]);
+    last = [t, lat, lon];
+    if (ground.km([lat, lon], b) < 10) break;
+  }
   return out;
 }
 
@@ -507,7 +515,7 @@ app.post('/api/stays', (req, res) => {
   if (same) {
     const { id, ...changes } = s;
     if (same.source === 'booking') delete changes.place, delete changes.country;  // the hotel's place beats the mail's town
-    ground.forgetStay(same, changes);
+    ground.forgetStay(same, changes, inCountry);
     Object.assign(same, changes);
   } else {
     s.id = nextId(stays);
@@ -518,11 +526,27 @@ app.post('/api/stays', (req, res) => {
   res.json(same || s);
 });
 
+// whether a spot lies in a country (a code, or its English name): the country of the town nearest it
+let countryCodes = null;
+function inCountry(lat, lon, country) {
+  if (!countryCodes) {
+    countryCodes = new Map();
+    try {
+      const dn = new Intl.DisplayNames(['en'], { type: 'region' });
+      for (let a = 65; a <= 90; a++) for (let b = 65; b <= 90; b++) { const cc = String.fromCharCode(a, b), name = dn.of(cc); if (name && name !== cc) countryCodes.set(name.toLowerCase(), cc); }
+    } catch (_) {}
+  }
+  const c = String(country || '').trim(), cc = /^[A-Za-z]{2}$/.test(c) ? c.toUpperCase() : countryCodes.get(c.toLowerCase());
+  if (!cc) return false;
+  if (towns === undefined) towns = cities.load(path.join(DATA_DIR, 'cities1000.txt'));
+  return !!towns && cities.townAt(towns, lat, lon)?.cc === cc;
+}
+
 app.put('/api/stays/:id', (req, res) => {
   const s = stays.find(x => x.id === Number(req.params.id));
   if (!s) return res.status(404).json({ error: 'no such stay' });
   const { id, ...changes } = req.body;
-  ground.forgetStay(s, changes);
+  ground.forgetStay(s, changes, inCountry);
   Object.assign(s, changes);
   saveStays();
   lookUpTrips();
@@ -585,15 +609,29 @@ function unplacedById() {
   if (unplacedMemo.raw !== raw) unplacedMemo = { raw, byId: new Map(raw.map(r => [photoId(r[1]), r])) };
   return unplacedMemo.byId;
 }
-// [{ id, t, name, albums: [index], video }], the ones not placed yet, by time; the albums' names; and per day where
-// Cairn has you that day (the town most of the day's places are in), to place a day's photos there in one go
+// A photo with no place taken within NEAR_MIN minutes of one with a place (a camera beside the phone): that one's
+// spot, [lat, lon, minutes from it (+: the photo with the place was taken after)], else null
+const NEAR_MIN = 30;
+let nearMemo = { list: null, sorted: [] };
+function nearSpot(t) {
+  const list = ownPlacePhotos();
+  if (nearMemo.list !== list) nearMemo = { list, sorted: list.filter(p => p[1]).sort((a, b) => a[1] - b[1]) };
+  const g = nearMemo.sorted;
+  if (!t || !g.length) return null;
+  let lo = 0, hi = g.length;
+  while (lo < hi) { const m = (lo + hi) >> 1; if (g[m][1] < t) lo = m + 1; else hi = m; }
+  const best = [g[lo - 1], g[lo]].filter(Boolean).sort((a, b) => Math.abs(a[1] - t) - Math.abs(b[1] - t))[0];
+  return Math.abs(best[1] - t) <= NEAR_MIN * 60 ? [best[2], best[3], Math.round((best[1] - t) / 60)] : null;
+}
+// [{ id, t, name, albums: [index], video, near }], the ones not placed yet, by time; the albums' names; and per day
+// where Cairn has you that day (the town most of the day's places are in), to place a day's photos there in one go
 app.get('/api/photos/unplaced', (_req, res) => {
   const places = readImport(PHOTO_PLACES, {}), names = [], index = new Map(), photos = [], days = {};
   const where = dayTownMap();
   for (const [id, [t, file, name, albumList, video]] of unplacedById()) {
     if (places[file] || (albumList || []).some(a => /^To delete/.test(a))) continue;  // nor the copies waiting to be deleted
     const albumIdx = (albumList || []).map(a => { if (!index.has(a)) { index.set(a, names.length); names.push(a); } return index.get(a); });
-    photos.push({ id, t, name, albums: albumIdx, video: video ? 1 : 0 });
+    photos.push({ id, t, name, albums: albumIdx, video: video ? 1 : 0, near: nearSpot(t) });
     const day = t ? new Date(t * 1000).toISOString().slice(0, 10) : '';
     if (day && !(day in days)) days[day] = where.get(day) || null;
   }
@@ -607,19 +645,22 @@ app.get('/api/photos/unplaced/:id/:size(thumb|full)', async (req, res) => {
   if (!made) return res.status(404).json({ error: 'could not be converted' });
   res.set('Cache-Control', 'max-age=604800').type(made.type).sendFile(made.file);
 });
-// { ids, lat, lon, name }: these photos taken there (name: the town, or empty for a spot on the map); { ids, undo: true }
-// takes the places back
+// { ids, lat, lon, name }: these photos taken there (name: the town, or empty for a spot on the map); { ids, near: true }
+// each at the spot of the photo with a place taken nearest in time (nearSpot; those with none are left); { ids, undo:
+// true } takes the places back
 app.post('/api/photos/place', (req, res) => {
-  const { ids, lat, lon, name, undo } = req.body || {};
+  const { ids, lat, lon, name, near, undo } = req.body || {};
   if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'ids required' });
-  if (!undo && !(Number.isFinite(+lat) && Number.isFinite(+lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180)) return res.status(400).json({ error: 'lat and lon required' });
+  if (!undo && !near && !(Number.isFinite(+lat) && Number.isFinite(+lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180)) return res.status(400).json({ error: 'lat and lon required' });
   const places = { ...readImport(PHOTO_PLACES, {}) }, rows = unplacedById();
   let n = 0;
   for (const id of ids) {
     const row = rows.get(id);
     if (!row) continue;
     if (undo) { if (places[row[1]]) { delete places[row[1]]; n++; } continue; }
-    places[row[1]] = { lat: Math.round(+lat * 1e6) / 1e6, lon: Math.round(+lon * 1e6) / 1e6, t: row[0], name: String(name || ''), at: new Date().toISOString() };
+    const at = near ? nearSpot(row[0]) : [+lat, +lon];
+    if (!at) continue;
+    places[row[1]] = { lat: Math.round(at[0] * 1e6) / 1e6, lon: Math.round(at[1] * 1e6) / 1e6, t: row[0], name: near ? 'near a photo with a place' : String(name || ''), at: new Date().toISOString() };
     n++;
   }
   fs.writeFileSync(PHOTO_PLACES, JSON.stringify(places));
@@ -777,6 +818,18 @@ function placesAndDays(from, to, { stays: withStays = true } = {}) {
   return from || to ? m.list.filter(p => (!from || p.day >= from) && (!to || p.day <= to)) : m.list.slice();
 }
 // Unix seconds of a local time ("2017-02-12 06:25") in a time zone (an airport's); null without a time or zone
+// Each flight's time in the air, [unix take-off, unix landing, [lat, lon] of the airports], a quarter of an hour short at
+// each end (taxiing): photos then were taken from the plane
+function flyingSpans() {
+  const at = code => airports[code] && [airports[code].lat, airports[code].lon];
+  return flights.filter(f => f.date && at(f.from) && at(f.to)).map(f => {
+    const off = localTime(f.date, airports[f.from].tz);
+    if (off == null) return null;
+    const [h, m] = (f.duration || '').split(':').map(Number), landed = localTime(f.arrival, airports[f.to].tz);
+    const on = landed > off ? landed : off + (h * 60 + m > 0 ? (h * 60 + m) * 60 : ((f.distance || 0) / 800 + 0.5) * 3600);
+    return [off + 900, on - 900, at(f.from), at(f.to)];
+  }).filter(Boolean);
+}
 function localTime(s, tz) {
   const m = /^(\d{4})-(\d\d)-(\d\d)[ T](\d\d):(\d\d)/.exec(s || '');
   if (!m || !tz || tz === '\\N') return null;
@@ -817,13 +870,7 @@ function allPlacesAndDays(withStays) {
   // photos: each from the photo index, where and when it was taken (once per place and day); without the index, the
   // older photo places file. Not those taken from a plane (between a flight's take-off and landing, over 100 km from
   // both airports): they show what you flew over, not where you went
-  const flying = fl.map(f => {
-    const off = localTime(f.date, airports[f.from].tz);
-    if (off == null) return null;
-    const [h, m] = (f.duration || '').split(':').map(Number), landed = localTime(f.arrival, airports[f.to].tz);
-    const on = landed > off ? landed : off + (h * 60 + m > 0 ? (h * 60 + m) * 60 : ((f.distance || 0) / 800 + 0.5) * 3600);
-    return [off + 900, on - 900, at(f.from), at(f.to)];
-  }).filter(Boolean);
+  const flying = flyingSpans();
   const inAir = (t, p) => flying.some(([a, b, x, y]) => t > a && t < b && ground.km(p, x) > 100 && ground.km(p, y) > 100);
   const shot = datedPhotos();
   if (shot.length) {

@@ -151,6 +151,16 @@ test('a car journey goes through the photos on the way: between the ends, spread
   assert.deepStrictEqual(g.viaPoints(lyon, valence, []), []);
 });
 
+test('a drive with its times known goes through all its photos in order, a loop too; one with only its day does not', () => {
+  const palma = [39.57, 2.65];  // a day round Mallorca: Sóller, Pollença, Artà, back to Palma
+  const photos = [[39.58, 2.66], [39.77, 2.71], [39.87, 3.02], [39.86, 3.02], [39.69, 3.35], [39.57, 2.64]];
+  assert.deepStrictEqual(g.viaPoints(palma, palma, photos), []);  // the way near the straight line has nothing for a loop
+  assert.deepStrictEqual(g.trackPoints(palma, palma, photos), [[39.77, 2.71], [39.87, 3.02], [39.69, 3.35]]);
+  assert.strictEqual(g.driveHours({ date: '2016-12-22 09:15:00', arrival: '2016-12-22 18:00:00' }), 8.75);
+  assert.strictEqual(g.driveHours({ date: '2016-12-22 12:00:00' }), null);  // only the day: its photos are the whole day's
+  assert.strictEqual(g.driveHours({ date: '2016-12-22 09:15:00' }), 24);
+});
+
 test('a railway from OpenStreetMap tracks: the shortest way along them, from the track nearest one end to the one nearest the other', () => {
   // two lines from A: one straight to B, one round by a detour; a siding not reaching B
   const n = (id, lat, lon) => ({ type: 'node', id, lat, lon });
@@ -168,4 +178,17 @@ test('two railway networks that do not meet: where they come closest', () => {
   const gap = g.railGap(elements, [52.0, 5.0], [52.0, 6.3]);
   assert.deepStrictEqual(gap.ends, [[52.0, 5.5], [52.0, 6.0]]);
   assert.ok(gap.km > 30 && gap.km < 40);
+});
+
+test('a stay given another country keeps its spot when the spot lies in that country, else it is looked up again', () => {
+  const inSpain = (lat, lon, c) => c === 'ES' && lat > 36 && lat < 44 && lon > -10 && lon < 4;
+  const fixed = { place: 'Sitges', country: 'Garraf', lat: 41.24, lon: 1.81 };
+  g.forgetStay(fixed, { country: 'ES' }, inSpain);
+  assert.deepStrictEqual([fixed.lat, fixed.lon], [41.24, 1.81]);
+  const moved = { place: 'Porto', country: 'ES', lat: 41.24, lon: 1.81 };
+  g.forgetStay(moved, { country: 'PT' }, inSpain);
+  assert.strictEqual(moved.lat, undefined);
+  const renamed = { place: 'Sitges', country: 'ES', lat: 41.24, lon: 1.81 };
+  g.forgetStay(renamed, { place: 'Girona' }, inSpain);
+  assert.strictEqual(renamed.lat, undefined);
 });

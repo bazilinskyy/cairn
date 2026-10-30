@@ -284,6 +284,20 @@ test('photos with no place: listed with their albums, placed by hand (on the map
   fs.rmSync(path.join(dir, 'data', 'photo_places.json'));
 });
 
+test('a photo with no place taken near in time to one with a place: that spot offered, and placed there in one go', async () => {
+  const lib = '/Pictures/Photos Library.photoslibrary/originals/2/', t = Date.UTC(2019, 4, 10, 12) / 1000;
+  fs.writeFileSync(path.join(dir, 'data', 'photo_points.json'), JSON.stringify([[t + 600, 45.07, 7.69, '/photos/phone.jpg']]));
+  fs.writeFileSync(path.join(dir, 'data', 'photo_unplaced.json'), JSON.stringify([
+    [t, lib + 'B1B2C3D4-0000-0000-0000-000000000001.jpeg', 'DSC_1.jpg', [], 0],          // 10 minutes before
+    [t + 3 * 3600, lib + 'B1B2C3D4-0000-0000-0000-000000000002.jpeg', 'DSC_2.jpg', [], 0]]));  // hours away: none
+  const d = await (await call('GET', '/api/photos/unplaced')).json();
+  assert.deepStrictEqual(d.photos.map(p => p.near), [[45.07, 7.69, 10], null]);
+  assert.deepStrictEqual(await (await call('POST', '/api/photos/place', { ids: d.photos.map(p => p.id), near: true })).json(), { placed: 1, removed: 0 });
+  const left = (await (await call('GET', '/api/photos/unplaced')).json()).photos;
+  assert.deepStrictEqual(left.map(p => p.name), ['DSC_2.jpg']);
+  ['photo_points.json', 'photo_unplaced.json', 'photo_places.json'].forEach(f => fs.rmSync(path.join(dir, 'data', f)));
+});
+
 test('backup: out as a .tar.gz with its manifest, and back in (what changed since is undone, the data before kept)', async () => {
   const { execFileSync } = require('child_process');
   const res = await call('GET', '/api/backup');

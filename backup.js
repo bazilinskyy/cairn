@@ -46,8 +46,8 @@ function create({ files, tracks, backupsDir, log = console.log }) {
   function toFile(file) {
     return new Promise((resolve, reject) => {
       fs.mkdirSync(path.dirname(file), { recursive: true });
-      const out = fs.createWriteStream(file);
-      stream(out, code => (code === 0 ? out.on('close', () => resolve(file)) : reject(new Error(`tar exited with ${code}`))));
+      const out = fs.createWriteStream(file), closed = new Promise(r => out.on('close', r));  // it may close before tar's end is told
+      stream(out, code => (code === 0 ? closed.then(() => resolve(file)) : reject(new Error(`tar exited with ${code}`))));
     });
   }
 

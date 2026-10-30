@@ -300,6 +300,8 @@
     .pp-ph.sel { outline-color: var(--accent); }
     .pp-ph.sel::after { content: '✓'; position: absolute; top: 4px; right: 6px; color: #fff; font-weight: 700; text-shadow: 0 0 3px #000; }
     .pp-video { position: absolute; left: 6px; bottom: 4px; color: #fff; text-shadow: 0 0 3px #000; }
+    .pp-near { position: absolute; right: 3px; top: 3px; font-size: 11px; line-height: 1; padding: 3px; border-radius: 50%; background: rgba(0, 0, 0, 0.65); box-shadow: 0 0 0 1.5px #fff; }
+    .pp-nearonly { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; color: var(--text2); cursor: pointer; }
     @media (max-width: 900px) { .pp-cols { grid-template-columns: 1fr; } .pp-side { position: static; order: -1; } .pp-ph { width: 30vw; height: 30vw; max-width: 104px; max-height: 104px; } }
     .chart-section { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 24px; margin-bottom: 24px; }
     .chart-section h3 { font-size: 13px; font-weight: 600; color: var(--text2); text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 18px; }

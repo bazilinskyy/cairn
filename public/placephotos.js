@@ -1,8 +1,9 @@
 'use strict';
 // Placing photos by hand (#place-photos): the library's photos with no place (/api/photos/unplaced), by day, with the
 // albums they are in. Select one or many (a click, shift-click for a run, a day's or an album's at once), then place them
-// in a town (search, or the town Cairn has you in that day) or drag them onto the map at the exact spot. Each placing can
-// be undone. Uses the page's globals (escapeHTML, fmtDate, BASEMAPS, prefs, toneMap, toast).
+// in a town (search, or the town Cairn has you in that day), drag them onto the map at the exact spot, or put each at the
+// spot of a photo with a place taken within half an hour of it (📍 on the photo: a camera beside the phone). Each placing
+// can be undone. Uses the page's globals (escapeHTML, fmtDate, BASEMAPS, prefs, toneMap, toast).
 
 const PP_DAYS = 40;  // days drawn at a time
 let pp = null;       // { photos, albums, days, shown (filtered list), selected: Set, last: index, map, markers, undo: [] }
@@ -28,6 +29,7 @@ async function openPlacePhotos() {
         d.albums.map((a, i) => [a, i]).filter(([, i]) => albumCount.get(i)).sort((x, y) => x[0].localeCompare(y[0]))
           .map(([a, i]) => `<option value="${i}">${escapeHTML(a)} (${albumCount.get(i)})</option>`).join('')}</select>
       <select id="pp-year" aria-label="Year"><option value="">All years</option>${years.map(y => `<option>${y}</option>`).join('')}<option value="0">No date</option></select>
+      <label class="pp-nearonly" title="Taken within half an hour of a photo with a place"><input type="checkbox" id="pp-nearonly"> Only 📍 near a photo with a place (<span id="pp-nearcount"></span>)</label>
       <button class="btn btn-ghost" onclick="ppSelectShown()">Select all shown</button>
       <button class="btn btn-ghost" onclick="ppClear()">Clear</button>
     </div>
@@ -36,6 +38,7 @@ async function openPlacePhotos() {
       <div class="pp-side">
         <div class="chart-section pp-panel">
           <div id="pp-sel">Nothing selected</div>
+          <div id="pp-nearsel"></div>
           <input id="pp-town" type="search" placeholder="Place them in a town…" autocomplete="off" aria-label="Town">
           <div id="pp-towns"></div>
           <p class="sp-note">Or drag photos onto the map to place them at that exact spot. Dragging a selected photo moves
@@ -47,7 +50,7 @@ async function openPlacePhotos() {
         </div>
       </div>
     </div>`;
-  document.getElementById('pp-album').onchange = document.getElementById('pp-year').onchange = () => { pp.limit = PP_DAYS; ppFilter(); };
+  document.getElementById('pp-album').onchange = document.getElementById('pp-year').onchange = document.getElementById('pp-nearonly').onchange = () => { pp.limit = PP_DAYS; ppFilter(); };
   let timer = null;
   document.getElementById('pp-town').oninput = e => { clearTimeout(timer); timer = setTimeout(() => ppTowns(e.target.value), 250); };
   ppMap();
@@ -57,8 +60,8 @@ async function openPlacePhotos() {
 
 // the photos the filters leave, and the grid of them by day
 function ppFilter() {
-  const album = document.getElementById('pp-album').value, year = document.getElementById('pp-year').value;
-  pp.shown = pp.photos.filter(p => (album === '' || (album === 'none' ? !p.albums.length : p.albums.includes(+album)))
+  const album = document.getElementById('pp-album').value, year = document.getElementById('pp-year').value, nearOnly = document.getElementById('pp-nearonly').checked;
+  pp.shown = pp.photos.filter(p => (album === '' || (album === 'none' ? !p.albums.length : p.albums.includes(+album))) && (!nearOnly || p.near)
     && (year === '' || (year === '0' ? !p.t : p.t && new Date(p.t * 1000).getUTCFullYear() === +year)));
   pp.last = -1;
   ppDraw();
@@ -70,16 +73,17 @@ function ppDraw() {
   const days = [...byDay.entries()];
   grid.innerHTML = days.slice(0, pp.limit).map(([day, list]) => {
     const albums = [...new Set(list.flatMap(([p]) => p.albums))].map(a => pp.albums[a]);
-    const at = pp.days[day];
+    const at = pp.days[day], near = list.filter(([p]) => p.near).length;
     return `<div class="pp-day" data-day="${day}">
       <div class="pp-day-head">
         <label><input type="checkbox" onchange="ppSelectDay('${day}', this.checked)"> <b>${day ? fmtDate(day) : 'No date'}</b> · ${list.length}</label>
         ${albums.length ? `<small>in ${albums.slice(0, 3).map(escapeHTML).join(', ')}${albums.length > 3 ? ` +${albums.length - 3}` : ''}</small>` : ''}
         ${at ? `<button class="btn btn-ghost pp-here" title="Cairn has you in ${escapeHTML(at.name)} that day" onclick="ppPlaceDay('${day}')">📍 ${flagOf(at.cc)}${escapeHTML(at.name)}</button>` : ''}
+        ${near ? `<button class="btn btn-ghost pp-here" title="Each where a photo with a place was taken within half an hour of it" onclick="ppPlaceDayNear('${day}')">📍 ${near} at nearby photos' spots</button>` : ''}
       </div>
       <div class="pp-thumbs">${list.map(([p, i]) => `<div class="pp-ph${pp.selected.has(p.id) ? ' sel' : ''}" data-id="${p.id}" data-i="${i}" draggable="true"
         title="${escapeHTML(p.name || '')}${p.t ? ' · ' + new Date(p.t * 1000).toISOString().slice(11, 16) : ''}${p.albums.length ? ' · ' + escapeHTML(p.albums.map(a => pp.albums[a]).join(', ')) : ''}">
-        <img loading="lazy" src="/api/photos/unplaced/${p.id}/thumb" alt="">${p.video ? '<span class="pp-video">▶</span>' : ''}</div>`).join('')}</div>
+        <img loading="lazy" src="/api/photos/unplaced/${p.id}/thumb" alt="">${p.video ? '<span class="pp-video">▶</span>' : ''}${p.near ? `<span class="pp-near" title="${ppNearText(p.near)}">📍</span>` : ''}</div>`).join('')}</div>
     </div>`;
   }).join('') + (days.length > pp.limit ? `<button class="btn btn-ghost" onclick="pp.limit += ${PP_DAYS}; ppDraw()">Show more days (${days.length - pp.limit} left)</button>` : '')
     + (!days.length ? '<p class="sp-note">No photos without a place here.</p>' : '');
@@ -118,8 +122,14 @@ function ppMarks() {
 function ppCount() {
   document.getElementById('pp-count').textContent = `${pp.photos.length.toLocaleString()} photos with no place` +
     (pp.shown.length !== pp.photos.length ? ` · ${pp.shown.length.toLocaleString()} shown` : '');
-  const n = pp.selected.size;
+  document.getElementById('pp-nearcount').textContent = pp.photos.filter(p => p.near).length.toLocaleString();
+  const n = pp.selected.size, near = pp.photos.filter(p => p.near && pp.selected.has(p.id)).length;
   document.getElementById('pp-sel').innerHTML = n ? `<b>${n.toLocaleString()} selected</b>` : 'Nothing selected: click photos, shift-click for a run, or tick a day';
+  document.getElementById('pp-nearsel').innerHTML = near ? `<button class="btn btn-ghost" onclick="ppPlaceNear(pp.photos.filter(p => p.near && pp.selected.has(p.id)).map(p => p.id))"
+    title="Each where a photo with a place was taken within half an hour of it">📍 Place ${near === n ? (n > 1 ? 'them' : 'it') : `${near.toLocaleString()} of them`} at nearby photos' spots</button>` : '';
+}
+function ppNearText([, , min]) {
+  return min === 0 ? 'A photo with a place was taken the same minute' : `A photo with a place was taken ${Math.abs(min)} min ${min > 0 ? 'after' : 'before'}`;
 }
 
 // towns by name (/api/towns): a click places the selection there
@@ -142,20 +152,43 @@ function ppPlaceDay(day) {
   ppPlace((chosen.length ? chosen : inDay).map(p => p.id), at.lat, at.lon, at.name);
 }
 
+function ppPlaceDayNear(day) {
+  const inDay = pp.shown.filter(p => p.near && (p.t ? new Date(p.t * 1000).toISOString().slice(0, 10) : '') === day);
+  const chosen = inDay.filter(p => pp.selected.has(p.id));
+  ppPlaceNear((chosen.length ? chosen : inDay).map(p => p.id));
+}
+
 // placed: gone from the list, a dot on the map, and a line to undo it
 async function ppPlace(ids, lat, lon, name) {
   if (!ids.length) return;
   const r = await fetch('/api/photos/place', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids, lat, lon, name }) })
     .then(x => (x.ok ? x.json() : null)).catch(() => null);
   if (!r) return toast('Could not place them', 'error');
+  const marker = L.circleMarker([lat, lon], { radius: 7, color: '#fff', weight: 1.5, fillColor: mapVar('--photo'), fillOpacity: 0.9 })
+    .bindTooltip(`${ids.length} photo${ids.length > 1 ? 's' : ''}${name ? ` · ${escapeHTML(name)}` : ''}`).addTo(pp.markers);
+  ppPlaced(ids, name || `${lat.toFixed(4)}, ${lon.toFixed(4)}`, marker);
+  toast(`Placed ${ids.length} photo${ids.length > 1 ? 's' : ''}${name ? ` in ${name}` : ' on the map'}`);
+}
+// each at the spot of the photo with a place taken nearest in time to it
+async function ppPlaceNear(ids) {
+  if (!ids.length) return;
+  const r = await fetch('/api/photos/place', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids, near: true }) })
+    .then(x => (x.ok ? x.json() : null)).catch(() => null);
+  if (!r) return toast('Could not place them', 'error');
+  const set = new Set(ids), marker = L.layerGroup().addTo(pp.markers), spots = new Map();
+  pp.photos.filter(p => set.has(p.id) && p.near).forEach(p => { const k = p.near[0] + ',' + p.near[1]; spots.set(k, [p.near, (spots.get(k)?.[1] || 0) + 1]); });
+  spots.forEach(([[lat, lon], n]) => L.circleMarker([lat, lon], { radius: 6, color: '#fff', weight: 1.5, fillColor: mapVar('--photo'), fillOpacity: 0.9 })
+    .bindTooltip(`${n} photo${n > 1 ? 's' : ''} · near a photo with a place`).addTo(marker));
+  if (spots.size) pp.map.fitBounds(L.latLngBounds([...spots.values()].map(([at]) => at)), { maxZoom: 12, padding: [20, 20] });
+  ppPlaced(ids, "at nearby photos' spots", marker);
+  toast(`Placed ${r.placed} photo${r.placed !== 1 ? 's' : ''} at nearby photos' spots`);
+}
+function ppPlaced(ids, name, marker) {
   const gone = new Set(ids), photos = pp.photos.filter(p => gone.has(p.id));
   pp.photos = pp.photos.filter(p => !gone.has(p.id));
   ids.forEach(id => pp.selected.delete(id));
-  const marker = L.circleMarker([lat, lon], { radius: 7, color: '#fff', weight: 1.5, fillColor: mapVar('--photo'), fillOpacity: 0.9 })
-    .bindTooltip(`${ids.length} photo${ids.length > 1 ? 's' : ''}${name ? ` · ${escapeHTML(name)}` : ''}`).addTo(pp.markers);
-  pp.undo.unshift({ ids, photos, name: name || `${lat.toFixed(4)}, ${lon.toFixed(4)}`, marker });
+  pp.undo.unshift({ ids, photos, name, marker });
   pp.undo = pp.undo.slice(0, 10);
-  toast(`Placed ${ids.length} photo${ids.length > 1 ? 's' : ''}${name ? ` in ${name}` : ' on the map'}`);
   const keep = new Set(pp.shown.map(p => p.id));
   pp.shown = pp.photos.filter(p => keep.has(p.id));
   ppDraw();
@@ -211,3 +244,4 @@ window.addEventListener('load', () => {
   }));
   if (location.hash === '#place-photos') setTimeout(openPlacePhotos, 500);
 });
+window.addEventListener('hashchange', () => { if (location.hash === '#place-photos') openPlacePhotos(); });  // the link opened in a page already open

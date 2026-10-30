@@ -580,6 +580,35 @@ function viaPoints(a, b, clues) {
   return out.length > VIA_MAX ? Array.from({ length: VIA_MAX }, (_, i) => out[Math.round(i * (out.length - 1) / (VIA_MAX - 1))]) : out;
 }
 
+// A drive with its times known: through all the places its photos put you, in time order, however far off the straight
+// line (a loop round a region, or out and back to the same town), VIA_KM apart, at most TRACK_MAX of them
+const TRACK_MAX = 30;
+// the hours from leaving to arriving (both local times: a drive across a time zone is an hour off), or null when the
+// drive knows only its day (noon, no arrival): its photos are the whole day's, not the drive's
+function driveHours(t) {
+  const time = s => { const m = /^(\d{4}-\d\d-\d\d)[ T](\d\d:\d\d)/.exec(s || ''); return m ? Date.parse(`${m[1]}T${m[2]}:00Z`) : null; };
+  if (!t.arrival && /12:00:00$/.test(t.date || '')) return null;
+  const a = time(t.date), b = time(t.arrival);
+  return a == null ? null : b > a ? (b - a) / 36e5 : 24;  // no arrival: a day's driving at most
+}
+function trackPoints(a, b, clues) {
+  const out = [];
+  for (const p of clues) {
+    if (km(p, a) < VIA_KM || km(p, b) < VIA_KM || (out.length && km(out[out.length - 1], p) < VIA_KM)) continue;
+    out.push(p);
+  }
+  return out.length > TRACK_MAX ? Array.from({ length: TRACK_MAX }, (_, i) => out[Math.round(i * (out.length - 1) / (TRACK_MAX - 1))]) : out;
+}
+// the road through them, when it is like the line through them (no long ways round a closed border) and can be driven
+// in the hours the journey took (with some to spare)
+async function osrmTrack(pts, hours) {
+  const d = await getJSON(`${OSRM}${pts.map(p => `${p[1]},${p[0]}`).join(';')}?overview=full&geometries=polyline6`);
+  const r = d.code === 'Ok' && d.routes?.[0], path = r ? decode(r.geometry, 6) : [];
+  if (path.length < 2 || km(path[0], pts[0]) > 30 || km(path[path.length - 1], pts[pts.length - 1]) > 30) return null;
+  if (pathKm(path) > 2.2 * pathKm(pts) + 30 || (hours && r.duration / 3600 > hours * 1.3 + 1)) return null;
+  return path;
+}
+
 async function osrmVia(pts) {
   const d = await getJSON(`${OSRM}${pts.map(p => `${p[1]},${p[0]}`).join(';')}?overview=full&geometries=polyline6`);
   const path = d.code === 'Ok' && d.routes?.[0] ? decode(d.routes[0].geometry, 6) : [];
@@ -701,7 +730,9 @@ async function route(trip, clues = null) {
     if (sa) pts = await transitous(sa, sb, trip.mode, trip.date);
   }
   if (!pts && trip.mode === 'drive' && clues) {  // by car: through where your photos put you on the way
-    const via = viaPoints(a, b, clues(trip, a, b));
+    const seen = clues(trip, a, b), hours = driveHours(trip), track = hours ? trackPoints(a, b, seen) : [];
+    if (track.length) { pts = await osrmTrack([a, ...track, b], hours); if (pts) source = 'clues', trip.via = track.length; }
+    const via = pts ? [] : viaPoints(a, b, seen);  // only its day known, or no road like the photos' line: those near the way
     if (via.length) { pts = await osrmVia([a, ...via, b]); if (pts) source = 'clues', trip.via = via.length; }
   }
   if (!pts && ['bus', 'hitch', 'drive'].includes(trip.mode)) pts = await osrm(a, b), source = 'osrm';  // hitchhiking and by car: along the roads
@@ -800,8 +831,12 @@ async function enrich(store, log = console.log) {
 }
 
 // A stay whose place changes is looked up again
-function forgetStay(stay, changes) {
-  if (['place', 'country'].some(k => k in changes && changes[k] !== stay[k]) && !('lat' in changes)) {
+// A stay's place changed: where it is is looked up again. Only its country: the same, unless the spot already lies in
+// that country (inCountry(lat, lon, country): the name put right, as a region's name to its country's code)
+function forgetStay(stay, changes, inCountry = () => false) {
+  if ('lat' in changes) return;
+  const changed = k => k in changes && changes[k] !== stay[k];
+  if (changed('place') || (changed('country') && !(stay.lat != null && inCountry(stay.lat, stay.lon, changes.country)))) {
     delete stay.lat, delete stay.lon, delete stay.unplaced;
   }
 }
@@ -824,4 +859,4 @@ async function bikeRoute(points) {
   return route ? { path: route.geometry.coordinates.map(([lon, lat]) => [lat, lon]), km: route.distance / 1000 } : null;
 }
 
-module.exports = { setRailCache, shortestRail, railGap, railOverpass, viaPoints, bikeRoute, setCoast, km, decode, encode, simplify, plausible, gappy, planTime, startNear, forget, forgetStay, enrich, pick, similar, geocode, placeStay };
+module.exports = { setRailCache, shortestRail, railGap, railOverpass, viaPoints, trackPoints, driveHours, bikeRoute, setCoast, km, decode, encode, simplify, plausible, gappy, planTime, startNear, forget, forgetStay, enrich, pick, similar, geocode, placeStay };
