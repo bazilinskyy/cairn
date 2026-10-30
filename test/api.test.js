@@ -44,7 +44,7 @@ before(async () => {
   const town = (id, name, lat, lon, cc, pop) => [id, name, name, '', lat, lon, 'P', 'PPLA', cc, '', '', '', '', '', pop, '', '', 'Europe/X', '2024-01-01'].join('\t');
   fs.writeFileSync(path.join(dir, 'data', 'cities1000.txt'), [town(710735, 'Chernihiv', 51.505, 31.287, 'UA', 282747),
     town(710719, 'Chernivtsi', 48.292, 25.936, 'UA', 264298), town(2756253, 'Eindhoven', 51.441, 5.478, 'NL', 235691)].join('\n'));
-  fs.writeFileSync(path.join(dir, 'config'), JSON.stringify({ port: PORT, ground_lookups: false }));
+  fs.writeFileSync(path.join(dir, 'config'), JSON.stringify({ port: PORT, ground_lookups: false, photos_write_back: false }));
   fs.writeFileSync(path.join(dir, 'secret'), '{}');
   server = spawn(process.execPath, ['app.js'], {
     cwd: dir, env: { ...process.env, NODE_PATH: path.join(ROOT, 'node_modules') }, stdio: 'ignore',
@@ -251,6 +251,28 @@ test('photos taken from a plane do not count as places you went', async () => {
   const names = (await (await call('GET', '/api/cities?from=2026-11-16&to=2026-11-16')).json()).map(c => c.name);
   assert.ok(names.includes('Chernihiv') && !names.includes('Chernivtsi'), names.join());
   fs.rmSync(path.join(dir, 'data', 'photo_points.json'));
+});
+
+test('photos with no place: listed with their albums, placed by hand (on the map at once), and taken back', async () => {
+  const lib = '/Pictures/Photos Library.photoslibrary/originals/1/';
+  fs.writeFileSync(path.join(dir, 'data', 'photo_unplaced.json'), JSON.stringify([
+    [Date.UTC(2013, 7, 3, 10) / 1000, lib + 'A1B2C3D4-0000-0000-0000-000000000001.jpeg', 'IMG_1.jpg', ['Summer trip'], 0],
+    [Date.UTC(2013, 7, 3, 11) / 1000, lib + 'A1B2C3D4-0000-0000-0000-000000000002.jpeg', 'IMG_2.jpg', [], 0],
+    [Date.UTC(2013, 7, 4, 9) / 1000, lib + 'A1B2C3D4-0000-0000-0000-000000000003.jpeg', 'IMG_3.jpg', ['To delete: older copies (Cairn)'], 0]]));
+  let d = await (await call('GET', '/api/photos/unplaced')).json();
+  assert.deepStrictEqual([d.photos.length, d.albums], [2, ['Summer trip']]);  // not the copies waiting to be deleted
+  assert.deepStrictEqual(d.photos[0].albums, [0]);
+  const ids = d.photos.map(p => p.id);
+  assert.strictEqual((await call('POST', '/api/photos/place', { ids, lat: 999, lon: 0 })).status, 400);
+  assert.deepStrictEqual(await (await call('POST', '/api/photos/place', { ids, lat: 53.9, lon: 27.56, name: 'Minsk' })).json(), { placed: 2, removed: 0 });
+  d = await (await call('GET', '/api/photos/unplaced')).json();
+  assert.deepStrictEqual([d.photos.length, d.placed], [0, 2]);
+  const points = await (await call('GET', '/api/photos/points')).json();
+  assert.strictEqual(points.filter(p => p[2] === 53.9 && p[3] === 27.56).length, 2);  // on the map, as photos with their own place
+  assert.deepStrictEqual(await (await call('POST', '/api/photos/place', { ids, undo: true })).json(), { placed: 0, removed: 2 });
+  assert.strictEqual((await (await call('GET', '/api/photos/unplaced')).json()).photos.length, 2);
+  fs.rmSync(path.join(dir, 'data', 'photo_unplaced.json'));
+  fs.rmSync(path.join(dir, 'data', 'photo_places.json'));
 });
 
 test('backup: out as a .tar.gz with its manifest, and back in (what changed since is undone, the data before kept)', async () => {

@@ -343,6 +343,17 @@ def test_calendar_events():
                    {"start": "2014-12-04", "end": "2014-12-05", "title": "Bus to London", "location": "Seagate bus station Dundee", "calendar": "Life"}], got
 
 
+def test_photos_place_picks_library_photos_not_written():
+    import photos_place
+    with tempfile.TemporaryDirectory() as d:
+        f = Path(d, "photo_places.json")
+        f.write_text(json.dumps({"/x/Photos Library.photoslibrary/originals/A/AAAAAAAA-0000-0000-0000-000000000001.jpeg": {"lat": 1, "lon": 2, "written": True},
+                                 "/elsewhere/IMG_1.jpg": {"lat": 1, "lon": 2}}))
+        assert photos_place.main([str(f)]) == 0  # nothing to write: the one written, the other not in a library
+    m = photos_place.LIBRARY.search("/x/Photos Library.photoslibrary/originals/A/AAAAAAAA-0000-0000-0000-000000000001.jpeg")
+    assert m.group(1) == "AAAAAAAA-0000-0000-0000-000000000001"
+
+
 def test_bank_statements():
     import bank
     with tempfile.TemporaryDirectory() as d:
@@ -356,7 +367,15 @@ def test_bank_statements():
             '"20240105";"ALBERT HEIJN 1234 LEIDEN NLD";"NL00INGB";"";"BA";"Af";"12,50";"Betaalautomaat";"Pasvolgnr: 001"\n'
             '"20240106";"Salaris";"NL00INGB";"NL11";"GT";"Bij";"3000,00";"Overschrijving";""\n'
             '"20240107";"RESTAURANT X MADRID ESP";"NL00INGB";"";"BA";"Af";"30,00";"Betaalautomaat";"Pasvolgnr: 001 Transactie: 1"\n')
+        Path(d, "n26.csv").write_text(
+            '"Booking Date","Value Date","Partner Name","Partner Iban",Type,"Payment Reference","Account Name","Amount (EUR)","Original Amount","Original Currency","Exchange Rate"\n'
+            '2023-05-02,,"MIGROS ISTANBUL",,Presentment,,"Main Account",-20.5,-450,TRY,22.0\n'
+            '2023-05-03,,"HOSTEL X",,"Presentment Refund",,"Main Account",15.0,,,\n'
+            '2023-05-04,,"Friend",NL00,"Credit Transfer",,"Main Account",50.0,,,\n')
         got = bank.read([d])
+    assert [(t["date"], t["amount"], t.get("country"), t.get("refund")) for t in got if t["date"].startswith("2023")] == [
+        ("2023-05-02", -20.5, "TR", None), ("2023-05-03", 15.0, None, True)], got
+    got = [t for t in got if not t["date"].startswith("2023")]
     assert [(t["date"], t["amount"], t["currency"], t["country"]) for t in got] == [
         ("2019-09-13", -45.0, "ILS", "IL"), ("2024-01-05", -12.5, "EUR", "NL"), ("2024-01-07", -30.0, "EUR", "ES")], got
 

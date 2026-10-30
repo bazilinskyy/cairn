@@ -1,10 +1,14 @@
 'use strict';
 // Getting ready (prep.js): a check-in to-do counts for its flight by number or by date, connections share one, a night
-// without a bed is missing, an open to-do about it means it is not reported; spending (spending.js) reads prices
+// without a bed is missing, an open to-do about it means it is not reported; spending (spending.js) reads prices and
+// counts card payments where you were that day, away on a trip or at home
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { parsePrice } = require('../spending');
+const { parsePrice, create: spendingOf } = require('../spending');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const prep = require('../prep');
 
 const km = (a, b) => Math.hypot(a[0] - b[0], (a[1] - b[1]) * Math.cos(a[0] * Math.PI / 180)) * 111.2;
@@ -42,4 +46,21 @@ test('prices in their many spellings', () => {
   assert.deepStrictEqual(parsePrice('4105.50 DKK'), { amount: 4105.5, currency: 'DKK' });
   assert.deepStrictEqual(parsePrice('2 000 KZT'), { amount: 2000, currency: 'KZT' });
   assert.strictEqual(parsePrice(''), null);
+});
+
+test('card spending: each payment where you were that day, on its trip or at home, with the trip\'s stays', () => {
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'cairn-rates-')), 'rates.json');
+  fs.writeFileSync(file, JSON.stringify({ 'PLN|2024-06-18': 0.25 }));
+  const krakow = { id: 1, name: 'Kraków', cc: 'PL' }, delft = { id: 2, name: 'Delft', cc: 'NL' };
+  const s = spendingOf({ file, log: () => {},
+    stays: () => [{ id: 9, what: 'stay', start: '2024-06-18', end: '2024-06-19', price: '30€', lat: 50, lon: 20 }],
+    townAt: () => krakow, dayTowns: () => new Map([['2024-06-18', krakow], ['2024-06-19', krakow], ['2024-06-20', delft], ['2024-06-21', delft]]),
+    trips: () => [{ id: '2024-06-18', start: '2024-06-18', end: '2024-06-19', name: 'Poland', days: 2 }],
+    transactions: () => [{ date: '2024-06-18', amount: -100, currency: 'PLN' }, { date: '2024-06-20', amount: -12.5, currency: 'EUR' },
+      { date: '2024-06-21', amount: 2000, currency: 'EUR' }, { date: '2024-06-19', amount: 5, currency: 'EUR', refund: true }] });
+  const c = s.summary().card;
+  assert.deepStrictEqual([c.eur, c.away, c.payments, c.refunds], [33, 20, 2, 5]);  // the salary is no spending, a refund takes off
+  assert.deepStrictEqual(c.byCountry.map(x => [x.id, x.eur]), [['PL', 20]]);
+  assert.deepStrictEqual(c.byTown.map(x => [x.name, x.eur]), [['Kraków', 20], ['Delft', 13]]);
+  assert.deepStrictEqual(c.byTrip.map(x => [x.name, x.eur, x.stays, x.all]), [['Poland', 20, 30, 50]]);
 });

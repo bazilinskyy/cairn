@@ -21,6 +21,7 @@
   <script src="add.js"></script>
   <script src="review.js"></script>
   <script src="wish.js"></script>
+  <script src="placephotos.js"></script>
   <script src="terrain.js"></script>
   <script src="climb.js"></script>
   <style>
@@ -276,6 +277,28 @@
     .stat-card .value { font-size: 26px; font-weight: 700; color: var(--accent); line-height: 1; }
     .stat-card .sub { font-size: 11px; color: var(--text2); margin-top: 4px; }
 
+    /* placing photos by hand (placephotos.js) */
+    .pp-page { max-width: 1500px; }
+    .pp-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 14px; }
+    .pp-bar select { max-width: 260px; }
+    .pp-cols { display: grid; grid-template-columns: minmax(0, 1fr) 420px; gap: 20px; align-items: start; }
+    .pp-side { position: sticky; top: 64px; }
+    .pp-panel { padding: 16px; }
+    .pp-panel input[type=search] { width: 100%; margin: 10px 0 6px; }
+    #pp-towns { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+    #pp-map { height: 380px; border-radius: 8px; margin-top: 8px; }
+    #pp-map.pp-drop { outline: 3px dashed var(--accent); outline-offset: -3px; }
+    .pp-day { margin-bottom: 18px; }
+    .pp-day-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 6px; }
+    .pp-day-head small { color: var(--text2); }
+    .pp-here { padding: 2px 10px; font-size: 12px; }
+    .pp-thumbs { display: flex; flex-wrap: wrap; gap: 4px; }
+    .pp-ph { position: relative; width: 104px; height: 104px; border-radius: 6px; overflow: hidden; cursor: pointer; background: var(--surface2, #222); outline: 3px solid transparent; outline-offset: -3px; }
+    .pp-ph img { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; }
+    .pp-ph.sel { outline-color: var(--accent); }
+    .pp-ph.sel::after { content: '✓'; position: absolute; top: 4px; right: 6px; color: #fff; font-weight: 700; text-shadow: 0 0 3px #000; }
+    .pp-video { position: absolute; left: 6px; bottom: 4px; color: #fff; text-shadow: 0 0 3px #000; }
+    @media (max-width: 900px) { .pp-cols { grid-template-columns: 1fr; } .pp-side { position: static; order: -1; } .pp-ph { width: 30vw; height: 30vw; max-width: 104px; max-height: 104px; } }
     .chart-section { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 24px; margin-bottom: 24px; }
     .chart-section h3 { font-size: 13px; font-weight: 600; color: var(--text2); text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 18px; }
     .chart-wrap { height: 240px; position: relative; }
@@ -678,6 +701,18 @@
     </div>
   </div>
 
+  <!-- PLACING PHOTOS BY HAND (placephotos.js) -->
+  <div id="tab-place-photos" class="tab-content">
+    <div class="stats-page pp-page">
+      <div class="sp-head">
+        <button class="btn btn-ghost" onclick="document.querySelector('.tab[data-tab=&quot;trips&quot;]').click()">← Trips</button>
+        <h2>Place photos</h2>
+      </div>
+      <p class="sp-note" style="margin: -12px 0 16px">Your photos with no place: select them, then place them in a town or drag them onto the map.</p>
+      <div id="pp-body"></div>
+    </div>
+  </div>
+
   <!-- YEAR IN REVIEW (review.js) -->
   <div id="tab-year" class="tab-content">
     <div class="stats-page">
@@ -693,7 +728,7 @@
   <!-- TRIPS (trips.js): the list, and a page per trip -->
   <div id="tab-trips" class="tab-content">
     <div class="stats-page">
-      <div class="sp-head"><h2>Trips</h2><a href="#wish" class="btn btn-ghost" onclick="event.preventDefault(); openWish()">⭐ Wish list</a></div>
+      <div class="sp-head"><h2>Trips</h2><a href="#wish" class="btn btn-ghost" onclick="event.preventDefault(); openWish()">⭐ Wish list</a><a href="#place-photos" class="btn btn-ghost" onclick="event.preventDefault(); openPlacePhotos()">📍 Place photos</a></div>
       <p class="sp-note" style="margin: -12px 0 20px">Runs of days away from home, found in your flights, trains, stays, activities, photos and Timeline.</p>
       <div id="trips-body"></div>
     </div>

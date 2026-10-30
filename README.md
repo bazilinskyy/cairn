@@ -237,6 +237,7 @@ No account is needed for any of these; each is asked at most about once a second
 | `spending.js` | what the stays cost, in euros |
 | `review.js`, `public/review.js` | a year in review |
 | `public/wish.js`, `imports/saved_places.py` | the wish list, and Google Maps' saved places |
+| `public/placephotos.js`, `imports/photos_place.py` | placing photos with no place by hand, and writing those places into the Photos library |
 | `imports/checkins.py`, `calendar_events.py`, `bank.py`, `ovchipkaart.py` | data downloads: check-ins, posts and rides; calendars; bank payments; OV-chipkaart journeys |
 | `things.js`, `todotrips.js` | your Things to-dos (read-only), and the trips they mention that nothing else knows |
 | `backup.js` | a backup of all imported and added data, and restoring one |
@@ -591,8 +592,10 @@ Only the small `.json` file Google puts beside each photo is read (when it was t
 On the Mac that runs Cairn, with the photos in its own Photos library (Google's imported into it, for example with `osxphotos import`), `--points data/photo_points.json` also writes every photo's exact place, time and file for the photo layer, trips and town pages, and `--albums data/photo_albums.json` the library's albums for the album suggestions (below), so neither the Takeout folder nor any export is needed once the photos are in the library:
 
 ```
-uv run --with osxphotos python imports/photos.py --points data/photo_points.json --albums data/photo_albums.json
+uv run --with osxphotos python imports/photos.py --points data/photo_points.json --albums data/photo_albums.json --unplaced data/photo_unplaced.json
 ```
+
+`--unplaced data/photo_unplaced.json` lists the photos with no place, with the albums they are in, for **Trips → 📍 Place photos** (`#place-photos`): they are shown by day; select one or many (a click, shift-click for a run, a day's checkbox, or filter by album or year and select all shown), then place them in a town (search it, or the town Cairn has you in that day, one click) or drag them onto the map to put them at that exact spot. A double-click shows a photo whole. Each placing can be undone on the page. Places are kept in `data/photo_places.json`, are on the map and count for your days at once, and are written into the Photos library itself in the background half a minute later (`imports/photos_place.py`, never while another job drives Photos; `"photos_write_back": false` in `config` keeps them in Cairn only). An undo after that only takes the place out of Cairn. From the laptop it works through the ssh tunnel (see [Running on an always-on Mac](#running-on-an-always-on-mac)).
 
 **Google Maps Timeline.** Export it on your phone (Android: Settings > Location > Location services > Timeline > Export Timeline data; iPhone: Google Maps > Settings > Personal content > Export Timeline data), or use an older Takeout of Location History, then:
 
@@ -878,6 +881,9 @@ Moving to MongoDB later only needs the data layer in `app.js` (the `flights` arr
 | `PUT`, `DELETE` | `/api/stays/:id` | change or delete one; a new `place` or `country` is looked up again. A deleted stay's code is kept in `data/stays.removed.json`, so a mail sending that booking again (the history import) does not bring it back |
 | `GET` | `/api/photos`, `/api/timeline` | the files the import scripts wrote (empty when there are none) |
 | `GET` | `/api/photos/points` | every photo in `data/photo_points.json` as `[id, unix time, lat, lon, video]` (gzip) |
+| `GET` | `/api/photos/unplaced` | the photos with no place not placed yet, `{photos: [{id, t, name, albums, video}], albums, days: {day: town Cairn has you in}, placed}` |
+| `GET` | `/api/photos/unplaced/:id/thumb`, `/api/photos/unplaced/:id/full` | one of them as a JPEG |
+| `POST` | `/api/photos/place` | `{ids, lat, lon, name}` places those photos there; `{ids, undo: true}` takes the places back |
 | `GET` | `/api/photos/:id/thumb`, `/api/photos/:id/full` | a photo as a JPEG at most 480 px, or whole (made with `sips`, kept in `data/photo_cache`); a video's first frame, or the video |
 | `GET` | `/api/climbs/:id/photos` | the photos taken going up a climb: `id`, `t`, `lat`, `lon`, `video`, `ride`, `way` |
 | `GET` | `/api/climbs/:id/gpx?from=lat,lon&name=` | a GPX of a bike route from a place (a stay, within 150 km) to the climb's top and back |

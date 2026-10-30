@@ -66,7 +66,7 @@ def from_library(path):
         sys.exit("osxphotos is missing: run this with  uv run --with osxphotos python imports/photos.py")
     usual = Path("~/Pictures/Photos Library.photoslibrary").expanduser()
     try:
-        db = osxphotos.PhotosDB(dbfile=path or (str(usual) if usual.exists() else None))
+        db = library_db(path or (str(usual) if usual.exists() else None))
     except FileNotFoundError:
         sys.exit("no Photos library found: name it with --library")
     for p in db.photos():
@@ -75,11 +75,21 @@ def from_library(path):
                p.path, p.original_filename)
 
 
+_dbs = {}
+
+
+def library_db(path):
+    """The library's osxphotos database, read once per run (it takes a while)."""
+    import osxphotos
+    if path not in _dbs:
+        _dbs[path] = osxphotos.PhotosDB(dbfile=path)
+    return _dbs[path]
+
+
 def library_albums(path, out):
     """The albums of an Apple Photos library with their photos, for Cairn's album suggestions (albums.js), which read it
     instead of a Google Takeout folder: [{"album", "photos": [[file name, file path, unix time or 0, has a place]]}]."""
-    import osxphotos
-    db = osxphotos.PhotosDB(dbfile=path)
+    db = library_db(path)
     albums = {}
     for p in db.photos():
         if not p.path:
@@ -90,6 +100,20 @@ def library_albums(path, out):
             albums.setdefault(a, []).append(row)
     Path(out).write_text(json.dumps([{"album": a, "photos": rows} for a, rows in sorted(albums.items())], separators=(",", ":")))
     print(f"{len(albums)} albums written to {out}")
+
+
+def library_unplaced(path, out):
+    """The photos and videos of an Apple Photos library that have no place, for Cairn's page to place them by hand
+    (#place-photos): [[unix time or 0, file path, file name, [album, ...], 1 for a video else 0]], by time."""
+    rows = []
+    for p in library_db(path).photos(images=True, movies=True):
+        lat, _ = p.location
+        if lat is not None or not p.path:
+            continue
+        rows.append([int(p.date.timestamp()) if p.date else 0, p.path, p.original_filename, sorted(p.albums), 1 if p.ismovie else 0])
+    rows.sort(key=lambda r: r[0])
+    Path(out).write_text(json.dumps(rows, separators=(",", ":"), ensure_ascii=False))
+    print(f"{len(rows)} photos with no place written to {out}")
 
 
 def from_folder(folder):
@@ -187,6 +211,8 @@ def main(argv=None):
     data = Path(__file__).resolve().parent.parent / "data"  # Cairn's data folder in a checkout, else here
     ap.add_argument("--albums", metavar="FILE", help="also the library's albums with their photos, for Cairn's album "
                     "suggestions (on the Mac that runs Cairn: data/photo_albums.json)")
+    ap.add_argument("--unplaced", metavar="FILE", help="also the library's photos with no place, for Cairn's page to place "
+                    "them by hand (on the Mac that runs Cairn: data/photo_unplaced.json)")
     ap.add_argument("--out", default=str(data / "photos.json" if data.is_dir() else Path("photos.json")))
     ap.add_argument("--send", metavar="HOST:PATH", help="also copy the result there with scp")
     args = ap.parse_args(argv)
@@ -201,8 +227,11 @@ def main(argv=None):
                      if s[3] is not None and s[0] is not None and s[1] is not None and not (s[0] == 0 and s[1] == 0))
         Path(args.points).write_text(json.dumps(pts, separators=(",", ":")))
         print(f"{len(pts)} photos with a place and time, written to {args.points}")
+    library = (args.library or [None])[0] or str(Path("~/Pictures/Photos Library.photoslibrary").expanduser())
     if args.albums:
-        library_albums((args.library or [None])[0] or str(Path("~/Pictures/Photos Library.photoslibrary").expanduser()), args.albums)
+        library_albums(library, args.albums)
+    if args.unplaced:
+        library_unplaced(library, args.unplaced)
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(result, separators=(",", ":")))

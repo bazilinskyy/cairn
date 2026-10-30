@@ -130,7 +130,9 @@ function create({ file, cache, readImport, extra = () => [] }) {
     warm,
     full: id => jpeg(id, 0),
     // a thumbnail of a file not in the index (an album's cover): the caller decides which files may be shown
-    thumbOfFile: file => jpegOf(crypto.createHash('sha1').update(file).digest('hex').slice(0, 12), file, THUMB)
+    thumbOfFile: file => jpegOf(crypto.createHash('sha1').update(file).digest('hex').slice(0, 12), file, THUMB),
+    // and the whole of it (a photo with no place, to look at before placing it)
+    fullOfFile: file => jpegOf(crypto.createHash('sha1').update(file).digest('hex').slice(0, 12), file, 0)
   };
 }
 

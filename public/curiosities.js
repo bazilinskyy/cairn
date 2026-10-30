@@ -65,17 +65,18 @@ async function renderCuriosities() {
   box.innerHTML = html;
 }
 
-// What the stays cost (spending.js): per year, country and town, the dearest and cheapest nights
+// What the stays cost (spending.js): per year, country and town, the dearest and cheapest nights; and the card
+// payments and cash, each where you were that day: per year (away and at home), country, town and trip
 async function renderSpending() {
   const box = document.getElementById('spending');
   const d = await fetch('/api/spending').then(r => (r.ok ? r.json() : null)).catch(() => null);
-  if (!box || !d || !d.priced) return;
+  if (!box || !d || (!d.priced && !d.card)) return;
   const eur = n => `€${Math.round(n).toLocaleString()}`;
   const card = (label, value, sub = '') => `<div class="stat-card"><div class="label">${label}</div><div class="value">${value}</div>${sub ? `<div class="sub">${sub}</div>` : ''}</div>`;
   const night = x => `${escapeHTML(x.hotel || x.place || '')}, ${escapeHTML(x.place || '')} · ${fmtDate(x.start)}`;
   const bars = (rows, label) => { const max = Math.max(...rows.map(r => r.eur)); return `<div class="curio-bars" style="grid-template-columns: minmax(0, max-content) 1fr max-content">` +
     rows.map(r => `<span>${label(r)}</span><div class="bar" style="width:${Math.max(1, r.eur / max * 100)}%"></div><span>${eur(r.eur)} · ${eur(r.perNight)}/night</span>`).join('') + '</div>'; };
-  box.innerHTML = '<div class="chart-section" style="margin-top:24px"><h3>Spending on stays</h3><div class="stat-cards curio-cards">' +
+  box.innerHTML = (d.priced ? '<div class="chart-section" style="margin-top:24px"><h3>Spending on stays</h3><div class="stat-cards curio-cards">' +
     card('Spent on stays', eur(d.eur), `${d.nights.toLocaleString()} nights${d.ahead ? ` · ${eur(d.ahead)} booked ahead` : ''}`) +
     card('Per night', eur(d.perNight), `on average`) +
     (d.dearest[0] ? card('Dearest night', eur(d.dearest[0].perNight), night(d.dearest[0])) : '') +
@@ -85,7 +86,28 @@ async function renderSpending() {
     `<div><h4>By country</h4>${bars(d.byCountry.slice(0, 12), r => `${flagOf(r.id)}${escapeHTML(new Intl.DisplayNames(['en'], { type: 'region' }).of(r.id) || r.id)}`)}</div></div>` +
     `<p style="margin-top:12px"><b>Towns:</b> ${d.byTown.map(t => `${flagOf(t.cc)}<a href="#" class="sp-link" onclick="event.preventDefault(); openCityReport(${t.id})">${escapeHTML(t.name)}</a> ${eur(t.eur)}`).join(' · ')}</p>` +
     `<p class="sp-note">Only stays with a price in their booking email or trip doc (${d.priced} of ${d.stays}), in euros on the day of the stay ` +
-    '(ECB rates; for currencies the ECB does not publish, today\'s rate). Flights, trains and bank card spending are not in it yet.</p></div>';
+    '(ECB rates; for currencies the ECB does not publish, today\'s rate). Card payments are below; flights and trains are not in it yet.</p></div>' : '') +
+    (d.card ? cardSpending(d.card, eur, card) : '');
+}
+
+function cardSpending(c, eur, card) {
+  const country = cc => `${flagOf(cc)}${escapeHTML(new Intl.DisplayNames(['en'], { type: 'region' }).of(cc) || cc)}`;
+  const bars = (rows, label, value = r => r.eur, sub = r => `${eur(r.eur)} · ${r.days} day${r.days === 1 ? '' : 's'}`) => {
+    const max = Math.max(1, ...rows.map(value));
+    return `<div class="curio-bars" style="grid-template-columns: minmax(0, max-content) 1fr max-content">` +
+      rows.map(r => `<span>${label(r)}</span><div class="bar" style="width:${Math.max(1, value(r) / max * 100)}%"></div><span>${sub(r)}</span>`).join('') + '</div>';
+  };
+  const trip = t => `<a href="#trip=${t.id}" class="sp-link" onclick="event.preventDefault(); openTrip('${t.id}')">${escapeHTML(t.name)}</a> <small>${fmtDate(t.start)}</small>`;
+  return '<div class="chart-section" style="margin-top:24px"><h3>Card spending</h3><div class="stat-cards curio-cards">' +
+    card('Card and cash', eur(c.eur), `${c.payments.toLocaleString()} payments, ${fmtDate(c.first)} – ${fmtDate(c.last)}`) +
+    card('Away on trips', eur(c.away), `${c.awayDays.toLocaleString()} days · ${eur(c.awayDays ? c.away / c.awayDays : 0)}/day`) +
+    card('At home', eur(c.eur - c.away), 'the days of no trip') + '</div>' +
+    `<div class="music-cols" style="margin-top:16px"><div><h4>By year</h4>${bars(c.byYear, r => r.id, r => r.eur, r => `${eur(r.eur)} · away ${eur(r.away)}`)}</div>` +
+    `<div><h4>By country (on trips)</h4>${bars(c.byCountry.slice(0, 12), r => country(r.id))}</div></div>` +
+    `<h4 style="margin-top:16px">Trips: card and stays</h4>${bars(c.byTrip.slice(0, 15), trip, r => r.all, r => `${eur(r.all)} · card ${eur(r.eur)}${r.stays ? ` + stays ${eur(r.stays)}` : ''}`)}` +
+    `<p style="margin-top:12px"><b>Towns:</b> ${c.byTown.map(t => `${flagOf(t.cc)}<a href="#" class="sp-link" onclick="event.preventDefault(); openCityReport(${t.id})">${escapeHTML(t.name)}</a> ${eur(t.eur)}`).join(' · ')}</p>` +
+    '<p class="sp-note">Card payments and cash withdrawals from your bank statements (imports/bank.py), in euros on the day\'s rate, each counted ' +
+    'where Cairn has you that day (the town most of that day\'s places are in). Away: the days of a trip; at home: all other days. A trip\'s total adds what its stays cost.</p></div>';
 }
 
 window.addEventListener('load', () => setTimeout(renderCuriosities, 2000));

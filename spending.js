@@ -27,8 +27,9 @@ function parsePrice(text) {
 }
 
 // stays(): Cairn's stays; townAt([lat, lon]): its town (cities.js); transactions(): your card payments and cash
-// withdrawals (imports/bank.py: [{ date, amount (negative: spent), currency, description, country }])
-function create({ stays, townAt, file, transactions = () => [], log = console.log }) {
+// withdrawals (imports/bank.py: [{ date, amount (negative: spent), currency, description, country }]); dayTowns(): the
+// town you were in each day (Map day -> { id, name, cc }); trips(): the trips ({ id, start, end, name })
+function create({ stays, townAt, file, transactions = () => [], dayTowns = () => new Map(), trips = () => [], log = console.log }) {
   let rates = null, filling = false;
   const load = () => {
     if (!rates) { try { rates = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (_) { rates = {}; } }
@@ -80,6 +81,42 @@ function create({ stays, townAt, file, transactions = () => [], log = console.lo
     return out;
   }
 
+  // the card payments and cash withdrawals in euros, each where you were that day and on which trip: per year (away
+  // and at home), country, town and trip, the trips with their stays' cost too; null without any
+  function cardSummary() {
+    const r = load(), needed = [], rows = [], ts = trips() || [], towns = dayTowns();
+    for (const t of transactions() || []) {
+      if (!(t.amount < 0 || (t.refund && t.amount > 0)) || !t.date) continue;  // a refund (a booking cancelled) takes off
+      const rate = t.currency === 'EUR' ? 1 : r[key(t.currency, t.date)];
+      if (rate === undefined) { needed.push([t.currency, t.date]); continue; }
+      if (!rate) continue;
+      const town = towns.get(t.date) || null, trip = ts.find(x => x.start <= t.date && t.date <= x.end);
+      rows.push({ day: t.date, eur: -t.amount * rate, town, cc: town?.cc || t.country || '', trip, refund: !!t.refund });
+    }
+    fill(needed);
+    if (!rows.length) return null;
+    const sum = (list, k) => {
+      const m = new Map();
+      list.forEach(x => { const id = k(x); if (!id) return; const v = m.get(id) || { eur: 0, payments: 0, days: new Set() }; v.eur += x.eur; if (!x.refund) v.payments++, v.days.add(x.day); m.set(id, v); });
+      return [...m].map(([id, v]) => ({ id, eur: Math.round(v.eur), payments: v.payments, days: v.days.size }));
+    };
+    const away = rows.filter(x => x.trip), total = list => Math.round(list.reduce((n, x) => n + x.eur, 0));
+    const years = sum(rows, x => x.day.slice(0, 4)), awayYears = new Map(sum(away, x => x.day.slice(0, 4)).map(y => [y.id, y.eur]));
+    const stayCost = new Map(ts.map(t => [t.id, 0]));
+    priced().forEach(x => { const t = ts.find(t => t.start <= x.stay.start && x.stay.start <= t.end); if (t) stayCost.set(t.id, stayCost.get(t.id) + x.eur); });
+    const byTrip = sum(away, x => x.trip.id).map(v => { const t = ts.find(x => x.id === v.id);
+      return { ...v, name: t.name, start: t.start, end: t.end, tripDays: t.days, stays: Math.round(stayCost.get(t.id) || 0), all: v.eur + Math.round(stayCost.get(t.id) || 0) }; });
+    return {
+      eur: total(rows), payments: rows.filter(x => !x.refund).length, refunds: Math.round(-rows.filter(x => x.refund).reduce((n, x) => n + x.eur, 0)), first: rows.reduce((a, x) => (x.day < a ? x.day : a), rows[0].day), last: rows.reduce((a, x) => (x.day > a ? x.day : a), rows[0].day),
+      away: total(away), awayDays: new Set(away.filter(x => !x.refund).map(x => x.day)).size,
+      byYear: years.map(y => ({ ...y, away: awayYears.get(y.id) || 0 })).sort((a, b) => a.id.localeCompare(b.id)),
+      byCountry: sum(away, x => x.cc).sort((a, b) => b.eur - a.eur),
+      byTown: sum(rows, x => x.town && `${x.town.id}|${x.town.name}|${x.town.cc}`).sort((a, b) => b.eur - a.eur).slice(0, 20)
+        .map(t => { const [id, name, cc] = t.id.split('|'); return { ...t, id: +id, name, cc }; }),
+      byTrip: byTrip.sort((a, b) => b.all - a.all)
+    };
+  }
+
   // the totals: per year, country and town, the dearest and cheapest nights, how many stays had a price
   function summary() {
     const list = priced(), all = stays().filter(s => s.what !== 'car'), today = new Date().toISOString().slice(0, 10);
@@ -100,7 +137,8 @@ function create({ stays, townAt, file, transactions = () => [], log = console.lo
         .map(t => { const [id, name, cc] = t.id.split('|'); return { ...t, id: +id, name, cc }; }),
       byProvider: sum(past, x => x.stay.provider || 'other').sort((a, b) => b.eur - a.eur),
       dearest: byNight.slice(0, 5).map(one), cheapest: byNight.slice(-5).reverse().map(one),
-      ahead: Math.round(list.filter(x => x.stay.start > today).reduce((n, x) => n + x.eur, 0))
+      ahead: Math.round(list.filter(x => x.stay.start > today).reduce((n, x) => n + x.eur, 0)),
+      card: cardSummary()
     };
   }
 
@@ -118,12 +156,12 @@ function create({ stays, townAt, file, transactions = () => [], log = console.lo
     const r = load(), needed = [];
     let eur = 0, payments = 0;
     for (const t of transactions() || []) {
-      if (t.date < start || t.date > end || !(t.amount < 0)) continue;
+      if (t.date < start || t.date > end || !(t.amount < 0 || (t.refund && t.amount > 0))) continue;
       const rate = t.currency === 'EUR' ? 1 : r[key(t.currency, t.date)];
       if (rate === undefined) { needed.push([t.currency, t.date]); continue; }
       if (!rate) continue;
       eur += -t.amount * rate;
-      payments++;
+      if (!t.refund) payments++;
     }
     fill(needed);
     return payments ? { eur: Math.round(eur), payments } : null;

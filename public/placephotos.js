@@ -1,0 +1,213 @@
+'use strict';
+// Placing photos by hand (#place-photos): the library's photos with no place (/api/photos/unplaced), by day, with the
+// albums they are in. Select one or many (a click, shift-click for a run, a day's or an album's at once), then place them
+// in a town (search, or the town Cairn has you in that day) or drag them onto the map at the exact spot. Each placing can
+// be undone. Uses the page's globals (escapeHTML, fmtDate, BASEMAPS, prefs, toneMap, toast).
+
+const PP_DAYS = 40;  // days drawn at a time
+let pp = null;       // { photos, albums, days, shown (filtered list), selected: Set, last: index, map, markers, undo: [] }
+
+async function openPlacePhotos() {
+  document.querySelectorAll('.tab[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === 'trips'));
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+  document.getElementById('tab-place-photos').classList.add('active');
+  if (location.hash !== '#place-photos') history.replaceState(null, '', '#place-photos');
+  const box = document.getElementById('pp-body');
+  box.innerHTML = '<p class="sp-note">Gathering your photos with no place…</p>';
+  const d = await fetch('/api/photos/unplaced').then(r => (r.ok ? r.json() : null)).catch(() => null);
+  if (!d) { box.innerHTML = '<p class="sp-note">Could not load the photos.</p>'; return; }
+  pp = { ...d, selected: new Set(), last: -1, limit: PP_DAYS, undo: pp?.undo || [], markers: null, map: pp?.map || null };
+  window.scrollTo(0, 0);
+  const years = [...new Set(d.photos.filter(p => p.t).map(p => new Date(p.t * 1000).getUTCFullYear()))].sort();
+  const albumCount = new Map();
+  d.photos.forEach(p => p.albums.forEach(a => albumCount.set(a, (albumCount.get(a) || 0) + 1)));
+  box.innerHTML = `
+    <div class="pp-bar">
+      <b id="pp-count"></b>
+      <select id="pp-album" aria-label="Album"><option value="">All albums</option><option value="none">Not in an album</option>${
+        d.albums.map((a, i) => [a, i]).filter(([, i]) => albumCount.get(i)).sort((x, y) => x[0].localeCompare(y[0]))
+          .map(([a, i]) => `<option value="${i}">${escapeHTML(a)} (${albumCount.get(i)})</option>`).join('')}</select>
+      <select id="pp-year" aria-label="Year"><option value="">All years</option>${years.map(y => `<option>${y}</option>`).join('')}<option value="0">No date</option></select>
+      <button class="btn btn-ghost" onclick="ppSelectShown()">Select all shown</button>
+      <button class="btn btn-ghost" onclick="ppClear()">Clear</button>
+    </div>
+    <div class="pp-cols">
+      <div id="pp-grid"></div>
+      <div class="pp-side">
+        <div class="chart-section pp-panel">
+          <div id="pp-sel">Nothing selected</div>
+          <input id="pp-town" type="search" placeholder="Place them in a town…" autocomplete="off" aria-label="Town">
+          <div id="pp-towns"></div>
+          <p class="sp-note">Or drag photos onto the map to place them at that exact spot. Dragging a selected photo moves
+            all of the selection; double-click a photo to see it whole.</p>
+          <div id="pp-map" class="mini-map"></div>
+          <div id="pp-undo"></div>
+          <p class="sp-note">Places are kept in Cairn at once and written into Apple Photos on this Mac in the background.
+            ${d.placed ? `${d.placed.toLocaleString()} placed so far.` : ''}</p>
+        </div>
+      </div>
+    </div>`;
+  document.getElementById('pp-album').onchange = document.getElementById('pp-year').onchange = () => { pp.limit = PP_DAYS; ppFilter(); };
+  let timer = null;
+  document.getElementById('pp-town').oninput = e => { clearTimeout(timer); timer = setTimeout(() => ppTowns(e.target.value), 250); };
+  ppMap();
+  ppFilter();
+  ppUndoBar();
+}
+
+// the photos the filters leave, and the grid of them by day
+function ppFilter() {
+  const album = document.getElementById('pp-album').value, year = document.getElementById('pp-year').value;
+  pp.shown = pp.photos.filter(p => (album === '' || (album === 'none' ? !p.albums.length : p.albums.includes(+album)))
+    && (year === '' || (year === '0' ? !p.t : p.t && new Date(p.t * 1000).getUTCFullYear() === +year)));
+  pp.last = -1;
+  ppDraw();
+}
+
+function ppDraw() {
+  const grid = document.getElementById('pp-grid'), byDay = new Map();
+  pp.shown.forEach((p, i) => { const d = p.t ? new Date(p.t * 1000).toISOString().slice(0, 10) : ''; if (!byDay.has(d)) byDay.set(d, []); byDay.get(d).push([p, i]); });
+  const days = [...byDay.entries()];
+  grid.innerHTML = days.slice(0, pp.limit).map(([day, list]) => {
+    const albums = [...new Set(list.flatMap(([p]) => p.albums))].map(a => pp.albums[a]);
+    const at = pp.days[day];
+    return `<div class="pp-day" data-day="${day}">
+      <div class="pp-day-head">
+        <label><input type="checkbox" onchange="ppSelectDay('${day}', this.checked)"> <b>${day ? fmtDate(day) : 'No date'}</b> · ${list.length}</label>
+        ${albums.length ? `<small>in ${albums.slice(0, 3).map(escapeHTML).join(', ')}${albums.length > 3 ? ` +${albums.length - 3}` : ''}</small>` : ''}
+        ${at ? `<button class="btn btn-ghost pp-here" title="Cairn has you in ${escapeHTML(at.name)} that day" onclick="ppPlaceDay('${day}')">📍 ${flagOf(at.cc)}${escapeHTML(at.name)}</button>` : ''}
+      </div>
+      <div class="pp-thumbs">${list.map(([p, i]) => `<div class="pp-ph${pp.selected.has(p.id) ? ' sel' : ''}" data-id="${p.id}" data-i="${i}" draggable="true"
+        title="${escapeHTML(p.name || '')}${p.t ? ' · ' + new Date(p.t * 1000).toISOString().slice(11, 16) : ''}${p.albums.length ? ' · ' + escapeHTML(p.albums.map(a => pp.albums[a]).join(', ')) : ''}">
+        <img loading="lazy" src="/api/photos/unplaced/${p.id}/thumb" alt="">${p.video ? '<span class="pp-video">▶</span>' : ''}</div>`).join('')}</div>
+    </div>`;
+  }).join('') + (days.length > pp.limit ? `<button class="btn btn-ghost" onclick="pp.limit += ${PP_DAYS}; ppDraw()">Show more days (${days.length - pp.limit} left)</button>` : '')
+    + (!days.length ? '<p class="sp-note">No photos without a place here.</p>' : '');
+  grid.querySelectorAll('.pp-ph').forEach(el => {
+    el.onclick = e => ppClick(el, e);
+    el.ondblclick = () => window.open(`/api/photos/unplaced/${el.dataset.id}/full`, '_blank');
+    el.ondragstart = e => {
+      const ids = pp.selected.has(el.dataset.id) ? [...pp.selected] : [el.dataset.id];
+      e.dataTransfer.setData('text/plain', JSON.stringify(ids));
+      e.dataTransfer.effectAllowed = 'move';
+    };
+  });
+  ppCount();
+}
+
+function ppClick(el, e) {
+  const i = +el.dataset.i, id = el.dataset.id;
+  if (e.shiftKey && pp.last >= 0) {  // a run, from the last clicked
+    const [a, b] = [Math.min(pp.last, i), Math.max(pp.last, i)];
+    pp.shown.slice(a, b + 1).forEach(p => pp.selected.add(p.id));
+  } else if (pp.selected.has(id)) pp.selected.delete(id);
+  else pp.selected.add(id);
+  pp.last = i;
+  ppMarks();
+}
+function ppSelectDay(day, on) {
+  pp.shown.forEach(p => { if ((p.t ? new Date(p.t * 1000).toISOString().slice(0, 10) : '') === day) on ? pp.selected.add(p.id) : pp.selected.delete(p.id); });
+  ppMarks();
+}
+function ppSelectShown() { pp.shown.forEach(p => pp.selected.add(p.id)); ppMarks(); }
+function ppClear() { pp.selected.clear(); ppMarks(); }
+function ppMarks() {
+  document.querySelectorAll('#pp-grid .pp-ph').forEach(el => el.classList.toggle('sel', pp.selected.has(el.dataset.id)));
+  ppCount();
+}
+function ppCount() {
+  document.getElementById('pp-count').textContent = `${pp.photos.length.toLocaleString()} photos with no place` +
+    (pp.shown.length !== pp.photos.length ? ` · ${pp.shown.length.toLocaleString()} shown` : '');
+  const n = pp.selected.size;
+  document.getElementById('pp-sel').innerHTML = n ? `<b>${n.toLocaleString()} selected</b>` : 'Nothing selected: click photos, shift-click for a run, or tick a day';
+}
+
+// towns by name (/api/towns): a click places the selection there
+async function ppTowns(q) {
+  const box = document.getElementById('pp-towns');
+  if (q.trim().length < 2) { box.innerHTML = ''; return; }
+  const list = await fetch(`/api/towns?q=${encodeURIComponent(q.trim())}`).then(r => (r.ok ? r.json() : [])).catch(() => []);
+  box.innerHTML = list.slice(0, 8).map((t, i) => `<button class="btn btn-ghost pp-town" data-i="${i}">${flagOf(t.cc)}${escapeHTML(t.name)} <small>${t.cc}</small></button>`).join('');
+  box.querySelectorAll('.pp-town').forEach(b => { b.onclick = () => {
+    const t = list[+b.dataset.i];
+    if (!pp.selected.size) return toast('Select photos first', 'error');
+    ppPlace([...pp.selected], t.lat, t.lon, t.name);
+  }; });
+}
+
+function ppPlaceDay(day) {
+  const at = pp.days[day];
+  const inDay = pp.shown.filter(p => (p.t ? new Date(p.t * 1000).toISOString().slice(0, 10) : '') === day);
+  const chosen = inDay.filter(p => pp.selected.has(p.id));
+  ppPlace((chosen.length ? chosen : inDay).map(p => p.id), at.lat, at.lon, at.name);
+}
+
+// placed: gone from the list, a dot on the map, and a line to undo it
+async function ppPlace(ids, lat, lon, name) {
+  if (!ids.length) return;
+  const r = await fetch('/api/photos/place', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids, lat, lon, name }) })
+    .then(x => (x.ok ? x.json() : null)).catch(() => null);
+  if (!r) return toast('Could not place them', 'error');
+  const gone = new Set(ids), photos = pp.photos.filter(p => gone.has(p.id));
+  pp.photos = pp.photos.filter(p => !gone.has(p.id));
+  ids.forEach(id => pp.selected.delete(id));
+  const marker = L.circleMarker([lat, lon], { radius: 7, color: '#fff', weight: 1.5, fillColor: mapVar('--photo'), fillOpacity: 0.9 })
+    .bindTooltip(`${ids.length} photo${ids.length > 1 ? 's' : ''}${name ? ` · ${escapeHTML(name)}` : ''}`).addTo(pp.markers);
+  pp.undo.unshift({ ids, photos, name: name || `${lat.toFixed(4)}, ${lon.toFixed(4)}`, marker });
+  pp.undo = pp.undo.slice(0, 10);
+  toast(`Placed ${ids.length} photo${ids.length > 1 ? 's' : ''}${name ? ` in ${name}` : ' on the map'}`);
+  const keep = new Set(pp.shown.map(p => p.id));
+  pp.shown = pp.photos.filter(p => keep.has(p.id));
+  ppDraw();
+  ppUndoBar();
+}
+
+async function ppUndo(i) {
+  const u = pp.undo[i];
+  if (!u) return;
+  const r = await fetch('/api/photos/place', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: u.ids, undo: true }) })
+    .then(x => (x.ok ? x.json() : null)).catch(() => null);
+  if (!r) return toast('Could not undo', 'error');
+  pp.photos = [...pp.photos, ...u.photos].sort((a, b) => (a.t || 0) - (b.t || 0));
+  pp.markers.removeLayer(u.marker);
+  pp.undo.splice(i, 1);
+  ppFilter();
+  ppUndoBar();
+}
+
+function ppUndoBar() {
+  const box = document.getElementById('pp-undo');
+  if (box) box.innerHTML = pp.undo.length ? '<p><b>Placed just now</b></p>' + pp.undo.map((u, i) =>
+    `<p><small>${u.ids.length} photo${u.ids.length > 1 ? 's' : ''} · ${escapeHTML(u.name)}</small> <button class="btn btn-ghost" onclick="ppUndo(${i})">Undo</button></p>`).join('') : '';
+}
+
+// the map: photos dropped on it are placed where they fall
+function ppMap() {
+  if (pp.map) { pp.map.remove(); pp.map = null; }
+  const el = document.getElementById('pp-map');
+  el.dataset.basemap = BASEMAPS[prefs.basemap] ? prefs.basemap : 'auto';
+  pp.map = L.map(el, { zoomControl: true, worldCopyJump: true }).setView([48, 15], 4);
+  toneMap(pp.map);
+  const b = BASEMAPS[prefs.basemap] || BASEMAPS.auto, [url, attribution, maxZoom = 19] = b.tiles;
+  L.tileLayer(url, { attribution, maxZoom }).addTo(pp.map);
+  pp.markers = L.layerGroup().addTo(pp.map);
+  pp.undo.forEach(u => u.marker.addTo(pp.markers));
+  el.addEventListener('dragover', e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; el.classList.add('pp-drop'); });
+  el.addEventListener('dragleave', () => el.classList.remove('pp-drop'));
+  el.addEventListener('drop', e => {
+    e.preventDefault();
+    el.classList.remove('pp-drop');
+    let ids = [];
+    try { ids = JSON.parse(e.dataTransfer.getData('text/plain')); } catch (_) { return; }
+    const at = pp.map.mouseEventToLatLng(e);
+    ppPlace(ids, at.lat, at.lng, '');
+  });
+  setTimeout(() => pp.map && pp.map.invalidateSize(), 50);
+}
+
+window.addEventListener('load', () => {
+  document.querySelectorAll('.tab[data-tab]').forEach(b => b.addEventListener('click', () => {
+    if (location.hash === '#place-photos') history.replaceState(null, '', location.pathname + location.search);
+  }));
+  if (location.hash === '#place-photos') setTimeout(openPlacePhotos, 500);
+});

@@ -197,8 +197,9 @@ function readImport(file, empty) {
     const mtime = fs.statSync(file).mtimeMs;
     if (imported[file]?.mtime !== mtime) imported[file] = { mtime, data: JSON.parse(fs.readFileSync(file, 'utf8')) };
     return imported[file].data;
-  } catch (_) {
-    return empty;
+  } catch (_) {  // no such file: the same empty value each time, so what is worked out from it is kept
+    if (imported[file]?.mtime !== 'missing') imported[file] = { mtime: 'missing', data: empty };
+    return imported[file].data;
   }
 }
 
@@ -539,9 +540,19 @@ app.delete('/api/stays/:id', (req, res) => {
 app.get('/api/photos', (_req, res) => res.json(readImport(PHOTOS_FILE, [])));
 
 // Every photo with its place and time (photos.js): [[id, unix time, lat, lon, video 1/0]], gzipped, with an ETag
-// the photo index, with the photos of Google Photos albums that have no place of their own at the album's (albums.js)
+// the photo index, with the photos you placed by hand (#place-photos, below) and those of Google Photos albums that
+// have no place of their own at the album's (albums.js)
+const PHOTO_PLACES = path.join(DATA_DIR, 'photo_places.json'), PHOTO_UNPLACED = path.join(DATA_DIR, 'photo_unplaced.json');
+let placedMemo = { places: null, albums: null, out: [] };
+function placedPhotos() {
+  const places = readImport(PHOTO_PLACES, {}), al = typeof albums !== 'undefined' ? albums.photoEntries() : [];
+  if (placedMemo.places !== places || placedMemo.albums !== al) {
+    placedMemo = { places, albums: al, out: [...Object.entries(places).map(([file, v]) => [v.t, v.lat, v.lon, file, '']), ...al] };
+  }
+  return placedMemo.out;
+}
 const photoIndex = require('./photos').create({ file: path.join(DATA_DIR, 'photo_points.json'), cache: path.join(DATA_DIR, 'photo_cache'), readImport,
-  extra: () => (typeof albums !== 'undefined' ? albums.photoEntries() : []) });
+  extra: placedPhotos });
 // the photos as each use wants them: with a date of their own (not only an album's year: those make no day), and with
 // a place of their own (not their album's: for what needs the exact spot, the climbs and the photo suggestions)
 const photosBy = test => { let seen = null, out = []; return () => { const l = photoIndex.list(); if (l !== seen) { seen = l; out = l.filter(test); } return out; }; };
@@ -559,6 +570,90 @@ app.get('/api/photos/:id/:size(thumb|full)', async (req, res) => {
   if (!made) return res.status(404).json({ error: 'no such photo here (or it could not be converted)' });
   res.set('Cache-Control', 'max-age=604800').type(made.type).sendFile(made.file);
 });
+
+// --- Placing photos by hand (#place-photos): the library's photos with no place (data/photo_unplaced.json, from
+// imports/photos.py --unplaced), placed in a town or at a spot on the map; kept in data/photo_places.json
+// ({file: {lat, lon, t, name, at, written}}) and so on the map and in your days at once, and written into the Photos
+// library itself in the background (imports/photos_place.py), one run at a time and never while another job drives
+// Photos ---
+
+const photoId = file => require('crypto').createHash('sha1').update(file).digest('hex').slice(0, 12);
+let unplacedMemo = { raw: null, byId: new Map() };
+function unplacedById() {
+  const raw = readImport(PHOTO_UNPLACED, []);
+  if (unplacedMemo.raw !== raw) unplacedMemo = { raw, byId: new Map(raw.map(r => [photoId(r[1]), r])) };
+  return unplacedMemo.byId;
+}
+// [{ id, t, name, albums: [index], video }], the ones not placed yet, by time; the albums' names; and per day where
+// Cairn has you that day (the town most of the day's places are in), to place a day's photos there in one go
+app.get('/api/photos/unplaced', (_req, res) => {
+  const places = readImport(PHOTO_PLACES, {}), names = [], index = new Map(), photos = [], days = {};
+  const where = dayTownMap();
+  for (const [id, [t, file, name, albumList, video]] of unplacedById()) {
+    if (places[file] || (albumList || []).some(a => /^To delete/.test(a))) continue;  // nor the copies waiting to be deleted
+    const albumIdx = (albumList || []).map(a => { if (!index.has(a)) { index.set(a, names.length); names.push(a); } return index.get(a); });
+    photos.push({ id, t, name, albums: albumIdx, video: video ? 1 : 0 });
+    const day = t ? new Date(t * 1000).toISOString().slice(0, 10) : '';
+    if (day && !(day in days)) days[day] = where.get(day) || null;
+  }
+  photos.sort((a, b) => (a.t || 0) - (b.t || 0));
+  res.json({ photos, albums: names, days, placed: Object.keys(places).length });
+});
+app.get('/api/photos/unplaced/:id/:size(thumb|full)', async (req, res) => {
+  const row = unplacedById().get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'no such photo' });
+  const made = await (req.params.size === 'thumb' ? photoIndex.thumbOfFile(row[1]) : photoIndex.fullOfFile(row[1]));
+  if (!made) return res.status(404).json({ error: 'could not be converted' });
+  res.set('Cache-Control', 'max-age=604800').type(made.type).sendFile(made.file);
+});
+// { ids, lat, lon, name }: these photos taken there (name: the town, or empty for a spot on the map); { ids, undo: true }
+// takes the places back
+app.post('/api/photos/place', (req, res) => {
+  const { ids, lat, lon, name, undo } = req.body || {};
+  if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'ids required' });
+  if (!undo && !(Number.isFinite(+lat) && Number.isFinite(+lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180)) return res.status(400).json({ error: 'lat and lon required' });
+  const places = { ...readImport(PHOTO_PLACES, {}) }, rows = unplacedById();
+  let n = 0;
+  for (const id of ids) {
+    const row = rows.get(id);
+    if (!row) continue;
+    if (undo) { if (places[row[1]]) { delete places[row[1]]; n++; } continue; }
+    places[row[1]] = { lat: Math.round(+lat * 1e6) / 1e6, lon: Math.round(+lon * 1e6) / 1e6, t: row[0], name: String(name || ''), at: new Date().toISOString() };
+    n++;
+  }
+  fs.writeFileSync(PHOTO_PLACES, JSON.stringify(places));
+  if (!undo) writePlacesSoon();
+  res.json({ placed: undo ? 0 : n, removed: undo ? n : 0 });
+});
+// imports/photos_place.py, a while after the last change, one run at a time; a photo it set is marked written
+let placesTimer = null, placesRunning = false;
+function writePlacesSoon(ms = 30000) {
+  if (config.photos_write_back === false || process.platform !== 'darwin') return;
+  clearTimeout(placesTimer);
+  placesTimer = setTimeout(writePlaces, ms);
+}
+function writePlaces() {
+  if (placesRunning) return writePlacesSoon();
+  placesRunning = true;
+  const uv = config.uv || path.join(require('os').homedir(), '.local/bin/uv');
+  const child = require('child_process').spawn(uv, ['run', '-q', '--with', 'osxphotos', 'python', path.join(__dirname, 'imports', 'photos_place.py'), PHOTO_PLACES]);
+  let out = '';
+  child.stdout.on('data', d => { out += d; });
+  child.on('error', e => { placesRunning = false; console.log(`[photos] could not write places into Photos: ${e.message}`); });
+  child.on('close', () => {
+    placesRunning = false;
+    const done = new Set(), lines = out.split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch (_) { return {}; } });
+    lines.forEach(l => { if (l.ok) done.add(l.path); });
+    if (done.size) {
+      const places = { ...readImport(PHOTO_PLACES, {}) };
+      done.forEach(f => { if (places[f]) places[f] = { ...places[f], written: true }; });
+      fs.writeFileSync(PHOTO_PLACES, JSON.stringify(places));
+      console.log(`[photos] ${done.size} places written into Photos`);
+    }
+    if (lines.some(l => l.busy || l.ok === false)) writePlacesSoon(10 * 60000);  // Photos busy or a photo failed: later
+  });
+}
+setTimeout(() => writePlacesSoon(60000), 0);  // what was left at the last stop
 app.get('/api/timeline', (_req, res) => res.json(readImport(TIMELINE_FILE, { visits: [], paths: [] })));
 // places you were at a known time from data downloads: Facebook, Instagram, VK, Maps reviews, Uber, Bolt
 const CHECKINS_FILE = path.join(DATA_DIR, 'checkins.json');
@@ -1055,6 +1150,7 @@ const backups = require('./backup').create({
     ['suggestions.dismissed.json', path.join(DATA_DIR, 'suggestions.dismissed.json')], ['saved_places.json', path.join(DATA_DIR, 'saved_places.json')],
     ['tripdoc_rows.json', path.join(DATA_DIR, 'tripdoc_rows.json')], ['albums.json', path.join(DATA_DIR, 'albums.json')],
     ['home.json', path.join(DATA_DIR, 'home.json')], ['album_places.json', path.join(DATA_DIR, 'album_places.json')],
+    ['photo_places.json', PHOTO_PLACES],
     ['checkins.json', path.join(DATA_DIR, 'checkins.json')], ['calendar.json', path.join(DATA_DIR, 'calendar.json')],
     ['transactions.json', path.join(DATA_DIR, 'transactions.json')]
   ].map(([name, file]) => ({ name, file })),
@@ -1139,9 +1235,22 @@ const prep = require('./prep').create({
 app.get('/api/coming', async (_req, res) => res.json(await prep.coming()));
 
 // --- Spending (spending.js): what the stays cost, in euros ---
+// the town of each day: of the places Cairn knows that day, the town most of them are in; worked out again only when
+// the places change
+let dayTowns = { list: null, map: new Map() };
+function dayTownMap() {
+  placesAndDays('9999-01-01', '9999-01-01');  // the places up to date (an empty period: nothing copied)
+  const list = placesMemo.get(true).list;
+  if (dayTowns.list !== list) {
+    const count = new Map();
+    list.forEach(p => { const t = townOfAt(p.at, p.city); if (!t) return; const m = count.get(p.day) || new Map(); m.set(t, (m.get(t) || 0) + 1); count.set(p.day, m); });
+    dayTowns = { list, map: new Map([...count].map(([d, m]) => { const t = [...m].sort((x, y) => y[1] - x[1])[0][0]; return [d, { id: t.id, name: t.name, cc: t.cc, lat: t.lat, lon: t.lon }]; })) };
+  }
+  return dayTowns.map;
+}
 const spending = require('./spending').create({
   stays: () => stays, file: path.join(DATA_DIR, 'rates.json'), log: m => console.log(m),
-  transactions: () => readImport(path.join(DATA_DIR, 'transactions.json'), []),
+  transactions: () => readImport(path.join(DATA_DIR, 'transactions.json'), []), dayTowns: dayTownMap, trips: () => tripStore.list(),
   townAt: at => { if (towns === undefined) towns = cities.load(path.join(DATA_DIR, 'cities1000.txt')); return towns && cities.townAt(towns, at[0], at[1]); }
 });
 app.get('/api/spending', (_req, res) => res.json(spending.summary()));

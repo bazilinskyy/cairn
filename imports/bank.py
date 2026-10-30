@@ -4,6 +4,7 @@ price), and payments abroad on days nothing else in Cairn knows where you were, 
 
 Reads the CSV statements banks let you download, as they come, any number and mixed:
   - Revolut (Accounts > Statement > Excel/CSV): Type, Started Date, Description, Amount, Currency, State
+  - N26 (Statements > Download CSV): Booking Date, Partner Name, Type, Amount (EUR), Original Currency; card refunds too
   - ING (NL), ABN AMRO, Rabobank, bunq: their "download transactions" CSV
   - any other CSV with a date, an amount and a description column (found by their names)
 
@@ -12,7 +13,8 @@ Reads the CSV statements banks let you download, as they come, any number and mi
 
 Writes data/transactions.json: [{"date": "YYYY-MM-DD", "amount" (negative: spent), "currency", "description",
 "country" (ISO alpha-2, when the payment says where: "ALBERT HEIJN LEIDEN NLD", Revolut's foreign currency)}]; only card
-payments and cash withdrawals (not transfers, salary or rent), each once across statements. No network.
+payments and cash withdrawals (not transfers, salary or rent), each once across statements; a card refund (a booking
+cancelled) with a positive amount and "refund": true. No network.
 """
 import argparse
 import csv
@@ -110,6 +112,21 @@ def read_file(rows):
                 continue
             cur, desc = r[i["currency"]].strip(), r[i["description"]].strip()
             out.append({"date": day(r[i["started date"]]), "amount": amount, "currency": cur, "description": desc, "country": country_of(desc, cur)})
+        return [x for x in out if x["date"]]
+    if has_head and "partner name" in head and "amount (eur)" in head:  # N26: card payments (and their refunds) and card fees, in euros
+        i = {h: k for k, h in enumerate(head)}
+        for r in body:
+            if len(r) < len(head):
+                continue
+            kind, amount = r[i["type"]].strip(), number(r[i["amount (eur)"]])
+            if amount is None or kind not in ("Presentment", "Presentment Refund", "Fee") or (amount >= 0) != (kind == "Presentment Refund"):
+                continue
+            cur, desc = r[i["original currency"]].strip(), " ".join(x for x in (r[i["partner name"]], r[i["payment reference"]]) if x.strip()).strip()
+            t = {"date": day(r[i["booking date"]]), "amount": amount, "currency": "EUR", "description": re.sub(r"\s+", " ", desc),
+                 "country": country_of(desc, cur if cur and cur != "EUR" else "")}
+            if kind == "Presentment Refund":
+                t["refund"] = True
+            out.append(t)
         return [x for x in out if x["date"]]
     if not has_head and rows and len(rows[0]) >= 7 and day(rows[0][0]):  # ABN AMRO tab file: account, cur, date, ..., amount, description
         for r in rows:
