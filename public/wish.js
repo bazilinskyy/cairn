@@ -18,7 +18,7 @@ async function openWish() {
   d.saved.forEach(p => (lists[p.list || 'Saved'] = lists[p.list || 'Saved'] || []).push(p));
   let html = `<div class="chart-section" style="padding:0;overflow:hidden"><div id="wish-map" class="mini-map" style="height:380px"></div></div>`;
   html += section(`Saved places${d.saved.length ? ` · ${d.saved.length}` : ''}`, d.saved.length ? Object.entries(lists).map(([name, ps]) =>
-    `<p><b>${escapeHTML(name)} (${ps.length}):</b> ${ps.slice(0, 80).map(p => (p.url ? `<a href="${escapeHTML(p.url)}" target="_blank" rel="noopener" class="sp-link inline">${escapeHTML(p.name || '?')}</a>` : escapeHTML(p.name || '?')) +
+    `<p><b>${escapeHTML(name)} (${ps.length}):</b> ${ps.slice(0, 80).map(p => (safeUrl(p.url) ? `<a href="${safeUrl(p.url)}" target="_blank" rel="noopener" class="sp-link inline">${escapeHTML(p.name || '?')}</a>` : escapeHTML(p.name || '?')) +
       (p.note ? ` <small>${escapeHTML(p.note)}</small>` : '')).join(' · ')}${ps.length > 80 ? ' …' : ''}</p>`).join('')
     : '<p class="sp-note">None yet. Export "Maps (your places)" and "Saved" with Google Takeout, then: <code>python imports/saved_places.py ~/Downloads/takeout-*.zip</code></p>',
     'Your saved and starred places in Google Maps. A coming trip shows those near where you will stay.');
@@ -37,7 +37,7 @@ async function openWish() {
   L.tileLayer(url, { attribution, maxZoom }).addTo(wishMap);
   const pts = [];
   placed.forEach(p => { L.circleMarker([p.lat, p.lon], { radius: 6, color: '#fff', weight: 1.5, fillColor: '#ffca28', fillOpacity: 0.95 })
-    .bindPopup(`<b>⭐ ${escapeHTML(p.name || '')}</b><br><small>${escapeHTML(p.list || '')}${p.note ? ' · ' + escapeHTML(p.note) : ''}</small>${p.url ? `<br><a href="${escapeHTML(p.url)}" target="_blank" rel="noopener">Google Maps →</a>` : ''}`).addTo(wishMap); pts.push([p.lat, p.lon]); });
+    .bindPopup(`<b>⭐ ${escapeHTML(p.name || '')}</b><br><small>${escapeHTML(p.list || '')}${p.note ? ' · ' + escapeHTML(p.note) : ''}</small>${safeUrl(p.url) ? `<br><a href="${safeUrl(p.url)}" target="_blank" rel="noopener">Google Maps →</a>` : ''}`).addTo(wishMap); pts.push([p.lat, p.lon]); });
   d.climbs.forEach(c => { L.circleMarker([c.lat, c.lon], { radius: 5, color: mapVar('--climb'), weight: 2, fillOpacity: 0 })
     .bindPopup(`<b>⛰️ ${escapeHTML(c.name)}</b><br><small>${c.km} km from ${escapeHTML(c.near)}</small><br><a href="#" onclick="event.preventDefault(); openClimb('${c.id}')">Open climb page →</a>`).addTo(wishMap); pts.push([c.lat, c.lon]); });
   if (pts.length) wishMap.fitBounds(L.latLngBounds(pts).pad(0.1), { maxZoom: 9 }); else wishMap.setView([48, 10], 4);

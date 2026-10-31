@@ -8,6 +8,7 @@
 const fs = require('fs');
 const path = require('path');
 const ground = require('./ground');
+const cities = require('./cities');
 const ascentsLib = require('./ascents');
 const effortsLib = require('./efforts');
 
@@ -95,29 +96,15 @@ function create({ activities, key, towns, file, profile = () => ({}), trackDir =
     pts.forEach((p, j) => { const d = metresTo(c, p); if (d < best) { best = d; i = j; } });
     let back = 0;
     while (i > 0 && back < 12000) { back += ground.km(pts[i - 1], pts[i]) * 1000; i--; }
-    // the nearest town (not the one that pulls hardest, as for the most visited cities: Bédoin would beat little Sault)
-    const p = pts[i], grid = towns();
-    let t = null, d = 10;
-    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-      for (const town of (grid && grid.get((Math.floor(p[0]) + dy) + ',' + (Math.floor(p[1]) + dx))) || []) {
-        const k = ground.km(p, [town.lat, town.lon]);
-        if (k < d) { d = k; t = town; }
-      }
-    }
+    const t = nearestTown(pts[i]);
     return t ? 'via ' + t.name : null;
   }
   const metresTo = (c, p) => ground.km([c.lat, c.lon], p) * 1000;
 
+  // the nearest town (cities.js nearest: not the one that pulls hardest, so Bédoin does not beat little Sault)
   function nearestTown(p) {
     const grid = towns();
-    let t = null, d = 10;
-    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-      for (const town of (grid && grid.get((Math.floor(p[0]) + dy) + ',' + (Math.floor(p[1]) + dx))) || []) {
-        const k = ground.km(p, [town.lat, town.lon]);
-        if (k < d) { d = k; t = town; }
-      }
-    }
-    return t;
+    return grid ? cities.nearest(grid, p[0], p[1]) : null;
   }
   // an effort with your FTP and weight of its day, and what they would make of a climb of that length and gain
   function withDay(e, lengthKm, gainM) {
@@ -205,7 +192,7 @@ function create({ activities, key, towns, file, profile = () => ({}), trackDir =
         }
         for (const w of found) {
           const e = effortsLib.effortOf(tr, w.from, w.to), foot = tr.pts[w.from];
-          const v = nearestTown(foot) ? 'via ' + nearestTown(foot).name : 'another way';
+          const near = nearestTown(foot), v = near ? 'via ' + near.name : 'another way';
           const o = other[v] = other[v] || { rides: [], efforts: [] };
           if (!o.rides.includes(ride)) o.rides.push(ride);
           o.efforts.push(withDay({ ...e, id: ride.id, date: ride.date, name: ride.name,

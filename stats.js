@@ -162,8 +162,9 @@ function create({ days, towns, cities, activities, stays, flights, airports, gro
     let topAct = null;
     for (const [c, a] of actCells) { const v = h[c]; if (v != null && (!topAct || v > topAct.h)) topAct = { h: v, a, c }; }
     let nights = 0, highNights = 0, topNight = null;
+    const sideAway = awayNights(stays());
     for (const s of nightStays) {
-      const v = h[cell(s.lat, s.lon)], n = Math.max(1, Math.round((Date.parse(s.end || s.start) - Date.parse(s.start)) / 864e5));
+      const v = h[cell(s.lat, s.lon)], n = sleptNights(s, sideAway);
       nights += n;
       if (v != null && v >= 1000) highNights += n;
       if (v != null && (!topNight || v > topNight.h)) topNight = { h: v, s };
@@ -190,12 +191,12 @@ function create({ days, towns, cities, activities, stays, flights, airports, gro
     // beds
     const beds = {};
     for (const s of nightStays) {
-      const n = Math.max(1, Math.round((Date.parse(s.end || s.start) - Date.parse(s.start)) / 864e5));
+      const n = sleptNights(s, sideAway);
       const what = stayKind(s);
       beds[what] = (beds[what] || 0) + n;
     }
     const longest = nightStays.reduce((b, s) => {
-      const n = Math.round((Date.parse(s.end || s.start) - Date.parse(s.start)) / 864e5);
+      const n = s.end ? sleptNights(s, sideAway) : 0;
       return !b || n > b.nights ? { nights: n, place: s.place, start: s.start } : b;
     }, null);
 
@@ -276,4 +277,42 @@ function stayKind(s) {
     : /hostel/i.test(kind) ? 'Hostel' : /airbnb/i.test(s.provider) ? 'Airbnb' : /camp/i.test(kind) ? 'Camping' : 'Hotel and other';
 }
 
-module.exports = { create, coastIndex, coastKm, stayKind, groundKind, commuteSince };
+// Nights away from a base: a stay inside a longer one, in another town (a night in another city while a flat was kept
+// on, a road trip from a city booking, a monastery each night of a stay on Mount Athos), is where you slept, so its nights come off the base's. Map base ->
+// { nights: how many, days: the base's days spent wholly away (between arriving at a side trip and leaving it) }
+const AWAY_KM = 20;
+const bookedNights = s => Math.max(1, Math.round((Date.parse(s.end || s.start) - Date.parse(s.start)) / 864e5));
+const townKey = p => (p || '').normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s*\(.*?\)/g, '').replace(/[^a-z]/g, '');
+function sideTrip(base, s) {
+  if (s === base || s.what === 'car' || base.what === 'car' || !s.end || !base.end || s.start < base.start || s.end > base.end ||
+    bookedNights(s) >= bookedNights(base)) return false;
+  if (s.place && base.place && s.place.startsWith(`${base.place} - `)) return true;  // "Mount Athos - Iviron" in "Mount Athos"
+  if (base.lat != null && s.lat != null) return ground.km([base.lat, base.lon], [s.lat, s.lon]) > AWAY_KM;
+  return townKey(base.place) !== townKey(s.place);
+}
+let awayMemo = { stays: null, sig: '', out: null };  // kept while the stays are the same (their nights and places)
+function awayNights(stays) {
+  const sig = stays.map(s => `${s.id}|${s.what}|${s.start}|${s.end}|${s.lat}|${s.lon}|${s.place}`).join('\n');
+  if (awayMemo.stays === stays && awayMemo.sig === sig) return awayMemo.out;
+  const out = awayNightsOf(stays);
+  awayMemo = { stays, sig, out };
+  return out;
+}
+function awayNightsOf(stays) {
+  const beds = stays.filter(s => s.what !== 'car' && s.start && s.end > s.start).sort((a, b) => a.start.localeCompare(b.start));
+  const out = new Map(), next = d => new Date(Date.parse(d) + 864e5).toISOString().slice(0, 10);
+  for (const base of beds) {
+    const nights = new Set(), days = new Set();
+    for (const s of beds) {
+      if (s.start >= base.end) break;
+      if (!sideTrip(base, s)) continue;
+      for (let d = s.start; d < s.end; d = next(d)) { nights.add(d); if (d > s.start) days.add(d); }
+    }
+    if (nights.size) out.set(base, { nights: nights.size, days });
+  }
+  return out;
+}
+// the nights you slept in a stay: those booked, less those away on side trips (awayNights)
+const sleptNights = (s, away) => Math.max(0, bookedNights(s) - (away.get(s)?.nights || 0));
+
+module.exports = { create, coastIndex, coastKm, stayKind, groundKind, commuteSince, sideTrip, awayNights, sleptNights };

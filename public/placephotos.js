@@ -137,7 +137,7 @@ async function ppTowns(q) {
   const box = document.getElementById('pp-towns');
   if (q.trim().length < 2) { box.innerHTML = ''; return; }
   const list = await fetch(`/api/towns?q=${encodeURIComponent(q.trim())}`).then(r => (r.ok ? r.json() : [])).catch(() => []);
-  box.innerHTML = list.slice(0, 8).map((t, i) => `<button class="btn btn-ghost pp-town" data-i="${i}">${flagOf(t.cc)}${escapeHTML(t.name)} <small>${t.cc}</small></button>`).join('');
+  box.innerHTML = list.slice(0, 8).map((t, i) => `<button class="btn btn-ghost pp-town" data-i="${i}">${flagOf(t.cc)}${escapeHTML(t.name)} <small>${escapeHTML(t.cc)}</small></button>`).join('');
   box.querySelectorAll('.pp-town').forEach(b => { b.onclick = () => {
     const t = list[+b.dataset.i];
     if (!pp.selected.size) return toast('Select photos first', 'error');

@@ -615,6 +615,25 @@ async function osrmVia(pts) {
   return plausible(path, pts[0], pts[pts.length - 1]) ? path : null;
 }
 
+// Along the roads through stops you named (a drive back via Valjevo): only its ends are checked, as a way round is
+// what was asked for
+async function osrmStops(pts) {
+  const d = await getJSON(`${OSRM}${pts.map(p => `${p[1]},${p[0]}`).join(';')}?overview=full&geometries=polyline6`);
+  const path = d.code === 'Ok' && d.routes?.[0] ? decode(d.routes[0].geometry, 6) : [];
+  return path.length > 1 && km(path[0], pts[0]) < 30 && km(path[path.length - 1], pts[pts.length - 1]) < 30 ? path : null;
+}
+
+// The places of the stops a trip names (stops: ["Valjevo"]), each looked up near the one before it: stops_at, in order
+async function placeStops(trip) {
+  const a = at(trip, 'from'), b = at(trip, 'to'), out = [];
+  let prev = a;
+  for (const name of trip.stops) {
+    const p = await geocode(name, prev, Math.max(150, km(a, b)));
+    if (p) out.push(p), prev = p;
+  }
+  trip.stops_at = out;
+}
+
 async function osrm(a, b) {
   const d = await getJSON(`${OSRM}${a[1]},${a[0]};${b[1]},${b[0]}?overview=full&geometries=polyline6`);
   const pts = d.code === 'Ok' && d.routes?.[0] ? decode(d.routes[0].geometry, 6) : [];
@@ -645,11 +664,15 @@ function coastNear(at) {
 }
 async function ports(a, b) {
   const near = async end => { const t = await placesNear('amenity:ferry_terminal', end, 10, PORT_KM); return t.length ? t : coastNear(end); };
-  const [as, bs] = [await near(a), await near(b)];
+  return bestPorts(await near(a), await near(b), a, b);
+}
+// Of the terminals near each end, the pair with the shortest way: the crossing and the way from each place to its port
+// (the next islands' ports are near each other, but far from the places: Naxos to Ios is not Koufonisia to Schinoussa)
+function bestPorts(as, bs, a, b) {
   const mine = (list, end, other) => list.filter(p => km(p, end) < km(p, other));
   let best = null, score = Infinity;
   for (const pa of mine(as, a, b)) for (const pb of mine(bs, b, a)) {
-    const sc = km(pa, pb) + 0.5 * (km(pa, a) + km(pb, b));
+    const sc = km(pa, pb) + km(pa, a) + km(pb, b);
     if (sc < score) { score = sc; best = [pa, pb]; }
   }
   return best;
@@ -664,7 +687,164 @@ async function seaRoute(a, b) {
   const first = steps.findIndex(x => x.mode === 'ferry'), last = steps.map(x => x.mode).lastIndexOf('ferry');
   if (first < 0) return null;
   const pts = steps.slice(first, last + 1).flatMap(x => decode(x.geometry, 6));
-  return pts.length > 1 && km(pts[0], a) < 25 && km(pts[pts.length - 1], b) < 25 && pathKm(pts) < 2.2 * km(a, b) + 30 ? pts : null;
+  return pts.length > 1 && km(pts[0], a) < FERRY_PORT_KM && km(pts[pts.length - 1], b) < FERRY_PORT_KM && pathKm(pts) < 2.2 * km(a, b) + 30 ? pts : null;
+}
+
+// A binary heap of [key, value], the smallest key first (the shortest-way searches)
+class Heap {
+  constructor() { this.a = []; }
+  get size() { return this.a.length; }
+  push(k, v) {
+    const a = this.a;
+    a.push([k, v]);
+    for (let i = a.length - 1; i && a[(i - 1) >> 1][0] > a[i][0]; i = (i - 1) >> 1) [a[i], a[(i - 1) >> 1]] = [a[(i - 1) >> 1], a[i]];
+  }
+  pop() {
+    const a = this.a, top = a[0], end = a.pop();
+    if (a.length) {
+      a[0] = end;
+      for (let i = 0; ;) {
+        const l = 2 * i + 1, r = l + 1;
+        let m = i;
+        if (l < a.length && a[l][0] < a[m][0]) m = l;
+        if (r < a.length && a[r][0] < a[m][0]) m = r;
+        if (m === i) break;
+        [a[i], a[m]] = [a[m], a[i]];
+        i = m;
+      }
+    }
+    return top[1];
+  }
+}
+
+// A ferry along the ferry lines OpenStreetMap maps (route=ferry: the ships' own, not only those cars can take, as
+// OSRM's), the shortest way over them from a line's end near one port to one near the other (FERRY_PORT_KM), with
+// the lines' ends within FERRY_JOIN_KM of each other joined (a port where one line ends and the next begins); null
+// when they do not reach (then the way through the water). Overpass' answers are kept on disk, as the railways'.
+const FERRY_PORT_KM = 5, FERRY_JOIN_KM = 1;
+async function ferryLines(a, b) {
+  const pad = Math.max(0.3, 0.3 * Math.max(Math.abs(a[0] - b[0]), Math.abs(a[1] - b[1])));
+  const bb = [Math.min(a[0], b[0]) - pad, Math.min(a[1], b[1]) - pad, Math.max(a[0], b[0]) + pad, Math.max(a[1], b[1]) + pad].map(x => x.toFixed(2)).join(',');
+  const q = `[out:json][timeout:120];way["route"="ferry"](${bb});(._;>;);out skel qt;`;
+  let elements = keptPiece(q);
+  if (!elements) {
+    let d = null;
+    for (const [j, host] of OVERPASS.entries()) {
+      try { d = await getJSON(`${host}?data=${encodeURIComponent(q)}`); break; } catch (e) { if (j === OVERPASS.length - 1) throw new Error(`overpass: ${e.message}`); }
+    }
+    if (d.remark) throw new Error(`overpass: ${d.remark}`);
+    elements = d.elements || [];
+    keepPiece(q, elements);
+  }
+  const at = new Map(elements.filter(e => e.type === 'node').map(e => [e.id, [e.lat, e.lon]]));
+  const edges = new Map(), link = (x, y) => {
+    const w = km(at.get(x), at.get(y));
+    if (!edges.has(x)) edges.set(x, []);
+    if (!edges.has(y)) edges.set(y, []);
+    edges.get(x).push([y, w]); edges.get(y).push([x, w]);
+  };
+  const ends = [];
+  for (const w of elements.filter(e => e.type === 'way')) {
+    const ns = w.nodes.filter(n => at.has(n));
+    for (let i = 1; i < ns.length; i++) link(ns[i - 1], ns[i]);
+    if (ns.length > 1) ends.push(ns[0], ns[ns.length - 1]);
+  }
+  for (let i = 0; i < ends.length; i++) for (let j = i + 1; j < ends.length; j++) {
+    if (ends[i] !== ends[j] && km(at.get(ends[i]), at.get(ends[j])) <= FERRY_JOIN_KM) link(ends[i], ends[j]);
+  }
+  // Dijkstra from the nodes near a (starting at their distance from it) to the nearest finish near b
+  const dist = new Map(), prev = new Map(), done = new Set(), todo = new Heap();
+  for (const [id, p] of at) if (edges.has(id) && km(p, a) <= FERRY_PORT_KM) { dist.set(id, km(p, a)); todo.push(km(p, a), id); }
+  let best = null, bestKm = Infinity;
+  while (todo.size) {
+    const id = todo.pop();
+    if (done.has(id)) continue;
+    done.add(id);
+    const d = dist.get(id), toB = km(at.get(id), b);
+    if (d >= bestKm) break;
+    if (toB <= FERRY_PORT_KM && d + toB < bestKm) { bestKm = d + toB; best = id; }
+    for (const [n, w] of edges.get(id) || []) {
+      if (!done.has(n) && d + w < (dist.get(n) ?? Infinity)) { dist.set(n, d + w); prev.set(n, id); todo.push(d + w, n); }
+    }
+  }
+  if (best == null || bestKm > 1.8 * km(a, b) + 15) return null;  // not a chain of other crossings far round
+  const path = [];
+  for (let id = best; id != null; id = prev.get(id)) path.push(at.get(id));
+  return [a, ...path.reverse(), b];
+}
+
+// A ferry with no line mapped: the shortest way through the water between its ports, round the coasts (Natural
+// Earth's coastlines, setCoast) on a grid of about WATER_CELLS cells a side over the two and some sea around them;
+// null without the coastlines or a way. The ports' own cells count as water (a coarse coastline puts a pier ashore).
+const WATER_CELLS = 160;
+async function waterRoute(a, b) {
+  const rings = coastRings() || [];
+  if (!rings.length) return null;
+  const pad = Math.max(0.3, 0.4 * Math.max(Math.abs(a[0] - b[0]), Math.abs(a[1] - b[1])));
+  const box = [Math.min(a[0], b[0]) - pad, Math.min(a[1], b[1]) - pad, Math.max(a[0], b[0]) + pad, Math.max(a[1], b[1]) + pad];
+  const step = Math.max(0.005, Math.max(box[2] - box[0], box[3] - box[1]) / WATER_CELLS);
+  const rows = Math.ceil((box[2] - box[0]) / step) + 1, cols = Math.ceil((box[3] - box[1]) / step) + 1;
+  const lat = r => box[0] + r * step, lon = c => box[1] + c * step;
+  // land: for each row, where the coastlines cross its latitude; a cell is ashore with an odd number of them east of it
+  const near = rings.filter(r => r.box[1] <= box[2] && r.box[3] >= box[0] && r.box[0] <= box[3] && r.box[2] >= box[1]);
+  const land = new Uint8Array(rows * cols);
+  for (let r = 0; r < rows; r++) {
+    const y = lat(r), xs = [];
+    for (const ring of near) {
+      if (y < ring.box[1] || y > ring.box[3]) continue;
+      const pts = ring.pts;
+      for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+        const [xi, yi] = pts[i], [xj, yj] = pts[j];
+        if ((yi > y) !== (yj > y)) xs.push((xj - xi) * (y - yi) / (yj - yi) + xi);
+      }
+    }
+    xs.sort((p, q) => p - q);
+    for (let c = 0, k = 0; c < cols; c++) {
+      const x = lon(c);
+      while (k < xs.length && xs[k] <= x) k++;
+      if ((xs.length - k) % 2 === 1) land[r * cols + c] = 1;
+    }
+  }
+  const cell = p => [Math.round((p[0] - box[0]) / step), Math.round((p[1] - box[1]) / step)];
+  const [s0, s1] = [cell(a), cell(b)], start = s0[0] * cols + s0[1], goal = s1[0] * cols + s1[1];
+  for (const [r, c] of [s0, s1]) for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+    const rr = r + dr, cc = c + dc;
+    if (rr >= 0 && rr < rows && cc >= 0 && cc < cols) land[rr * cols + cc] = 0;
+  }
+  // A* over the water cells, eight ways round, by km
+  const kmOf = i => [lat(Math.floor(i / cols)), lon(i % cols)];
+  const g = new Float64Array(rows * cols).fill(Infinity), from = new Int32Array(rows * cols).fill(-1), done = new Uint8Array(rows * cols);
+  const heap = new Heap();
+  heap.push(km(kmOf(start), b), start);
+  g[start] = 0;
+  while (heap.size) {
+    const i = heap.pop();
+    if (done[i]) continue;
+    done[i] = 1;
+    if (i === goal) break;
+    const r = Math.floor(i / cols), c = i % cols, here = kmOf(i);
+    for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+      const rr = r + dr, cc = c + dc, j = rr * cols + cc;
+      if ((!dr && !dc) || rr < 0 || rr >= rows || cc < 0 || cc >= cols || land[j] || done[j]) continue;
+      const cost = g[i] + km(here, kmOf(j));
+      if (cost < g[j]) { g[j] = cost; from[j] = i; heap.push(cost + km(kmOf(j), b), j); }
+    }
+  }
+  if (!done[goal]) return null;
+  const path = [];
+  for (let i = goal; i >= 0; i = from[i]) path.push(kmOf(i));
+  path.reverse();
+  path[0] = a, path[path.length - 1] = b;
+  return simplify(path, step / 2);
+}
+
+// A ferry's line from its port to its port: a mapped ferry line that starts or ends off them (another pier, a line that
+// stops at the island before) is joined to them
+function toPorts(pts, a, b) {
+  const out = [...pts];
+  if (km(out[0], a) > 0.3) out.unshift(a);
+  if (km(out[out.length - 1], b) > 0.3) out.push(b);
+  return out;
 }
 
 // --- trips ---
@@ -729,6 +909,10 @@ async function route(trip, clues = null) {
     if (!(sa && sb && km(sa, a) < 15 && km(sb, b) < 15)) sa = sb = null;
     if (sa) pts = await transitous(sa, sb, trip.mode, trip.date);
   }
+  if (!pts && trip.stops_at?.length && ['bus', 'hitch', 'drive'].includes(trip.mode)) {  // through the stops you named
+    pts = await osrmStops([a, ...trip.stops_at, b]);
+    if (pts) source = 'stops';
+  }
   if (!pts && trip.mode === 'drive' && clues) {  // by car: through where your photos put you on the way
     const seen = clues(trip, a, b), hours = driveHours(trip), track = hours ? trackPoints(a, b, seen) : [];
     if (track.length) { pts = await osrmTrack([a, ...track, b], hours); if (pts) source = 'clues', trip.via = track.length; }
@@ -736,6 +920,7 @@ async function route(trip, clues = null) {
     if (via.length) { pts = await osrmVia([a, ...via, b]); if (pts) source = 'clues', trip.via = via.length; }
   }
   if (!pts && ['bus', 'hitch', 'drive'].includes(trip.mode)) pts = await osrm(a, b), source = 'osrm';  // hitchhiking and by car: along the roads
+  if (!pts && trip.mode === 'ferry') pts = await ferryLines(a, b), source = 'ferry';  // the ships' lines OpenStreetMap maps
   if (!pts && trip.mode === 'ferry') pts = await seaRoute(a, b), source = 'sea';
   if (!pts && trip.mode === 'train') {  // from stations: BRouter starts on a track (the nearest may be a park railway: then the next)
     const [as, bs] = [await placesNear('railway:station', a, 3), await placesNear('railway:station', b, 3)];
@@ -751,7 +936,9 @@ async function route(trip, clues = null) {
     source = 'rail';
   }
   if (!pts && trip.mode === 'train') pts = await osrm(a, b), source = 'road';  // no railway found: along the roads, a guess
+  if (!pts && trip.mode === 'ferry') pts = await waterRoute(a, b), source = 'water';  // no ferry line known: through the water
   if (!pts && trip.mode === 'ferry') pts = [a, b], source = 'direct';  // ferries mostly go straight across: drawn so
+  if (pts && trip.mode === 'ferry') pts = toPorts(pts, a, b);
   if (pts) {
     trip.path = encode(simplify(pts));
     trip.distance = Math.round(pathKm(pts));
@@ -786,17 +973,24 @@ async function placeStay(stay, flights, trips, airports, seen = []) {
 
 // Look up every trip that still needs it, oldest first (so earlier trips give later ones their starting point),
 // then every stay. A service that is down stops the pass; the next pass tries again.
-// Returns { later: true } when some trips wait for BRouter, which refused (its railway guesses are tried again once
-// it has rested); the other trips go on meanwhile
+// Returns { later: true } when some trips wait for BRouter or Overpass, which refused (tried again once they have
+// rested; the other trips go on meanwhile), or when a service was down and the pass stopped
+const FAILS_IN_A_ROW = 3;
 async function enrich(store, log = console.log) {
   const todo = [...store.trips].sort((x, y) => (x.date || '').localeCompare(y.date || ''));
-  let later = false;
+  let later = false, failed = 0;
   for (const trip of todo) {
     if (!store.trips.includes(trip)) continue;  // deleted meanwhile
     try {
       if ((!at(trip, 'from') || !at(trip, 'to')) && !trip.unplaced) {
         await place(trip, store.flights(), store.trips, store.airports(), store.known);
         if (trip.unplaced) log(`[ground] could not place ${trip.date} ${trip.from} - ${trip.to}`);
+        store.save();
+      }
+      if (at(trip, 'from') && at(trip, 'to') && trip.stops?.length && !trip.stops_at) {
+        await placeStops(trip);
+        if (trip.stops_at.length < trip.stops.length) log(`[ground] could not place every stop of ${trip.date} ${trip.from} - ${trip.to}`);
+        delete trip.path_source;  // its road again, through them
         store.save();
       }
       if (at(trip, 'from') && at(trip, 'to') && (!trip.path_source || (trip.path_source === 'straight' && (trip.route_v || 1) < ROUTE_VERSION)
@@ -812,9 +1006,14 @@ async function enrich(store, log = console.log) {
         later = true;
         continue;
       }
-      log(`[ground] lookups paused: ${e.message}`);
-      return { later };
+      // a service slow or down for this trip: it waits for the next pass, the others go on; a service down for
+      // FAILS_IN_A_ROW trips in a row stops the pass (the next in a while)
+      later = true;
+      log(`[ground] ${trip.date} ${trip.from} - ${trip.to} waits: ${e.message}`);
+      if (++failed >= FAILS_IN_A_ROW) { log('[ground] lookups paused'); return { later }; }
+      continue;
     }
+    failed = 0;
   }
   for (const stay of [...(store.stays || [])]) {
     if (stay.lat != null || stay.unplaced || !store.stays.includes(stay)) continue;
@@ -824,7 +1023,7 @@ async function enrich(store, log = console.log) {
       store.saveStays();
     } catch (e) {
       log(`[ground] lookups paused: ${e.message}`);
-      return { later };
+      return { later: true };  // a service down: the pass again in a while
     }
   }
   return { later };
@@ -847,8 +1046,9 @@ function forget(trip, changes) {
     const renamed = end in changes && changes[end] !== trip[end];
     if (renamed && !(`${end}_lat` in changes)) delete trip[`${end}_lat`], delete trip[`${end}_lon`];
   }
+  if ('stops' in changes && JSON.stringify(changes.stops || []) !== JSON.stringify(trip.stops || [])) delete trip.stops_at;
   const moved = ['from', 'to', 'from_lat', 'from_lon', 'to_lat', 'to_lon', 'mode', 'date']
-    .some(k => k in changes && changes[k] !== trip[k]);
+    .some(k => k in changes && changes[k] !== trip[k]) || ('stops' in changes && !trip.stops_at);
   if (moved) delete trip.unplaced, delete trip.path, delete trip.path_source, delete trip.route_v, delete trip.ports, delete trip.via;
 }
 
@@ -859,4 +1059,4 @@ async function bikeRoute(points) {
   return route ? { path: route.geometry.coordinates.map(([lon, lat]) => [lat, lon]), km: route.distance / 1000 } : null;
 }
 
-module.exports = { setRailCache, shortestRail, railGap, railOverpass, viaPoints, trackPoints, driveHours, bikeRoute, setCoast, km, decode, encode, simplify, plausible, gappy, planTime, startNear, forget, forgetStay, enrich, pick, similar, geocode, placeStay };
+module.exports = { ROUTE_VERSION, bestPorts, waterRoute, toPorts, ferryLines, setRailCache, shortestRail, railGap, railOverpass, viaPoints, trackPoints, driveHours, bikeRoute, setCoast, km, decode, encode, simplify, plausible, gappy, planTime, startNear, forget, forgetStay, enrich, pick, similar, geocode, placeStay };

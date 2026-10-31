@@ -73,7 +73,7 @@ function renderCityReport() {
   }
   if (d.stays.length) {
     html += section('Stays and rental cars', table(['When', 'Nights', 'Where', 'Booked'], d.stays.map(s =>
-      `<tr><th>${s.what === 'car' ? '🚗' : '🏨'} ${range(s.start, s.end)}</th><td>${nights(s)}</td>` +
+      `<tr><th>${s.what === 'car' ? '🚗' : '🏨'} ${range(s.start, s.end)}</th><td>${nights(s)}${awayNote(s)}</td>` +
       `<td><b>${escapeHTML(s.hotel || s.type || (s.what === 'car' ? 'Rental car' : 'Stay'))}</b><small>${escapeHTML(s.place || '')}</small></td>` +
       `<td>${escapeHTML(s.provider || '')}${s.price ? `<small>${escapeHTML(s.price)}</small>` : ''}</td></tr>`)),
       cars.length ? `${plural(cars.length, 'rental car')} among them.` : '');
@@ -81,7 +81,7 @@ function renderCityReport() {
   if (d.flights.length) {
     html += section('Flights', table(['When', 'Flight', 'Route', ''], d.flights.map(f =>
       `<tr><th>${fmtDate(f.date)}</th><td><b>${escapeHTML(f.flight_number || '')}</b><small>${escapeHTML(f.airline || '')}</small></td>` +
-      `<td>${escapeHTML(f.from_city || f.from)} (${f.from}) → ${escapeHTML(f.to_city || f.to)} (${f.to})</td>` +
+      `<td>${escapeHTML(f.from_city || f.from)} (${escapeHTML(f.from)}) → ${escapeHTML(f.to_city || f.to)} (${escapeHTML(f.to)})</td>` +
       `<td>${f.direction === 'in' ? 'arrived' : 'left'}</td></tr>`)));
   }
   if (d.ground.length) {

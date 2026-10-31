@@ -14,7 +14,7 @@ function loadTrips() {
 let tripsByDay = [];
 loadTrips().then(list => { tripsByDay = list; });
 const tripOn = d => d && tripsByDay.find(t => d.slice(0, 10) >= t.start && d.slice(0, 10) <= t.end);
-const tripLink = (t, text) => `<a href="#trip=${t.id}" class="sp-link inline" onclick="event.preventDefault(); openTrip('${t.id}')">${text || escapeHTML(t.name)}</a>`;
+const tripLink = (t, text) => `<a href="#trip=${dayId(t.id)}" class="sp-link inline" onclick="event.preventDefault(); openTrip('${dayId(t.id)}')">${text || escapeHTML(t.name)}</a>`;
 
 const hm = sec => `${Math.floor(sec / 3600)}:${String(Math.round(sec % 3600 / 60)).padStart(2, '0')}`;
 const tripRange = (a, b) => (b && b !== a ? `${fmtDate(a)} – ${fmtDate(b)}` : fmtDate(a));
@@ -36,7 +36,7 @@ async function renderTrips() {
   Object.keys(years).sort().reverse().forEach(y => {
     const ts = years[y];
     html += `<div class="chart-section"><h3>${y} · ${ts.length} trip${ts.length !== 1 ? 's' : ''}, ${ts.reduce((n, t) => n + t.days, 0)} days` +
-      ` <a href="#year=${y}" class="sp-link inline" style="text-transform:none;font-weight:400" onclick="event.preventDefault(); openYear(${y})">the year in review →</a></h3><div class="sp-scroll">` +
+      ` <a href="#year=${dayId(y)}" class="sp-link inline" style="text-transform:none;font-weight:400" onclick="event.preventDefault(); openYear(${dayId(y) || 0})">the year in review →</a></h3><div class="sp-scroll">` +
       `<table class="sp-table"><thead><tr><th>When</th><th>Trip</th><th>Days</th><th>Towns</th><th></th></tr></thead><tbody>` +
       ts.map(t => `<tr><th>${tripRange(t.start, t.end)}</th><td>${tripFlags(t)} ${tripLink(t)}${t.work?.length ? ` <span title="For work: ${escapeHTML(t.work.join('; '))}">💼</span>` : ''}</td><td>${t.days}${t.nights ? `<small>${t.nights} night${t.nights !== 1 ? 's' : ''} in stays</small>` : ''}</td>` +
         `<td>${t.towns.slice(0, 3).map(c => `<a href="#" class="sp-link inline" onclick="event.preventDefault(); openCityReport(${c.id})">${escapeHTML(c.name)}</a>`).join(', ')}</td>` +
@@ -95,8 +95,8 @@ function prepBlock(t, withTitle) {
     : `<span class="prep-ok" title="${escapeHTML(f.checkin.title)}">${f.checkin.status === 'done' ? '✓ checked in' : f.checkin.status === 'open' ? 'check-in to-do' : 'check-in set aside'}${f.checkin.with ? ` (with ${escapeHTML(f.checkin.with)})` : ''}</span>`);
   const ahead = d => (d || '').slice(0, 10) >= today;  // a trip under way: only what is still to come
   const rows = [
-    ...t.flights.filter(f => ahead(f.date)).map(f => `<li>✈️ <b>${escapeHTML(f.flight_number || '')}</b> ${escapeHTML(f.from_city || f.from)} → ${escapeHTML(f.to_city || f.to)} <small>${f.date.slice(0, 16).replace(' ', ' at ')}</small> ${badge(f)}</li>`),
-    ...t.ground.filter(g => ahead(g.date)).map(g => `<li>${(groundModes[g.mode] || '🚌').split(' ')[0]} ${escapeHTML(g.from)} → ${escapeHTML(g.to)} <small>${g.date.slice(0, 16).replace(' ', ' at ')}</small></li>`),
+    ...t.flights.filter(f => ahead(f.date)).map(f => `<li>✈️ <b>${escapeHTML(f.flight_number || '')}</b> ${escapeHTML(f.from_city || f.from)} → ${escapeHTML(f.to_city || f.to)} <small>${escapeHTML(f.date.slice(0, 16).replace(' ', ' at '))}</small> ${badge(f)}</li>`),
+    ...t.ground.filter(g => ahead(g.date)).map(g => `<li>${(groundModes[g.mode] || '🚌').split(' ')[0]} ${escapeHTML(g.from)} → ${escapeHTML(g.to)} <small>${escapeHTML(g.date.slice(0, 16).replace(' ', ' at '))}</small></li>`),
     ...t.stays.filter(x => ahead(x.end || x.start)).map(s => `<li>🏨 ${escapeHTML(s.hotel || s.type || s.place || '')} <small>${escapeHTML(s.place || '')} · ${tripRange(s.start, s.end)} · ${escapeHTML(s.provider || '')}</small></li>`),
     ...t.cars.filter(c => ahead(c.end || c.start)).map(c => `<li>🚗 Rental car <small>${escapeHTML(c.place || '')} · ${tripRange(c.start, c.end)} · ${escapeHTML(c.provider || '')}</small></li>`)];
   const missing = t.missing.map(m => `<li class="prep-missing" data-key="${escapeHTML(m.key)}">⚠️ ${escapeHTML(m.text)} ` +
@@ -109,7 +109,7 @@ function prepBlock(t, withTitle) {
     (c.from ? ` · <a href="/api/climbs/${encodeURIComponent(c.id)}/gpx?${new URLSearchParams({ from: c.from.at.join(','), name: c.from.name || '' })}" download ` +
       `title="A bike route from ${escapeHTML(c.from.name || 'your stay')} to the top and back (OpenStreetMap), for your bike computer">GPX</a>` : '') + '</small>').join(' · ')}</p>` : '';
   const saved = t.saved?.length ? `<p class="prep-line">⭐ Saved places nearby: ${t.saved.map(p =>
-    `${p.url ? `<a href="${escapeHTML(p.url)}" target="_blank" rel="noopener">${escapeHTML(p.name)}</a>` : escapeHTML(p.name)} <small>${p.km} km${p.list && p.list !== 'Starred' ? ` · ${escapeHTML(p.list)}` : ''}</small>`).join(' · ')}</p>` : '';
+    `${safeUrl(p.url) ? `<a href="${safeUrl(p.url)}" target="_blank" rel="noopener">${escapeHTML(p.name)}</a>` : escapeHTML(p.name)} <small>${p.km} km${p.list && p.list !== 'Starred' ? ` · ${escapeHTML(p.list)}` : ''}</small>`).join(' · ')}</p>` : '';
   const todos = t.todos.length ? `<p class="prep-line">✅ To-dos: ${t.todos.map(td => escapeHTML(td.title)).join(' · ')}</p>` : '';
   return `<div class="prep-trip">${withTitle ? `<h4>${tripFlags(t)} ${tripLink(t)} <small>${tripRange(t.start, t.end)} · ${when}</small></h4>` : ''}` +
     `${missing ? `<ul class="prep-list">${missing}</ul>` : '<p class="prep-line prep-ok">Nothing missing</p>'}` +
@@ -176,8 +176,8 @@ function renderTrip() {
     card('Photos', d.photo_ids.length.toLocaleString()) +
     (d.spending?.priced ? card('Spent on stays', `€${d.spending.eur.toLocaleString()}`, `€${d.spending.perNight} a night · ${d.spending.priced} of ${d.spending.stays} stays with a price`) : '') +
     (d.spending?.card ? card('Paid by card and cash', `€${d.spending.card.eur.toLocaleString()}`, `${d.spending.card.payments} payment${d.spending.card.payments !== 1 ? 's' : ''} on the trip's days (your bank)`) : '') +
-    card('Sleep', d.body?.sleep ? hm(d.body.sleep) : '', [d.body.score ? `score ${d.body.score}` : '', d.body.sleep_before ? `${hm(d.body.sleep_before)} the month before` : ''].filter(Boolean).join(' · ')) +
-    card('Resting heart rate', d.body?.rhr ? `${d.body.rhr} bpm` : '', d.body.rhr_before ? `${d.body.rhr_before} the month before` : '') + '</div>';
+    card('Sleep', d.body?.sleep ? hm(d.body.sleep) : '', [d.body.score ? `score ${Number(d.body.score)}` : '', d.body.sleep_before ? `${hm(d.body.sleep_before)} the month before` : ''].filter(Boolean).join(' · ')) +
+    card('Resting heart rate', d.body?.rhr ? `${Number(d.body.rhr)} bpm` : '', d.body.rhr_before ? `${Number(d.body.rhr_before)} the month before` : '') + '</div>';
 
   const byId = (list, id) => list.find(x => x.id === id);
   const bodyOf = b => (b ? [b.sleep ? `😴 ${hm(b.sleep)}${b.score ? ` <small>score ${b.score}</small>` : ''}` : '', b.rhr ? `❤️ ${b.rhr} bpm` : ''].filter(Boolean).join('<br>') : '');
@@ -185,7 +185,7 @@ function renderTrip() {
   html += tripStory(d);
   html += section('Days at a glance', table(['Day', 'Where', 'How you moved', 'What you did', 'Slept', ...(withBody ? ['Sleep, heart'] : [])], d.dayList.map(x => {
     const moved = [
-      ...x.flights.map(id => byId(d.flights, id)).map(f => `✈️ ${f.from} → ${f.to}`),
+      ...x.flights.map(id => byId(d.flights, id)).map(f => `✈️ ${escapeHTML(f.from)} → ${escapeHTML(f.to)}`),
       ...x.ground.map(id => byId(d.ground, id)).map(g => `${(groundModes[g.mode] || '🚌').split(' ')[0]} ${escapeHTML(g.from)} → ${escapeHTML(g.to)}`),
       x.road ? `${cars.some(c => x.day >= c.start && x.day <= (c.end || c.start)) ? '🚗' : '🛣️'} ${Math.round(dist(x.road))} ${DU()}` : ''
     ].filter(Boolean).join('<br>');
@@ -201,14 +201,14 @@ function renderTrip() {
   if (d.towns.length) html += section('Towns', `<p>${d.towns.map(c => `${flagOf(c.country)}${city(c)} <small>${plural(c.days, 'day')}</small>`).join(' · ')}</p>`);
   if (stays.length || cars.length) {
     html += section('Stays and rental cars', table(['When', 'Nights', 'Where', 'Booked'], d.stays.map(s =>
-      `<tr><th>${s.what === 'car' ? '🚗' : '🏨'} ${tripRange(s.start, s.end)}</th><td>${nights(s)}</td>` +
+      `<tr><th>${s.what === 'car' ? '🚗' : '🏨'} ${tripRange(s.start, s.end)}</th><td>${nights(s)}${awayNote(s)}</td>` +
       `<td><b>${escapeHTML(s.hotel || s.type || (s.what === 'car' ? 'Rental car' : 'Stay'))}</b><small>${escapeHTML(s.place || '')}</small></td>` +
       `<td>${escapeHTML(s.provider || '')}</td></tr>`)));
   }
   if (d.flights.length) {
     html += section('Flights', table(['When', 'Flight', 'Route', DU()], d.flights.map(f =>
       `<tr><th>${fmtDate(f.date)}</th><td><b>${escapeHTML(f.flight_number || '')}</b><small>${escapeHTML(f.airline || '')}</small></td>` +
-      `<td>${escapeHTML(f.from_city || f.from)} (${f.from}) → ${escapeHTML(f.to_city || f.to)} (${f.to})</td><td>${f.distance ? Math.round(dist(f.distance)).toLocaleString() : ''}</td></tr>`)));
+      `<td>${escapeHTML(f.from_city || f.from)} (${escapeHTML(f.from)}) → ${escapeHTML(f.to_city || f.to)} (${escapeHTML(f.to)})</td><td>${f.distance ? Math.round(dist(f.distance)).toLocaleString() : ''}</td></tr>`)));
   }
   if (d.ground.length) {
     html += section('Trains, buses and ferries', table(['When', '', 'Route', DU()], d.ground.map(g =>
@@ -243,7 +243,7 @@ function tripStory(d) {
   const at = s => (s || '').replace(' ', 'T').slice(0, 16);
   const ev = [];
   d.flights.forEach(f => ev.push({ at: at(f.date), html: `✈️ <b>${escapeHTML(f.from_city || f.from)} → ${escapeHTML(f.to_city || f.to)}</b> ` +
-    `<small>${escapeHTML(f.flight_number || '')} ${f.from}–${f.to}${f.distance ? ` · ${fmtDist(f.distance)}` : ''}</small>` }));
+    `<small>${escapeHTML(f.flight_number || '')} ${escapeHTML(f.from)}–${escapeHTML(f.to)}${f.distance ? ` · ${fmtDist(f.distance)}` : ''}</small>` }));
   d.ground.forEach(g => ev.push({ at: at(g.date), html: `${(groundModes[g.mode] || '🚌').split(' ')[0]} <b>${escapeHTML(g.from)} → ${escapeHTML(g.to)}</b> ` +
     `<small>${[g.service, g.arrival ? `until ${g.arrival.slice(11, 16)}` : '', g.distance ? fmtDist(g.distance) : ''].filter(Boolean).map(escapeHTML).join(' · ')}</small>` }));
   d.activities.forEach(a => ev.push({ at: at(a.date), html: `${sportEmoji[sportOf(a.sport)] || '🏅'} ${linkTo(a)} <small>${[a.distance ? fmtDist(a.distance, 1) : '',
@@ -267,7 +267,7 @@ function tripStory(d) {
     items.forEach(e => {
       if (e.photo) { photos.push([...e.photo.slice(0, 5), e.at.slice(11)]); return; }
       flush();
-      body += `<li><span class="story-time">${e.at.slice(11)}</span>${e.html}</li>`;
+      body += `<li><span class="story-time">${escapeHTML(e.at.slice(11))}</span>${e.html}</li>`;
     });
     flush();
     if (night) body += `<li><span class="story-time">night</span>🏨 ${escapeHTML(night.hotel || night.type || night.place || 'Stay')} <small>${escapeHTML([night.place, night.provider].filter(Boolean).join(' · '))}</small></li>`;

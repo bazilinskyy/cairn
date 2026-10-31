@@ -294,6 +294,7 @@ cp default.secret secret
 | Key | Default | Meaning |
 |---|---|---|
 | `host` | `127.0.0.1` | address the server listens on: `127.0.0.1` is this machine only, `0.0.0.0` opens it to the network |
+| `hosts` | none | more names Cairn answers to besides `localhost`, `127.0.0.1` and `[::1]` (a reverse proxy's, for example); any other name is refused, so a website whose name points at this machine cannot read your data through your browser |
 | `port` | `3000` | port the server listens on |
 | `data_dir` | `data` | folder for runtime data (gitignored) |
 | `flights_file` | `data/flights.json` | the flight list |
@@ -337,7 +338,7 @@ On first run the app creates `data/`, downloads `airports.dat` from the [OpenFli
 
 ## Running on an always-on Mac
 
-Cairn and tripmail can run permanently on another Mac, here a Mac mini reached as `ssh mini`. Cairn listens only on that machine (`"host": "127.0.0.1"`), so nobody else on the network can see or change your flights and no login is needed. That Mac's `data/flights.json` becomes the only copy in use.
+Cairn and tripmail can run permanently on another Mac, here a Mac mini reached as `ssh mini`. Cairn listens only on that machine (`"host": "127.0.0.1"`), so nobody else on the network can see or change your flights and no login is needed. Nor can a website you visit: Cairn refuses what another site's page sends from your browser (it may only link to Cairn) and does not let itself be shown inside another site. That Mac's `data/flights.json` becomes the only copy in use.
 
 1. Make an environment with Node, Python and EventKit, for example with micromamba:
    ```
@@ -571,10 +572,10 @@ The box at the top left sets the period:
 - Where the activities come from: Garmin, with its last sync (or why it failed); Strava, when it is set up, with **fetch now** (else **Connect Strava**).
 - **Where on**: a day. A marker shows where you were: your stay that night, else the end of that day's last flight or ride, else a Timeline place or photos. With nothing that day, the last place known before it.
 
-**Photos.** On the Mac that has your Photos library, from a checkout of this repository (or just the script), with [uv](https://docs.astral.sh/uv/) so nothing gets installed:
+**Photos.** On the Mac that has your Photos library, from a checkout of this repository (or just the script), with [uv](https://docs.astral.sh/uv/) so nothing gets installed (`pyobjc<13`: version 13 does not load on macOS 15):
 
 ```
-uv run --with osxphotos python imports/photos.py --send mini:repos/contrail/data/photos.json
+uv run --with osxphotos --with 'pyobjc<13' python imports/photos.py --send mini:repos/contrail/data/photos.json
 ```
 
 It reads the library at `~/Pictures/Photos Library.photoslibrary` (another with `--library`; a folder of files with `--folder`, which needs exiftool) and keeps only the places rounded to about 1 km, the number of photos and the days, per year: no file names, pictures or exact positions. `--send` copies the result to the Mac that runs Cairn; run it again after new photos.
@@ -592,7 +593,7 @@ Only the small `.json` file Google puts beside each photo is read (when it was t
 On the Mac that runs Cairn, with the photos in its own Photos library (Google's imported into it, for example with `osxphotos import`), `--points data/photo_points.json` also writes every photo's exact place, time and file for the photo layer, trips and town pages, and `--albums data/photo_albums.json` the library's albums for the album suggestions (below), so neither the Takeout folder nor any export is needed once the photos are in the library:
 
 ```
-uv run --with osxphotos python imports/photos.py --points data/photo_points.json --albums data/photo_albums.json --unplaced data/photo_unplaced.json
+uv run --with osxphotos --with 'pyobjc<13' python imports/photos.py --points data/photo_points.json --albums data/photo_albums.json --unplaced data/photo_unplaced.json
 ```
 
 `--unplaced data/photo_unplaced.json` lists the photos with no place, with the albums they are in, for **Trips → 📍 Place photos** (`#place-photos`): they are shown by day; select one or many (a click, shift-click for a run, a day's checkbox, or filter by album or year and select all shown), then place them in a town (search it, or the town Cairn has you in that day, one click) or drag them onto the map to put them at that exact spot. A double-click shows a photo whole. Each placing can be undone on the page. Places are kept in `data/photo_places.json`, are on the map and count for your days at once, and are written into the Photos library itself in the background half a minute later (`imports/photos_place.py`, never while another job drives Photos; `"photos_write_back": false` in `config` keeps them in Cairn only). An undo after that only takes the place out of Cairn. From the laptop it works through the ssh tunnel (see [Running on an always-on Mac](#running-on-an-always-on-mac)).
@@ -717,6 +718,7 @@ Add `--send mini:repos/contrail/data/<file>.json` to copy the result to the Mac 
 **+ Add → 🩺 Fix** lists what looks wrong, each with its fix, or **Fine** to set it aside for good:
 - **stays that copy another** (the same nights and place, from two sources: a booking email and the Booking.com export, a Couchsurfing request and its confirmation): **Remove the copies** keeps the one that knows most (its position, hotel, price) and deletes the others for good;
 - **stays booked for the same nights** in different places (one cancelled, or a plan): keep the one you slept in;
+- **nights with no stay, where your runs start**: a run, walk or ride that starts and ends at one spot mostly starts where you slept, so nights away from home that no stay covers, with such loops, are offered as a stay there (one per run of nights at the same spot; a morning loop counts for the night before). Name the town or hotel and **Add stay**, or ✕. Spots near your home places, spots you ran from for months (where you lived) and a lone loop within 100 km of those are left out;
 - **trips and stays with no place found**: correct the name and look it up again;
 - **trains and buses drawn straight**: look them up again;
 - **flights without their airline's code** ("151" for "S4151").
@@ -900,7 +902,7 @@ Moving to MongoDB later only needs the data layer in `app.js` (the `flights` arr
 | `GET` | `/api/review/by-year` | every year side by side: days, days away, trips, countries and towns (and new), distance by means, nights by kind of bed, photos, first climbs, € |
 | `GET` | `/api/suggestions/gaps` | trips abroad with no way there or back (`unreached`), and runs of 30 days or more with no place (`quiet`) |
 | `GET` | `/api/wishlist` | `saved` places, `climbs` to ride near where you go, `countries` still to go |
-| `GET` | `/api/health` | what looks wrong: `copies`, `twice`, `unplaced`, `straight`, `flights` |
+| `GET` | `/api/health` | what looks wrong: `copies`, `twice`, `unplaced`, `straight`, `flights`, `photoJobs`, `bases` (nights with no stay where your runs start) |
 | `POST` | `/api/health/dedupe` | remove the stays that copy another |
 | `POST` | `/api/ground/:id/retry`, `/api/stays/:id/retry` | look a trip's or a stay's place (and track) up again |
 | `GET` | `/api/suggestions/todos`, `/api/suggestions/tripdocs` | trips your to-dos mention that nothing else knows; trip-doc rows not on the map |

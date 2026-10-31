@@ -2,7 +2,7 @@
 """The places you gave photos by hand in Cairn (#place-photos, data/photo_places.json) into the Apple Photos library
 itself, so the library stays the one place that knows where each photo was taken. Cairn runs it after you place photos:
 
-  uv run --with osxphotos python imports/photos_place.py data/photo_places.json
+  uv run --with osxphotos --with 'pyobjc<13' python imports/photos_place.py data/photo_places.json
 
 Reads {file path: {"lat", "lon", "written"?}} and sets the location of each photo not written yet (its library id is in
 its file name). Prints one JSON line per photo set, {"path", "ok"}, for Cairn to mark it written; changes nothing else.

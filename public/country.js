@@ -45,7 +45,7 @@ function renderCountry() {
   let html = '<div class="chart-section" style="padding:0;overflow:hidden"><div id="country-map" class="mini-map" style="height:380px"></div></div>' +
     '<div class="stat-cards">' +
     card('Days', d.days.toLocaleString(), plural(d.visits.length, 'visit')) +
-    card('Towns', d.towns.length.toLocaleString(), d.towns.slice(0, 3).map(t => t.name).join(', ')) +
+    card('Towns', d.towns.length.toLocaleString(), d.towns.slice(0, 3).map(t => escapeHTML(t.name)).join(', ')) +
     card('Trips', d.trips.length.toLocaleString()) +
     card('Flights', d.flights.length.toLocaleString(), `${d.flights.filter(f => f.direction === 'in').length} in, ${d.flights.filter(f => f.direction === 'out').length} out`) +
     card('Trains, buses, ferries', d.ground.length.toLocaleString()) +
@@ -73,14 +73,14 @@ function renderCountry() {
       `<td>${airportLink(f.from)} → ${airportLink(f.to)}<small>${escapeHTML(f.from_city || '')} → ${escapeHTML(f.to_city || '')}</small></td><td>${f.direction}</td></tr>`)));
   }
   if (d.ground.length) {
-    const when = g => (g.approx === 'year' ? g.date.slice(0, 4) : g.approx === 'month' ? g.date.slice(0, 7) : fmtDate(g.date));
+    const when = g => (g.approx === 'year' ? escapeHTML(g.date.slice(0, 4)) : g.approx === 'month' ? escapeHTML(g.date.slice(0, 7)) : fmtDate(g.date));
     html += section('Trains, buses and ferries', table(`<th>When</th><th></th><th>Route</th><th>${DU()}</th>`, d.ground.map(g =>
       `<tr><th>${when(g)}</th><td>${(groundModes[g.mode] || '🚌').split(' ')[0]}</td><td>${escapeHTML(g.from)} → ${escapeHTML(g.to)}</td>` +
       `<td>${g.distance ? Math.round(dist(g.distance)).toLocaleString() : ''}</td></tr>`)));
   }
   if (d.stays.length) {
     html += section('Stays and rental cars', table('<th>When</th><th>Nights</th><th>Where</th><th>Booked</th>', d.stays.map(s =>
-      `<tr><th>${s.what === 'car' ? '🚗' : '🏨'} ${range(s.start, s.end)}</th><td>${nights(s)}</td>` +
+      `<tr><th>${s.what === 'car' ? '🚗' : '🏨'} ${range(s.start, s.end)}</th><td>${nights(s)}${awayNote(s)}</td>` +
       `<td><b>${escapeHTML(s.hotel || s.type || (s.what === 'car' ? 'Rental car' : 'Stay'))}</b><small>${escapeHTML(s.place || '')}</small></td><td>${escapeHTML(s.provider || '')}</td></tr>`)));
   }
   if (d.climbs.done.length) {

@@ -10,14 +10,21 @@
 
 const fs = require('fs');
 const ground = require('./ground');
+const { awayNights } = require('./stats');
 
 const OSRM = 'https://router.project-osrm.org/route/v1/driving/';
 const WORK = /conferen|congress|symposi|workshop|summit|seminar|colloqui|summer school|winter school|meeting|kick-?off|defen[cs]e|viva|keynote|invited talk|panel|committee|review|project|hackathon|expo\b|trade fair|training|course\b|lecture|visit to|site visit|retreat|plenary/i;
-const MIN_DAYS = 3, MAX_FLOWN_DAYS = 90, MOVE_KM = 1, ROAD_KM = 10, ROAD_MAX_KM = 900, CAR_KMH = 140, FERRY_KM = 20, ROAD_V = 2;
+const MIN_DAYS = 3, MAX_FLOWN_DAYS = 90, MOVE_KM = 1, ROAD_KM = 10, PICKUP_KM = 30, ROAD_MAX_KM = 900, CAR_KMH = 140, FERRY_KM = 20, ROAD_V = 2;
 const regionName = (() => {
   try { const n = new Intl.DisplayNames(['en'], { type: 'region' }); return cc => { try { return n.of(cc); } catch (_) { return cc; } }; } catch (_) { return cc => cc; }
 })();
-const dayOf = t => new Date(t * 1000).toISOString().slice(0, 10);
+const dayNames = new Map();  // day number since 1970 -> 'YYYY-MM-DD' (made once: tens of thousands of photos share a few thousand days)
+const dayOf = t => {
+  const n = Math.floor(t / 86400);
+  let d = dayNames.get(n);
+  if (!d) dayNames.set(n, d = new Date(n * 864e5).toISOString().slice(0, 10));
+  return d;
+};
 const addDays = (d, n) => new Date(Date.parse(d) + n * 864e5).toISOString().slice(0, 10);
 // local clock time ("2026-10-24 15:53") at a longitude as unix seconds: the zone guessed from the longitude
 const localToUnix = (s, lon) => {
@@ -80,6 +87,12 @@ function create({ towns, cities, days, flights, airports, groundTrips, stays, ac
         leftOn = null;
       }
     }
+    // how many flights, rides, activities and photos each day: a trip's are those of its days (each run is every day
+    // from its start to its end)
+    const perDay = list => { const m = new Map(); list.forEach(d => { if (d) m.set(d, (m.get(d) || 0) + 1); }); return m; };
+    const flownOn = perDay(fl.map(f => (f.date || '').slice(0, 10))), rodeOn = perDay(gt.map(t => (t.date || '').slice(0, 10)));
+    const activeOn = perDay(acts.map(a => (a.date || '').slice(0, 10))), shotOn = perDay(ph.map(p => dayOf(p[1])));
+    const count = (m, r) => r.days.reduce((n, d) => n + (m.get(d) || 0), 0);
     const runs = [];
     for (const d of [...away.keys()].sort()) {
       const r = runs[runs.length - 1];
@@ -92,12 +105,10 @@ function create({ towns, cities, days, flights, airports, groundTrips, stays, ac
       const townList = cities.rank(grid, pts.filter(p => p.day >= r.start && p.day <= r.end)).filter(t => !home.has(t.country) || !countries.length);
       const name = countries.length ? countries.slice(0, 3).map(c => regionName(c.cc)).join(' · ') + (countries.length > 3 ? ' …' : '')
         : (townList[0]?.name || 'Trip');
-      const inTrip = d => d && d.slice(0, 10) >= r.start && d.slice(0, 10) <= r.end;
       return { id: r.start, start: r.start, end: r.end, name, days: r.days.length, countries, work: workOf(r.start, r.end, townList),
         towns: townList.slice(0, 6).map(t => ({ id: t.id, name: t.name, country: t.country, lat: t.lat, lon: t.lon, days: t.days })),
-        nights: r.days.filter(d => nights.has(d)).length, flights: fl.filter(f => inTrip(f.date)).length,
-        ground: gt.filter(t => inTrip(t.date)).length, activities: acts.filter(a => inTrip(a.date)).length,
-        photos: ph.filter(p => inTrip(dayOf(p[1]))).length };
+        nights: r.days.filter(d => nights.has(d)).length, flights: count(flownOn, r), ground: count(rodeOn, r),
+        activities: count(activeOn, r), photos: count(shotOn, r) };
     }).reverse();
     memo = { key, list: out };
     return out;
@@ -111,9 +122,11 @@ function create({ towns, cities, days, flights, airports, groundTrips, stays, ac
     const inTrip = d => d && d.slice(0, 10) >= trip.start && d.slice(0, 10) <= trip.end;
     const fl = flights().filter(f => inTrip(f.date) && ap[f.from] && ap[f.to]).sort((a, b) => a.date.localeCompare(b.date));
     const gt = groundTrips().filter(t => inTrip(t.date)).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+    const away = awayNights(stays());
     const st = stays().filter(s => s.start && s.start <= trip.end && (s.end || s.start) >= trip.start).sort((a, b) => a.start.localeCompare(b.start));
     const acts = activities().filter(a => inTrip(a.date)).sort((a, b) => (a.start || 0) - (b.start || 0));
-    const ph = photos().filter(p => p[2] != null && inTrip(dayOf(p[1]))).sort((a, b) => a[1] - b[1]);
+    const from = Date.parse(trip.start) / 1000, to = Date.parse(trip.end) / 1000 + 86400;  // its days, as dayOf counts them (UTC)
+    const ph = photos().filter(p => p[2] != null && p[1] >= from && p[1] < to).sort((a, b) => a[1] - b[1]);
     const pts = days(trip.start, trip.end);
 
     // the events of the trip in time, each where it happened; flights, ground trips and activities cover the time
@@ -140,13 +153,36 @@ function create({ towns, cities, days, flights, airports, groundTrips, stays, ac
     }
     for (const s of st) {
       if (s.lat == null || s.what === 'car') continue;
-      ev.push({ t: localToUnix(s.start + ' 18:00', s.lon), at: [s.lat, s.lon], what: 'stay' });
-      if (s.end) ev.push({ t: localToUnix(s.end + ' 10:00', s.lon), at: [s.lat, s.lon], what: 'stay' });
+      ev.push({ t: localToUnix(s.start + ' 18:00', s.lon), at: [s.lat, s.lon], what: 'stay', in: s.start });
+      if (s.end) ev.push({ t: localToUnix(s.end + ' 10:00', s.lon), at: [s.lat, s.lon], what: 'stay', out: s.end });
     }
-    // a photo or a stay's check-in during a flight, train or activity is on the way (or its clock is off): left out
+    // a check-out (10:00) after that morning's photos or rides elsewhere was earlier, before them; a check-in (18:00)
+    // before that evening's elsewhere was later, after them: else the way goes back to the stay and out again
+    const seen = ev.filter(e => e.what !== 'stay'), far = (e, x) => ground.km(e.at, x.at) >= ROAD_KM;
+    for (const x of ev) {
+      if (x.out) {
+        const from = localToUnix(x.out + ' 00:00', x.at[1]), before = seen.filter(e => e.t >= from && e.t < x.t && far(e, x));
+        if (before.length) x.t = Math.min(...before.map(e => e.t)) - 60;
+      } else if (x.in) {
+        const to = localToUnix(x.in + ' 23:59', x.at[1]), after = seen.filter(e => e.t > x.t && e.t <= to && far(e, x));
+        if (after.length) x.t = Math.max(...after.map(e => e.t)) + 60;
+      }
+    }
+    // a rental car: where it was picked up, just before the first place on its days more than PICKUP_KM from there
+    // (the drive starts at the airport, not at the first photo on the way)
+    for (const c of st) {
+      if (c.what !== 'car' || c.lat == null || !c.start) continue;
+      const from = localToUnix(c.start + ' 00:00', c.lon), to = localToUnix((c.end || c.start) + ' 23:59', c.lon);
+      const first = seen.filter(e => e.t >= from && e.t <= to && ground.km(e.at, [c.lat, c.lon]) > PICKUP_KM).sort((a, b) => a.t - b.t)[0];
+      // only a place you were near that day or the one before (a car placed in a whole country is not)
+      const there = ev.some(e => e.t >= from - 86400 && e.t < (first?.t ?? to) && ground.km(e.at, [c.lat, c.lon]) <= PICKUP_KM);
+      if (first && there) ev.push({ t: first.t - 60, at: [c.lat, c.lon], what: 'car' });
+    }
+    // a photo or a stay's check-in during a flight, train or activity is on the way (or its clock is off): left out,
+    // also one at the very minute it leaves (a check-in at 18:00, the bus at 18:00)
     const spans = {};
     ev.filter(e => e.cover).forEach(e => { const x = spans[e.cover] = spans[e.cover] || [e.t, e.t]; x[0] = Math.min(x[0], e.t); x[1] = Math.max(x[1], e.t); });
-    const during = e => !e.cover && Object.values(spans).some(([a, b]) => e.t > a && e.t < b);
+    const during = e => !e.cover && Object.values(spans).some(([a, b]) => e.t >= a && e.t < b);
     ev.splice(0, ev.length, ...ev.filter(e => !during(e)).sort((a, b) => a.t - b.t));
     const cars = st.filter(s => s.what === 'car');
     const carOn = t => cars.some(c => dayOf(t) >= c.start && dayOf(t) <= (c.end || c.start));
@@ -201,7 +237,7 @@ function create({ towns, cities, days, flights, airports, groundTrips, stays, ac
       flights: fl.map(f => ({ id: f.id, date: f.date, from: f.from, to: f.to, flight_number: f.flight_number, airline: f.airline, distance: f.distance,
         from_city: ap[f.from]?.city, to_city: ap[f.to]?.city })),
       ground: gt.map(t => ({ id: t.id, date: t.date, arrival: t.arrival, mode: t.mode, service: t.service, from: t.from, to: t.to, distance: t.distance })),
-      stays: st.map(s => ({ id: s.id, what: s.what, start: s.start, end: s.end, place: s.place, hotel: s.hotel, type: s.type, provider: s.provider, lat: s.lat, lon: s.lon })),
+      stays: st.map(s => ({ id: s.id, what: s.what, start: s.start, end: s.end, place: s.place, hotel: s.hotel, type: s.type, provider: s.provider, lat: s.lat, lon: s.lon, away: away.get(s)?.nights })),
       activities: acts.map(a => ({ id: a.id, date: a.date, name: a.name, sport: a.sport, distance: a.distance, moving_time: a.moving_time, elevation: a.elevation,
         weather: wx[a.id] || null })), body,
       photo_ids: ph.map(p => p[0]), photos: ph.map(p => [p[0], p[1], p[2], p[3], p[4] || 0]), moves,

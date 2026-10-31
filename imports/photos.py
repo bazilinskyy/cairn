@@ -19,6 +19,7 @@ import argparse
 import json
 import subprocess
 import sys
+import time
 import zipfile
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -63,7 +64,7 @@ def from_library(path):
     try:
         import osxphotos
     except ImportError:
-        sys.exit("osxphotos is missing: run this with  uv run --with osxphotos python imports/photos.py")
+        sys.exit("osxphotos is missing: run this with  uv run --with osxphotos --with 'pyobjc<13' python imports/photos.py")
     usual = Path("~/Pictures/Photos Library.photoslibrary").expanduser()
     try:
         db = library_db(path or (str(usual) if usual.exists() else None))
@@ -216,6 +217,21 @@ def main(argv=None):
     ap.add_argument("--out", default=str(data / "photos.json" if data.is_dir() else Path("photos.json")))
     ap.add_argument("--send", metavar="HOST:PATH", help="also copy the result there with scp")
     args = ap.parse_args(argv)
+    # on the Mac that runs Cairn (--points), how the run went, for Cairn's health page: {"at", "ok", "error"?, "points"?}
+    status = Path(args.points).with_name("photo_index_status.json") if args.points else None
+    try:
+        points = build(args)
+    except BaseException as e:  # osxphotos missing (SystemExit) too
+        if status:
+            status.write_text(json.dumps({"at": int(time.time()), "ok": False, "error": str(e) or type(e).__name__}))
+        raise
+    if status:
+        status.write_text(json.dumps({"at": int(time.time()), "ok": True, "points": points}))
+
+
+def build(args):
+    """The run itself: the photos.json cells, and what --points, --albums and --unplaced ask; the number of points"""
+    points = None
     sources = [from_library(lib) for lib in args.library or []] + [from_folder(f) for f in args.folder or []]
     if args.takeout:
         sources.append(from_takeout(args.takeout))
@@ -226,6 +242,7 @@ def main(argv=None):
         pts = sorted([s[3], round(s[0], 6), round(s[1], 6), (s[4] if len(s) > 4 else None) or ""] for s in shots
                      if s[3] is not None and s[0] is not None and s[1] is not None and not (s[0] == 0 and s[1] == 0))
         Path(args.points).write_text(json.dumps(pts, separators=(",", ":")))
+        points = len(pts)
         print(f"{len(pts)} photos with a place and time, written to {args.points}")
     library = (args.library or [None])[0] or str(Path("~/Pictures/Photos Library.photoslibrary").expanduser())
     if args.albums:
@@ -239,6 +256,7 @@ def main(argv=None):
     if args.send:
         subprocess.run(["scp", "-q", str(out), args.send], check=True)
         print(f"sent to {args.send}")
+    return points
 
 
 if __name__ == "__main__":

@@ -76,6 +76,9 @@ async function heightAt(lat, lon) {
 // --- geometry ---
 
 const metresBetween = (a, b) => ground.km(a, b) * 1000;
+// whether two points are more than m metres apart: a box first (a degree of latitude is 111 km), then the distance
+const fartherThan = (a, b, m) => Math.abs(a[0] - b[0]) * 111e3 > m || Math.abs(a[1] - b[1]) * 111e3 * Math.cos(a[0] * Math.PI / 180) > m * 1.01
+  || metresBetween(a, b) > m;
 function resample(pts, step = STEP_M) {  // points every `step` metres along the line
   const out = [pts[0]];
   let carry = 0;
@@ -214,8 +217,8 @@ function ridden(ascents, ride) {
   return ascents.map((a, i) => {
     const s = a.samples, n = s.length, top = s[n - 1];
     const last = s.slice(Math.max(0, n - Math.min(Math.round(LAST_M / STEP_M), Math.ceil(n / 2))));
-    // where it differs from the climb's other ways up
-    const own = s.filter(p => ascents.every((o, j) => j === i || o.samples.every(q => metresBetween(p, q) > 150)));
+    // where it differs from the climb's other ways up: the same for every ride, so worked out once per ascent
+    const own = a.own ??= s.filter(p => ascents.every((o, j) => j === i || o.samples.every(q => fartherThan(p, q, 150))));
     // each visit to the top: where the ride was last near it before going away again
     const visits = [];
     let near = false;

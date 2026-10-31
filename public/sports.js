@@ -209,7 +209,7 @@ function renderClimbs(kinds) {
 function fillPickers() {
   const sel = document.getElementById('sp-year');
   const ys = [...new Set(allActivities.map(yearOf).filter(Boolean))].sort().reverse();
-  const want = `<option value="">All years</option>` + ys.map(y => `<option value="${y}">${y}</option>`).join('');
+  const want = `<option value="">All years</option>` + ys.map(y => `<option value="${escapeHTML(y)}">${escapeHTML(y)}</option>`).join('');
   if (sel.dataset.filled !== want) { sel.innerHTML = want; sel.dataset.filled = want; sel.value = sportPicked.year; }
 }
 
@@ -444,8 +444,8 @@ function renderRecords(list, kinds) {
       const min = { ride: 20, run: 5, walk: 5, sport: 5 }[k], a = top(l.filter(x => x.distance >= min && !x.trainer), x => x.distance / x.moving_time);
       return a && `<b>${k === 'run' || k === 'walk' ? pace(a) : speed(a)}</b>${linkTo(a)}<small>${km1(a.distance)} ${DU()} · ${fmtDate(a.date)}</small>`;
     }],
-    ['Highest heart rate average', l => { const a = top(l, x => x.heartrate || 0); return a && `<b>${a.heartrate} bpm</b>${linkTo(a)}<small>${fmtDate(a.date)}</small>`; }],
-    ['Most kudos', l => { const a = top(l, x => x.kudos); return a && `<b>${a.kudos}</b>${linkTo(a)}<small>${fmtDate(a.date)}</small>`; }],
+    ['Highest heart rate average', l => { const a = top(l, x => x.heartrate || 0); return a && `<b>${Number(a.heartrate)} bpm</b>${linkTo(a)}<small>${fmtDate(a.date)}</small>`; }],
+    ['Most kudos', l => { const a = top(l, x => x.kudos); return a && `<b>${Number(a.kudos)}</b>${linkTo(a)}<small>${fmtDate(a.date)}</small>`; }],
     ['Biggest week', l => biggestPeriod(l, weekOf, w => `week of ${fmtDate(w)}`)],
     ['Biggest month', l => biggestPeriod(l, a => a.date.slice(0, 7), m => `${MONTHS[+m.slice(5) - 1]} ${m.slice(0, 4)}`)],
     ['Biggest year', l => biggestPeriod(l, yearOf, y => y)],
@@ -506,7 +506,7 @@ async function renderPlaces(kinds) {
     `<tr><td class="sp-rank">${i + 1}</td><th>${flagOf(t.country)}${escapeHTML(t.name)}</th><td>${t.count}</td><td>${km0(t.km)}</td></tr>`).join('') + '</tbody>'
     : '<tbody><tr><td class="sp-note">No start places yet (or the town list is missing).</td></tr></tbody>');
   el('sp-countries', countries.length ? `<thead><tr><th>Country</th><th>Activities</th><th>${DU()}</th><th>Since</th></tr></thead><tbody>` + countries.map(c =>
-    `<tr><th>${flagOf(c.country)}${escapeHTML(names.of(c.country) || c.country)}</th><td>${c.count}</td><td>${km0(c.km)}</td><td>${c.first.slice(0, 4)}</td></tr>`).join('') + '</tbody>'
+    `<tr><th>${flagOf(c.country)}${escapeHTML(names.of(c.country) || c.country)}</th><td>${c.count}</td><td>${km0(c.km)}</td><td>${escapeHTML(c.first.slice(0, 4))}</td></tr>`).join('') + '</tbody>'
     : '<tbody><tr><td class="sp-note">–</td></tr></tbody>');
 }
 

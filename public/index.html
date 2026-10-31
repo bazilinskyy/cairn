@@ -300,7 +300,7 @@
     .pp-ph.sel { outline-color: var(--accent); }
     .pp-ph.sel::after { content: '✓'; position: absolute; top: 4px; right: 6px; color: #fff; font-weight: 700; text-shadow: 0 0 3px #000; }
     .pp-video { position: absolute; left: 6px; bottom: 4px; color: #fff; text-shadow: 0 0 3px #000; }
-    .pp-near { position: absolute; right: 3px; top: 3px; font-size: 11px; line-height: 1; padding: 3px; border-radius: 50%; background: rgba(0, 0, 0, 0.65); box-shadow: 0 0 0 1.5px #fff; }
+    .pp-near { position: absolute; left: 3px; top: 3px; font-size: 11px; line-height: 1; padding: 3px; border-radius: 50%; background: rgba(0, 0, 0, 0.65); box-shadow: 0 0 0 1.5px #fff; }
     .pp-nearonly { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; color: var(--text2); cursor: pointer; }
     @media (max-width: 900px) { .pp-cols { grid-template-columns: 1fr; } .pp-side { position: static; order: -1; } .pp-ph { width: 30vw; height: 30vw; max-width: 104px; max-height: 104px; } }
     .chart-section { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 24px; margin-bottom: 24px; }
@@ -381,8 +381,8 @@
     .music-list { margin: 0; padding-left: 20px; font-size: 13px; }
     .music-list li { padding: 2px 0; }
     .music-list small { color: var(--text2); }
-    .story-day a, .chart-section p a.sp-link, .curio-cards a.sp-link, .sugg a.sp-link { color: var(--accent); text-decoration: none; }
-    .story-day a:hover, .chart-section p a.sp-link:hover, .curio-cards a.sp-link:hover, .sugg a.sp-link:hover { text-decoration: underline; }
+    .story-day a, .chart-section p a.sp-link, .curio-cards a.sp-link, .curio-bars a.sp-link, .sugg a.sp-link { color: var(--accent); text-decoration: none; }
+    .story-day a:hover, .chart-section p a.sp-link:hover, .curio-cards a.sp-link:hover, .curio-bars a.sp-link:hover, .sugg a.sp-link:hover { text-decoration: underline; }
     /* a trip's journal (🖨️ on its page, or printing it): only the trip, on white, a day never split over two pages */
     @media print {
       body:has(#tab-trip.active) nav, body:has(#tab-trip.active) .sp-head .btn, body:has(#tab-trip.active) #trip-prep, body:has(#tab-trip.active) .glance, body:has(#tab-trip.active) .story-strip button,
@@ -485,6 +485,9 @@
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .sugg .pics img { width: 36px; height: 36px; object-fit: cover; border-radius: 4px; background: var(--surface2); }
     .sugg small { color: var(--text2); display: block; }
+    .stops-edit { display: flex; gap: 6px; margin-top: 6px; }
+    .stops-edit input { flex: 1; min-width: 0; font-size: 12px; padding: 4px 6px; }
+    .sugg small.health-error { font-family: ui-monospace, Menlo, monospace; font-size: 11px; overflow-wrap: anywhere; }
     .sugg .acts { display: flex; gap: 6px; align-items: center; }
     .sugg .acts select { width: auto; }
     .health-pair { display: grid; grid-template-columns: 60px 1fr 1fr auto; gap: 10px; align-items: center; padding: 8px 0; border-top: 1px solid var(--border); font-size: 13px; }
@@ -1069,7 +1072,7 @@ async function doTripItImport() {
   const btn = document.getElementById('tripit-import-btn');
   btn.disabled = true; btn.textContent = 'Importing…';
   try {
-    const r = await fetch('/api/tripit/import-ical?url=' + encodeURIComponent(url));
+    const r = await fetch('/api/tripit/import-ical', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) });
     const d = await r.json();
     if (!r.ok) throw new Error(d.error);
     closeTripItModal();
@@ -1401,6 +1404,10 @@ function decodePath(str) {
 }
 
 const escapeHTML = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+// a link from data only when it is a web address (not javascript: or data:), escaped for an attribute; else ''
+const safeUrl = u => (/^https?:\/\//i.test(String(u || '')) ? escapeHTML(u) : '');
+// a trip's id (its first day) or a year, for an inline handler: only when it is one (data never reaches the code)
+const dayId = s => (/^\d{4}(-\d\d-\d\d)?$/.test(String(s)) ? String(s) : '');
 
 // Trains, buses, ferries and car journeys (also the drives with a rental car): one line per route and mode, along the track Cairn found (dashed when it is a
 // straight line between the two places); a trip between the same places along another way (a track of clearly another
@@ -1424,22 +1431,42 @@ function drawGround() {
     r.trips.push(t);
     if (!r.best || (!r.best.path && t.path)) r.best = t;
   });
-  const how = { transitous: 'timetable track (Transitous)', osrm: 'road route (OSRM)', clues: 'the likeliest road through your photos on the way (OSRM)', sea: 'the ferry line (OpenStreetMap, OSRM)', direct: 'straight across the water', road: 'along the roads: no railway found, a guess', rail: 'likeliest railway line, a best guess (BRouter)', straight: 'straight line: no track found' };
+  const how = { transitous: 'timetable track (Transitous)', osrm: 'road route (OSRM)', clues: 'the likeliest road through your photos on the way (OSRM)', stops: 'the road through the stops you named (OSRM)', sea: 'the ferry line (OpenStreetMap, OSRM)', direct: 'straight across the water', road: 'along the roads: no railway found, a guess', rail: 'likeliest railway line, a best guess (BRouter)', straight: 'straight line: no track found' };
   Object.values(routes).flat().forEach(({ trips, best }) => {
     const pts = best.path ? decodePath(best.path) : [[best.from_lat, best.from_lon], [best.to_lat, best.to_lon]];
     // a trip added by hand may know only its year or month, and stand for several
     const when = t => (t.approx === 'year' ? t.date.slice(0, 4) : t.approx === 'month' ? t.date.slice(0, 7) : (t.date || '').slice(0, 10)) + (t.times > 1 ? ` (×${t.times})` : '');
     const dates = trips.map(when).sort().reverse(), count = trips.reduce((n, t) => n + (t.times || 1), 0);
     const popup = `<b>${groundModes[groundKind(best)].split(' ')[0]} ${escapeHTML(best.from)} → ${escapeHTML(best.to)}</b><br>` +
+      (best.stops?.length ? `<small>through ${best.stops.map(escapeHTML).join(', ')}</small><br>` : '') +
       `<small>${count} trip${count !== 1 ? 's' : ''} · ${fmtDist(best.distance || 0)} · ` +
       `${how[best.path_source] || 'looking up the track…'}</small><br>` +
-      `<small>${dates.slice(0, 6).join(', ')}${dates.length > 6 ? ', …' : ''}</small>`;
+      `<small>${dates.slice(0, 6).join(', ')}${dates.length > 6 ? ', …' : ''}</small>` +
+      (['drive', 'bus', 'hitch'].includes(best.mode) && trips.length === 1 ? `<div class="stops-edit"><input placeholder="Went through… (towns, with commas)" ` +
+        `value="${escapeHTML((best.stops || []).join(', '))}" aria-label="Towns on the way"><button class="btn btn-ghost">Save</button></div>` : '');
     L.polyline(pts, {
       color: mapVar('--' + groundKind(best)), weight: Math.min(2.4 + Math.log2(trips.length) * 0.5, 4), opacity: 0.85,
       dashArray: best.path ? null : '4 6', smoothFactor: 1
-    }).bindPopup(popup, { maxWidth: 280 }).addTo(groundLayer[groundKind(best)]);
+    }).bindPopup(popup, { maxWidth: 280 }).on('popupopen', e => hookStops(e.popup, best)).addTo(groundLayer[groundKind(best)]);
   });
   drawLegend();
+}
+
+// the towns a drive, bus or lift went through, put right from its popup: your own trip is looked up again through
+// them; a worked-out drive makes its day's drives your own first (/api/drives/keep)
+function hookStops(popup, t) {
+  const box = popup.getElement()?.querySelector('.stops-edit');
+  if (!box) return;
+  box.querySelector('button').addEventListener('click', async () => {
+    const stops = box.querySelector('input').value.split(',').map(x => x.trim()).filter(Boolean);
+    const r = t.derived
+      ? await fetch('/api/drives/keep', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ day: t.date.slice(0, 10), from: [t.from_lat, t.from_lon], to: [t.to_lat, t.to_lon], stops }) })
+      : await fetch(`/api/ground/${t.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stops }) });
+    if (!r.ok) return toast((await r.json().catch(() => ({}))).error || 'Could not save', 'error');
+    toast(stops.length ? `Through ${stops.join(', ')}: the road is looked up again` : 'Stops cleared');
+    popup.close();
+  });
 }
 
 function drawAirports() {
@@ -1584,7 +1611,7 @@ function renderStats() {
   document.getElementById('top-airlines').innerHTML = topAirlines.map(([name, n], i) => `
     <div class="top-list-row">
       <span class="rank">${i + 1}</span>
-      <span class="name">${name}</span>
+      <span class="name">${escapeHTML(name)}</span>
       <span class="count">${n}</span>
     </div>`).join('');
 
@@ -1597,7 +1624,7 @@ function renderStats() {
   document.getElementById('top-routes').innerHTML = topRoutes.map(([name, n], i) => `
     <div class="top-list-row">
       <span class="rank">${i + 1}</span>
-      <span class="name">${name}</span>
+      <span class="name">${escapeHTML(name)}</span>
       <span class="count">${n}</span>
     </div>`).join('');
 }
@@ -1624,7 +1651,7 @@ async function renderCountryStats(fetchAgain = true) {
   const [key, dir] = countrySort;
   const rows = [...countryStats].sort((a, b) => key === 'country' ? dir * name(a).localeCompare(name(b))
     : (a[key] > b[key] ? 1 : a[key] < b[key] ? -1 : 0) * dir || b.days - a.days);
-  const cell = (c, k) => k === 'km' ? (c.km ? Math.round(dist(c.km)).toLocaleString() : '') : ['first', 'last'].includes(k) ? c[k].slice(0, 7)
+  const cell = (c, k) => k === 'km' ? (c.km ? Math.round(dist(c.km)).toLocaleString() : '') : ['first', 'last'].includes(k) ? escapeHTML(c[k].slice(0, 7))
     : c[k] ? c[k].toLocaleString() : '';
   const table = document.getElementById('country-stats');
   table.innerHTML = '<thead><tr>' + cols.map(([k, label]) => `<th data-sort="${k}" class="${k === key ? 'sorted' : ''}">${label}${k === key ? (dir < 0 ? ' ↓' : ' ↑') : ''}</th>`).join('') +
@@ -1668,19 +1695,20 @@ function renderTable(filter = '') {
 
   document.getElementById('flights-tbody').innerHTML = filteredFlights.map(f => `
     <tr>
-      <td class="dim">${(f.date || '').substring(0, 10)}</td>
+      <td class="dim">${escapeHTML((f.date || '').substring(0, 10))}</td>
       <td>
-        <span class="airport-code" style="cursor:pointer" title="Airport page" onclick="openAirport('${f.from}')">${f.from || '—'}</span>
+        <span class="airport-code" style="cursor:pointer" title="Airport page" data-iata="${escapeHTML(f.from || '')}">${escapeHTML(f.from || '—')}</span>
         <span class="arrow">→</span>
-        <span class="airport-code" style="cursor:pointer" title="Airport page" onclick="openAirport('${f.to}')">${f.to || '—'}</span>
+        <span class="airport-code" style="cursor:pointer" title="Airport page" data-iata="${escapeHTML(f.to || '')}">${escapeHTML(f.to || '—')}</span>
       </td>
-      <td class="dim">${f.flight_number || '—'}</td>
-      <td>${f.airline || '—'}</td>
+      <td class="dim">${escapeHTML(f.flight_number || '—')}</td>
+      <td>${escapeHTML(f.airline || '—')}</td>
       <td class="dim">${f.distance ? fmtDist(f.distance) : '—'}</td>
-      <td class="dim">${f.duration || '—'}</td>
-      <td class="dim">${f.plane || '—'}</td>
+      <td class="dim">${escapeHTML(f.duration || '—')}</td>
+      <td class="dim">${escapeHTML(f.plane || '—')}</td>
     </tr>
   `).join('');
+  document.querySelectorAll('#flights-tbody [data-iata]').forEach(el => el.addEventListener('click', () => openAirport(el.dataset.iata)));
 }
 
 document.querySelectorAll('#flights-table thead th').forEach(th => {

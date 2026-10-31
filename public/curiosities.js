@@ -52,7 +52,7 @@ async function renderCuriosities() {
   const names = { flight: '✈️ Flown', train: '🚆 Train', commute: '🔁 Commute', bus: '🚌 Bus', ferry: '⛴️ Ferry', hitch: '👍 Hitchhiked', drive: '🚙 By car', ride: '🚴 Cycled', run: '🏃 Run', walk: '🥾 Walked' };
   const max = Math.max(...Object.values(d.by));
   html += '<div class="music-cols" style="margin-top:16px"><div><h4>How far, by each means</h4><div class="curio-bars" style="grid-template-columns: 90px 1fr 80px">' +
-    Object.entries(d.by).sort((a, b) => b[1] - a[1]).map(([k, km]) => `<span>${names[k] || k}</span><div class="bar" style="width:${Math.max(1, km / max * 100)}%"></div><span>${fmtDist(km)}</span>`).join('') + '</div></div>';
+    Object.entries(d.by).sort((a, b) => b[1] - a[1]).map(([k, km]) => `<span>${escapeHTML(names[k] || k)}</span><div class="bar" style="width:${Math.max(1, km / max * 100)}%"></div><span>${fmtDist(km)}</span>`).join('') + '</div></div>';
   const ys = Object.entries(c.sea.byYear).sort(), seaMax = Math.max(...ys.map(y => y[1]));
   html += `<div><h4>Days by the sea, by year</h4><div class="curio-bars">${ys.map(([y, n]) => `<span>${y}</span><div class="bar" style="width:${n / seaMax * 100}%"></div><span>${n}</span>`).join('')}</div></div></div>`;
   const beds = Object.entries(c.beds).sort((a, b) => b[1] - a[1]);
@@ -97,7 +97,7 @@ function cardSpending(c, eur, card) {
     return `<div class="curio-bars" style="grid-template-columns: minmax(0, max-content) 1fr max-content">` +
       rows.map(r => `<span>${label(r)}</span><div class="bar" style="width:${Math.max(1, value(r) / max * 100)}%"></div><span>${sub(r)}</span>`).join('') + '</div>';
   };
-  const trip = t => `<a href="#trip=${t.id}" class="sp-link" onclick="event.preventDefault(); openTrip('${t.id}')">${escapeHTML(t.name)}</a> <small>${fmtDate(t.start)}</small>`;
+  const trip = t => `<a href="#trip=${dayId(t.id)}" class="sp-link" onclick="event.preventDefault(); openTrip('${dayId(t.id)}')">${escapeHTML(t.name)}</a> <small>${fmtDate(t.start)}</small>`;
   return '<div class="chart-section" style="margin-top:24px"><h3>Card spending</h3><div class="stat-cards curio-cards">' +
     card('Card and cash', eur(c.eur), `${c.payments.toLocaleString()} payments, ${fmtDate(c.first)} – ${fmtDate(c.last)}`) +
     card('Away on trips', eur(c.away), `${c.awayDays.toLocaleString()} days · ${eur(c.awayDays ? c.away / c.awayDays : 0)}/day`) +

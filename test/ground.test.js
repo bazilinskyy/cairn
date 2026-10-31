@@ -192,3 +192,13 @@ test('a stay given another country keeps its spot when the spot lies in that cou
   g.forgetStay(renamed, { place: 'Girona' }, inSpain);
   assert.strictEqual(renamed.lat, undefined);
 });
+
+test("a ferry's ports: those of its own islands, not the next islands' that lie nearer each other", () => {
+  const naxos = [37.104, 25.377], ios = [36.723, 25.283];
+  const terminals = { naxos: [37.108, 25.371], koufonisi: [36.929, 25.601], schinoussa: [36.870, 25.510], ios: [36.721, 25.275] };
+  const near = end => Object.values(terminals).filter(p => g.km(p, end) <= 60);
+  assert.deepStrictEqual(g.bestPorts(near(naxos), near(ios), naxos, ios), [terminals.naxos, terminals.ios]);
+  // Tenerife to La Gomera: Los Cristianos, not Santa Cruz on the far side
+  const tenerife = [28.29, -16.62], gomera = [28.1, -17.23], cristianos = [28.048, -16.716], santaCruz = [28.47, -16.245], sanSebastian = [28.09, -17.11];
+  assert.deepStrictEqual(g.bestPorts([cristianos, santaCruz], [sanSebastian], tenerife, gomera), [cristianos, sanSebastian]);
+});

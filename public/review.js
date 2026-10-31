@@ -77,7 +77,7 @@ async function openYear(y) {
     card('Sleep', d.body?.sleep ? hm(d.body.sleep) : '', d.body ? [d.body.score ? `score ${d.body.score}` : '', d.body.rhr ? `resting heart rate ${d.body.rhr}` : ''].filter(Boolean).join(' · ') : '') +
     card('Spent on stays', d.spending ? `€${d.spending.eur.toLocaleString()}` : '', d.spending ? `€${d.spending.perNight} a night` : '') + '</div>';
   if (d.trips.length) html += section('Trips', `<div class="sp-scroll"><table class="sp-table"><tbody>${d.trips.map(t =>
-    `<tr><th>${tripRange(t.start, t.end)}</th><td>${t.countries.map(cc => flagOf(cc).trim()).join(' ')} <a href="#" class="sp-link inline" onclick="event.preventDefault(); openTrip('${t.id}')">${escapeHTML(t.name)}</a>` +
+    `<tr><th>${tripRange(t.start, t.end)}</th><td>${t.countries.map(cc => flagOf(cc).trim()).join(' ')} <a href="#" class="sp-link inline" onclick="event.preventDefault(); openTrip('${dayId(t.id)}')">${escapeHTML(t.name)}</a>` +
     `<small>${t.towns.map(escapeHTML).join(', ')}</small></td><td>${t.days} days</td></tr>`).join('')}</tbody></table></div>`);
   if (newCountries.length || newTowns.length) html += section('Firsts', (newCountries.length ? `<p><b>New countries:</b> ${newCountries.map(c => country(c.cc)).join(' · ')}</p>` : '') +
     (newTowns.length ? `<p><b>New towns (${newTowns.length}):</b> ${newTowns.slice(0, 60).map(town).join(' · ')}${newTowns.length > 60 ? ' …' : ''}</p>` : ''));
@@ -86,7 +86,7 @@ async function openYear(y) {
   const names = { flight: '✈️ Flown', train: '🚆 Train', commute: '🔁 Commute', bus: '🚌 Bus', ferry: '⛴️ Ferry', hitch: '👍 Hitchhiked', drive: '🚙 By car', ride: '🚴 Cycled', run: '🏃 Run', walk: '🥾 Walked', sport: '🏅 Other' };
   const max = Math.max(1, ...Object.values(d.distance));
   html += section('How far, by each means', `<div class="curio-bars" style="grid-template-columns: 90px 1fr 90px">${Object.entries(d.distance).filter(([, v]) => v).sort((a, b) => b[1] - a[1])
-    .map(([k, v]) => `<span>${names[k] || k}</span><div class="bar" style="width:${Math.max(1, v / max * 100)}%"></div><span>${fmtDist(v)}</span>`).join('')}</div>` +
+    .map(([k, v]) => `<span>${escapeHTML(names[k] || k)}</span><div class="bar" style="width:${Math.max(1, v / max * 100)}%"></div><span>${fmtDist(v)}</span>`).join('')}</div>` +
     (Object.keys(d.beds).length ? `<p style="margin-top:10px"><b>Nights:</b> ${Object.entries(d.beds).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${escapeHTML(k)} ${n}`).join(' · ')}</p>` : ''));
   if (d.climbs.length) html += section('Climbs', `<p>${d.climbs.map(c => `${c.firstTime ? '🆕 ' : ''}<a href="#" class="sp-link inline" onclick="event.preventDefault(); openClimb('${c.id}')">${escapeHTML(c.name)}</a>${c.ele ? ` <small>${fmtHeight(c.ele)}</small>` : ''}`).join(' · ')}</p>`);
   if (d.music?.plays) html += musicSection(d.music, 'The year in music', `What you played on Last.fm in ${y}`);

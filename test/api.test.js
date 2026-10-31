@@ -28,7 +28,7 @@ before(async () => {
   fs.copyFileSync(path.join(ROOT, 'activities.js'), path.join(dir, 'activities.js'));
   fs.copyFileSync(path.join(ROOT, 'regions.js'), path.join(dir, 'regions.js'));
   fs.copyFileSync(path.join(ROOT, 'country-lists.json'), path.join(dir, 'country-lists.json'));
-  ['climbs.js', 'ascents.js', 'efforts.js', 'climbs.json', 'photos.js', 'climb_records.json', 'trips.js', 'weather.js', 'stats.js', 'lastfm.js', 'suggestions.js', 'backup.js', 'albums.js', 'things.js', 'todotrips.js', 'prep.js', 'spending.js', 'review.js'].forEach(f => fs.copyFileSync(path.join(ROOT, f), path.join(dir, f)));
+  ['climbs.js', 'ascents.js', 'efforts.js', 'climbs.json', 'photos.js', 'climb_records.json', 'trips.js', 'weather.js', 'stats.js', 'lastfm.js', 'suggestions.js', 'backup.js', 'albums.js', 'things.js', 'todotrips.js', 'prep.js', 'spending.js', 'review.js', 'bases.js'].forEach(f => fs.copyFileSync(path.join(ROOT, f), path.join(dir, f)));
   fs.copyFileSync(path.join(ROOT, 'default.config'), path.join(dir, 'default.config'));
   fs.cpSync(path.join(ROOT, 'public'), path.join(dir, 'public'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'data'));
@@ -195,6 +195,28 @@ test('stays: one deleted stays deleted when its booking is sent again', async ()
   assert.ok(!(await (await call('GET', '/api/stays')).json()).some(x => x.code === 'GONE1'));
 });
 
+test('a side trip from a base stay: its nights come off the base, and the pair is not a double booking', async () => {
+  const base = await (await call('POST', '/api/stays', { code: 'BASE1', what: 'stay', place: 'Lyon', start: '2019-05-01', end: '2019-05-08', lat: 45.76, lon: 4.84 })).json();
+  const side = await (await call('POST', '/api/stays', { code: 'SIDE1', what: 'stay', place: 'Grenoble', start: '2019-05-03', end: '2019-05-05', lat: 45.19, lon: 5.72 })).json();
+  const all = await (await call('GET', '/api/stays')).json();
+  assert.strictEqual(all.find(s => s.id === base.id).away, 2);
+  assert.strictEqual(all.find(s => s.id === side.id).away, undefined);
+  const h = await (await call('GET', '/api/health')).json();
+  assert.ok(!h.twice.some(t => t.stays.some(s => s.id === base.id)));
+  for (const s of [base, side]) await call('DELETE', `/api/stays/${s.id}`);
+});
+
+test('a photo index run that failed is on the health page until it runs well again', async () => {
+  const file = path.join(dir, 'data', 'photo_index_status.json');
+  fs.writeFileSync(file, JSON.stringify({ at: 1793389744, ok: false, error: 'osxphotos is missing' }));
+  const h = await (await call('GET', '/api/health')).json();
+  assert.deepStrictEqual(h.photoJobs.map(x => [x.key, x.error]), [['health|photos|index|1793389744', 'osxphotos is missing']]);
+  await new Promise(r => setTimeout(r, 20));
+  fs.writeFileSync(file, JSON.stringify({ at: 1793389800, ok: true, points: 3 }));
+  assert.deepStrictEqual((await (await call('GET', '/api/health')).json()).photoJobs, []);
+  fs.rmSync(file);
+});
+
 test('countries as each list counts them: a stay on Tenerife is Spain, or the Canary Islands', async () => {
   const stay = await (await call('POST', '/api/stays', { code: 'TF1', what: 'stay', place: 'Adeje', start: '2026-11-17', end: '2026-11-19', lat: 28.12, lon: -16.73 })).json();
   const names = async scheme => {
@@ -339,6 +361,33 @@ test('backup: what is not a Cairn backup is refused, and nothing changes', async
   assert.strictEqual(evil.status, 400);
   assert.match((await evil.json()).error, /not a Cairn backup/);
   assert.strictEqual(fs.readFileSync(path.join(dir, 'secret'), 'utf8'), '{}');
+});
+
+test('answers only for this computer, and nothing another site sends changes anything', async () => {
+  const ask = (method, headers, body) => new Promise((resolve, reject) => {
+    const r = require('node:http').request({ host: '127.0.0.1', port: PORT, path: '/api/health/dedupe', method, headers }, res => {
+      res.resume(); res.on('end', () => resolve({ status: res.statusCode, frame: res.headers['x-frame-options'] }));
+    });
+    r.on('error', reject);
+    r.end(body);
+  });
+  assert.strictEqual((await ask('POST', { Host: 'evil.example:39123' })).status, 403);  // a name pointed at 127.0.0.1
+  assert.strictEqual((await ask('POST', { Host: `127.0.0.1:${PORT}`, Origin: 'https://evil.example' })).status, 403);
+  assert.strictEqual((await ask('POST', { Host: `localhost:${PORT}`, 'Sec-Fetch-Site': 'cross-site', 'Content-Type': 'text/plain' }, 'x')).status, 403);
+  const own = await ask('POST', { Host: `localhost:${PORT}`, Origin: `http://localhost:${PORT}`, 'Sec-Fetch-Site': 'same-origin' });
+  assert.deepStrictEqual(own, { status: 200, frame: 'DENY' });
+  const r = await fetch(`${BASE}/api/tripit/import-ical`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: 'https://evil.example/?tripit.com' }) });
+  assert.strictEqual(r.status, 400);  // only TripIt's own feed
+});
+
+test('a flight, trip or stay with odd fields is refused: codes as codes, dates as dates, no markup kept', async () => {
+  const status = async (url, body, method = 'POST') => (await fetch(`${BASE}${url}`, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).status;
+  assert.strictEqual(await status('/api/flights', { from: '<img src=x onerror=alert(1)>', to: 'LIS', date: '2026-01-01 10:00:00' }), 400);
+  assert.strictEqual(await status('/api/flights', { from: 'AMS', to: 'LIS', date: '<svg onload=f()>' }), 400);
+  assert.strictEqual(await status('/api/ground', { mode: '<b>x</b>', from: 'A', to: 'B', date: '2026-01-01 10:00:00' }), 400);
+  assert.strictEqual(await status('/api/ground', { mode: 'bus', from: { x: 1 }, to: 'B', date: '2026-01-01 10:00:00' }), 400);
+  assert.strictEqual(await status('/api/stays', { code: 'X1', place: 'Faro', start: 'tomorrow' }), 400);
+  assert.strictEqual(await status('/api/flights/1', { airline: 'KLM', from: 'AMS' }, 'PUT'), 200);
 });
 
 test('listens on 127.0.0.1 only', async (t) => {

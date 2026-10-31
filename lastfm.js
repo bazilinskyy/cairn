@@ -8,6 +8,14 @@ const fs = require('fs');
 const API = 'https://ws.audioscrobbler.com/2.0/';
 const PAGE = 200, TOP = 10;
 
+const dayNames = new Map();  // day number since 1970 -> 'YYYY-MM-DD' (a few thousand days for hundreds of thousands of plays)
+const dayOf = t => {
+  const n = Math.floor(t / 86400);
+  let d = dayNames.get(n);
+  if (!d) dayNames.set(n, d = new Date(n * 864e5).toISOString().slice(0, 10));
+  return d;
+};
+
 function create({ file, keys, log = console.log }) {
   let data = null, running = false;
   const load = () => {
@@ -69,15 +77,25 @@ function create({ file, keys, log = console.log }) {
 
   // the scrobbles from one day to another (UTC days), only on the days in `days` when given: the top artists and
   // tracks, how many, and per day
+  // the answer for a period, kept while the scrobbles are the same (a period of chosen days is worked out each time)
+  let memo = { list: null, answers: new Map() };
   function top({ from = '', to = '', days = null } = {}) {
     const list = load().scrobbles;
     if (!list.length) return null;
+    if (memo.list !== list) memo = { list, answers: new Map() };
+    const key = `${from}|${to}`;
+    if (!days && memo.answers.has(key)) return memo.answers.get(key);
+    const out = topOf(list, from, to, days);
+    if (!days) memo.answers.set(key, out);
+    return out;
+  }
+  function topOf(list, from, to, days) {
     const lo = from ? Date.parse(from + 'T00:00:00Z') / 1000 : 0, hi = to ? Date.parse(to + 'T23:59:59Z') / 1000 : Infinity;
     const artists = new Map(), tracks = new Map(), perDay = {};
     let n = 0;
     for (const [t, artist, track] of list) {
       if (t < lo || t > hi) continue;
-      const d = new Date(t * 1000).toISOString().slice(0, 10);
+      const d = dayOf(t);
       if (days && !days.has(d)) continue;
       n++;
       artists.set(artist, (artists.get(artist) || 0) + 1);

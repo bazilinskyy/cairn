@@ -207,7 +207,7 @@ async function open3D() {
   on('climbs', p => `<b>⛰️ ${escapeHTML(p.name)}</b>${p.ele ? ` · ${fmtHeight(p.ele)}` : ''}<br><small>${p.done ? `climbed ${p.times}×` : 'not climbed yet'}</small>` +
     `<br><a href="#" onclick="event.preventDefault(); close3D(); openClimb('${p.id}')">Open climb page →</a>`);
   on('acts', p => `<b>${escapeHTML(p.name)}</b><br><small>${fmtDate(p.date)}</small>`);
-  on('ground', p => `<b>${escapeHTML(p.name)}</b><br><small>${p.mode} · ${fmtDate(p.date)}</small>`);
+  on('ground', p => `<b>${escapeHTML(p.name)}</b><br><small>${escapeHTML(p.mode)} · ${fmtDate(p.date)}</small>`);
   on('stays', p => `<b>${p.what === 'car' ? '🚗' : '🏨'} ${escapeHTML(p.name || '')}</b><br><small>${escapeHTML(p.place || '')} · ${fmtDate(p.date)}</small>`);
   on('photo', p => photoPopup([p.id, p.t]));
   on('cities', p => `<b>🏙️ ${escapeHTML(p.name)}</b><br><small>${p.days} days</small>` +

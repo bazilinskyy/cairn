@@ -143,7 +143,9 @@ const day = d => (d || '').slice(0, 10);
 const inWin = d => !d || ((!win.from || day(d) >= win.from) && (!win.to || day(d) <= win.to));
 const overlapsWin = (a, b) => (!win.to || day(a) <= win.to) && (!win.from || day(b || a) >= win.from);
 const addDays = (d, n) => new Date(new Date(day(d) + 'T12:00:00Z').getTime() + n * 864e5).toISOString().slice(0, 10);
-const nights = s => Math.max(1, Math.round((new Date(s.end || s.start) - new Date(s.start)) / 864e5));
+// the nights slept in a stay: less those away on side trips from it (the server's away, stats.js awayNights)
+const nights = s => Math.max(s.away ? 0 : 1, Math.round((new Date(s.end || s.start) - new Date(s.start)) / 864e5) - (s.away || 0));
+const awayNote = s => (s.away ? ` <small title="Nights spent on side trips while this stay was kept on">+${s.away} away</small>` : '');
 
 function fmtDate(d) {
   return new Date(day(d) + 'T12:00:00Z').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
@@ -312,7 +314,7 @@ function drawStays() {
     const s = list[0], car = s.what === 'car', [, , shade, ring] = car ? [] : STAY_KINDS[stayKindOf(s)], color = mapVar(car ? '--car' : shade);
     const total = list.reduce((t, x) => t + nights(x), 0);
     const count = n => (car ? `${n} day${n !== 1 ? 's' : ''}` : `${n} night${n !== 1 ? 's' : ''}`);
-    const line = x => `${fmtDate(x.start)} – ${fmtDate(x.end || x.start)} · ${count(nights(x))}` +
+    const line = x => `${fmtDate(x.start)} – ${fmtDate(x.end || x.start)} · ${count(nights(x))}${awayNote(x)}` +
       `${x.hotel ? ' · ' + escapeHTML(x.hotel) : ''}${!car && x.type ? ' · ' + escapeHTML(x.type) : ''}${x.price ? ' · ' + escapeHTML(x.price) : ''}${x.provider ? ' · ' + escapeHTML(x.provider) : ''}`;
     const head = list.length > 1
       ? `${car ? '🚗 Rental cars' : '🏨 Stays'}, ${escapeHTML(s.place)}</b><br><small>${list.length} ${car ? 'rentals' : 'stays'}, ${count(total)}</small>`
@@ -814,8 +816,8 @@ function attachTownPicker(input, { onPick, onType = () => {} }) {
   }
   let found = [], on = -1, timer = null, asked = '';
   const paint = () => {
-    list.innerHTML = found.map((t, i) => `<div data-i="${i}" class="${i === on ? 'on' : ''}">${flagOf(t.cc)}${escapeHTML(t.name)}, ${t.cc}` +
-      `<small>${t.pop >= 1e6 ? (t.pop / 1e6).toFixed(1) + 'M' : t.pop >= 1e3 ? Math.round(t.pop / 1e3) + 'k' : t.pop}</small></div>`).join('');
+    list.innerHTML = found.map((t, i) => `<div data-i="${i}" class="${i === on ? 'on' : ''}">${flagOf(t.cc)}${escapeHTML(t.name)}, ${escapeHTML(t.cc)}` +
+      `<small>${t.pop >= 1e6 ? (t.pop / 1e6).toFixed(1) + 'M' : t.pop >= 1e3 ? Math.round(t.pop / 1e3) + 'k' : Number(t.pop)}</small></div>`).join('');
     list.hidden = !found.length;
   };
   const pick = t => { input.value = `${t.name}, ${t.cc}`; found = []; paint(); onPick(t); };
@@ -933,7 +935,7 @@ function computeJourneys() {
     if (!list.length || sel?.value) return;  // (not while a flight-made trip is chosen)
     journeys = list.map(t => ({ start: t.start, end: t.end, name: t.name, id: t.id }));
     if (sel) sel.innerHTML = `<option value="">all trips</option>` +
-      journeys.map((j, i) => `<option value="${i}">${j.start.slice(0, 7)} · ${escapeHTML(j.name)}</option>`).join('');
+      journeys.map((j, i) => `<option value="${i}">${escapeHTML(j.start.slice(0, 7))} · ${escapeHTML(j.name)}</option>`).join('');
   });
 }
 
@@ -980,7 +982,7 @@ function addPeriodControl() {
         `<label>Years <select id="p-from">${opt('', 'first')}${ys.map(y => opt(y, y)).join('')}</select>` +
         `– <select id="p-to">${opt('', 'last')}${ys.map(y => opt(y, y)).join('')}</select></label>` +
         `<label>Trip <select id="p-trip">${opt('', 'all trips')}` +
-        journeys.map((j, i) => opt(i, `${j.start.slice(0, 7)} · ${escapeHTML(j.name)}`)).join('') + `</select>` +
+        journeys.map((j, i) => opt(i, `${escapeHTML(j.start.slice(0, 7))} · ${escapeHTML(j.name)}`)).join('') + `</select>` +
         ` <a href="#" id="p-trip-open" hidden title="The trip's page">page →</a></label>` +
         `<label>Where on <input type="date" id="p-day"></label>` + stravaRow();
       return box;
@@ -1046,7 +1048,8 @@ function whereOn(d) {
     lines.push(`${(groundModes[t.mode] || '🚌').split(' ')[0]} ${escapeHTML(t.from)} → ${escapeHTML(t.to)}`);
     if (t.to_lat != null) spots.push([t.to_lat, t.to_lon]);
   });
-  const sleeping = allStays.filter(s => s.what !== 'car' && day(s.start) <= d && d < day(s.end || s.start));
+  const sleeping = allStays.filter(s => s.what !== 'car' && day(s.start) <= d && d < day(s.end || s.start))
+    .sort((a, b) => (new Date(a.end) - new Date(a.start)) - (new Date(b.end) - new Date(b.start)));  // a side trip before its base
   allStays.filter(s => s.what === 'car' && day(s.start) <= d && d <= day(s.end || s.start))
     .forEach(s => lines.push(`🚗 rental car from ${escapeHTML(s.place)}`));
   sleeping.forEach(s => lines.push(`🏨 ${escapeHTML(s.type || 'stay')} in ${escapeHTML(s.place)}`));

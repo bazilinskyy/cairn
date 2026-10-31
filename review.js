@@ -1,5 +1,5 @@
 'use strict';
-const { stayKind, groundKind, commuteSince } = require('./stats');
+const { stayKind, groundKind, commuteSince, awayNights, sleptNights } = require('./stats');
 // A year in review: the year's trips, the countries and towns you went to for the first time, how far you went by
 // each means, the nights per kind of bed, the climbs you rode for the first time, the music you played most, your
 // photos, sleep and resting heart rate, the weather's extremes on your rides and what your stays cost. Everything from
@@ -43,8 +43,9 @@ function create({ days, townOf, trips, flights, groundTrips, stays, activities, 
     Object.keys(by).forEach(k => { by[k] = Math.round(by[k]); });
 
     const beds = {};
+    const away = awayNights(stays());
     stays().filter(s => s.what !== 'car' && inYear(s.start)).forEach(s => {
-      const n = Math.max(1, Math.round((Date.parse(s.end || s.start) - Date.parse(s.start)) / 864e5));
+      const n = sleptNights(s, away);
       const what = stayKind(s);
       beds[what] = (beds[what] || 0) + n;
     });
@@ -117,8 +118,9 @@ function create({ days, townOf, trips, flights, groundTrips, stays, activities, 
     drives().forEach(d => add(d.date.slice(0, 4), 'drive', d.distance));
     const kind = s => (/Ride|Velomobile|Handcycle/.test(s || '') ? 'ride' : /Run/.test(s || '') ? 'run' : /Walk|Hike/.test(s || '') ? 'walk' : 'sport');
     activities().filter(a => !a.trainer).forEach(a => add((a.date || '').slice(0, 4), kind(a.sport), a.distance || 0));
+    const away = awayNights(stays());
     stays().filter(s => s.what !== 'car' && s.start).forEach(s => {
-      const n = Math.max(1, Math.round((Date.parse(s.end || s.start) - Date.parse(s.start)) / 864e5)), r = row(s.start.slice(0, 4));
+      const n = sleptNights(s, away), r = row(s.start.slice(0, 4));
       const what = stayKind(s);
       r.nights[what] = (r.nights[what] || 0) + n;
     });

@@ -59,7 +59,7 @@ function renderAirport() {
     html += section('To and from', table('<th data-sort="text">Airport</th><th data-sort="text">City</th><th data-sort="num" class="sort-desc" aria-sort="descending">Flights</th><th data-sort="num">Last</th>',
       [...ends.values()].sort((a, b) => b.n - a.n).map(e => {
         const o = allAirports[e.code] || {};
-        return `<tr><td data-v="${e.code}">${airportLink(e.code)}<small>${escapeHTML(o.name || '')}</small></td><td data-v="${escapeHTML(o.city || '')}">${countryFlag(o.country)}${escapeHTML(o.city || '')}</td>` +
+        return `<tr><td data-v="${escapeHTML(e.code)}">${airportLink(e.code)}<small>${escapeHTML(o.name || '')}</small></td><td data-v="${escapeHTML(o.city || '')}">${countryFlag(o.country)}${escapeHTML(o.city || '')}</td>` +
           `<td data-v="${e.n}">${e.n}<small>${e.out} out, ${e.n - e.out} in</small></td><td data-v="${Date.parse(e.last) || ''}">${e.last ? fmtDate(e.last) : ''}</td></tr>`;
       })), 'Click a heading to sort.');
     html += section('Airlines', table('<th data-sort="text">Airline</th><th data-sort="num" class="sort-desc" aria-sort="descending">Flights</th>',

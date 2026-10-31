@@ -35,14 +35,32 @@ function load(file) {
 
 // The town a place belongs to: the one that pulls hardest, population over distance squared, within 25 km
 // (Veldhoven's station is Veldhoven, not Eindhoven next door; a hamlet next to a city goes to the city)
+const DEG_KM = 111.2;  // km in a degree of latitude: a box around the place, before the exact distance
 function townAt(grid, lat, lon) {
   let best = null, pull = 0;
+  const dLat = REACH_KM / DEG_KM, dLon = REACH_KM / (DEG_KM * Math.max(0.01, Math.cos(lat * Math.PI / 180)));
   for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
     for (const t of grid.get((Math.floor(lat) + dy) + ',' + (Math.floor(lon) + dx)) || []) {
+      if (Math.abs(t.lat - lat) > dLat || Math.abs(t.lon - lon) > dLon) continue;
       const d = km([lat, lon], [t.lat, t.lon]);
       if (d > REACH_KM) continue;
       const p = t.pop / (d + 2) ** 2;
       if (p > pull) { pull = p; best = t; }
+    }
+  }
+  return best;
+}
+
+// The town nearest a place within maxKm, whatever its size (not the one that pulls hardest, as townAt: a climb's
+// foot is in little Sault, not in Bédoin); null when none is
+function nearest(grid, lat, lon, maxKm = 10) {
+  let best = null, dist = maxKm;
+  const dLat = maxKm / DEG_KM, dLon = maxKm / (DEG_KM * Math.max(0.01, Math.cos(lat * Math.PI / 180)));
+  for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+    for (const t of grid.get((Math.floor(lat) + dy) + ',' + (Math.floor(lon) + dx)) || []) {
+      if (Math.abs(t.lat - lat) > dLat || Math.abs(t.lon - lon) > dLon) continue;
+      const d = km([lat, lon], [t.lat, t.lon]);
+      if (d < dist) { dist = d; best = t; }
     }
   }
   return best;
@@ -148,4 +166,4 @@ function biggestNamed(grid, name) {
   return own || other;
 }
 
-module.exports = { load, townAt, townNamed, rank, starts, byId, search, biggestNamed };
+module.exports = { load, townAt, nearest, townNamed, rank, starts, byId, search, biggestNamed };

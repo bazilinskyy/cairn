@@ -45,6 +45,7 @@ function groundForm() {
     `<div class="form-row">${whenFields('g-when', 'When')}${field('Leaving at', '<input id="g-time" type="time">', 'flex:0 0 120px')}</div>` +
     `<div class="form-row">${field('Times taken', '<input id="g-times" type="number" min="1" value="1">', 'flex:0 0 120px')}` +
     field('Train or bus number, operator', '<input id="g-service" placeholder="optional" autocomplete="off">') + '</div>' +
+    `<div class="form-row">${field('Through (by car, bus or lift)', '<input id="g-stops" placeholder="optional: towns on the way, e.g. Valjevo, Samokov" autocomplete="off">')}</div>` +
     `<div class="form-row"><label style="display:flex;gap:8px;align-items:center;font-size:13px"><input type="checkbox" id="g-back"> And back the same way</label></div>` +
     `<div class="form-row" id="g-back-row" hidden>${whenFields('g-back-when', 'Back on')}</div>` +
     `<p class="sp-note">Only a year or a month: the line is drawn and its distance counted, but no day is made up for it. Times taken: one entry for a trip you made many times (each way).</p>` +
@@ -59,11 +60,12 @@ function hookGroundForm() {
     const there = readWhen('g-when', $('g-time'));
     if (!$('g-from') || !$('g-to') || !there) return toast('From, to and when are needed', 'error');
     const base = { mode: $('g-mode'), service: $('g-service'), source: 'manual', times: Math.max(1, +$('g-times') || 1) };
-    const legs = [{ ...base, ...there, from: $('g-from'), to: $('g-to'), event_id: 'manual-' + rand() }];
+    const stops = $('g-stops').split(',').map(x => x.trim()).filter(Boolean);
+    const legs = [{ ...base, ...there, from: $('g-from'), to: $('g-to'), ...(stops.length && { stops }), event_id: 'manual-' + rand() }];
     if (back.checked) {
       const home = readWhen('g-back-when') || (there.approx ? there : null);
       if (!home) return toast('When did you come back?', 'error');
-      legs.push({ ...base, ...home, from: $('g-to'), to: $('g-from'), event_id: 'manual-' + rand() });
+      legs.push({ ...base, ...home, from: $('g-to'), to: $('g-from'), ...(stops.length && { stops: [...stops].reverse() }), event_id: 'manual-' + rand() });
     }
     for (const leg of legs) {
       const t = await fetch('/api/ground', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(leg) }).then(r => r.json());
@@ -195,7 +197,7 @@ async function renderPlaceSuggestions(o) {
       `<div class="pics">${o.cover ? `<img src="${o.cover(a)}" alt="" loading="lazy">` : '<span class="pic-icon">🧳</span>'}</div>` +
       `<div><b>${escapeHTML(o.name(a))}</b><small>${o.detail(a)}</small>` +
       `<div class="album-fields"><input data-f="from" placeholder="from (where you lived)" aria-label="From"><input data-f="place" value="${escapeHTML(a.place || '')}" aria-label="To">` +
-      `<input data-f="year" type="number" min="1950" max="2100" value="${a.year || ''}" placeholder="year" aria-label="Year"></div></div>` +
+      `<input data-f="year" type="number" min="1950" max="2100" value="${escapeHTML(a.year || '')}" placeholder="year" aria-label="Year"></div></div>` +
       `<div class="acts"><select aria-label="How">${Object.entries(MODES).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select>` +
       `<label title="And back the same way"><input type="checkbox" data-f="back" checked> back</label>` +
       `<button class="btn btn-primary" data-add-place>Add</button><button class="btn btn-ghost" data-no-place title="It was no trip">✕</button></div></div>`).join('')}</div>`;
@@ -318,7 +320,7 @@ async function renderPaymentSuggestions() {
     `where nothing else in Cairn puts you on those days (${list.length}). Add the trip (✈️ or 🚆 above), or ✕ when it was a purchase online.</p>` +
     `<div class="sugg-group">${list.map(r => `<div class="sugg" data-key="${escapeHTML(r.key)}"><div class="pics"><span class="pic-icon">${flagOf(r.country).trim() || '💳'}</span></div>` +
       `<div><b>${escapeHTML(country(r.country))}</b> · ${when(r)}<small>${r.payments} payment${r.payments > 1 ? 's' : ''}: ` +
-      `${Object.entries(r.amounts).map(([c, v]) => `${v.toLocaleString()} ${c}`).join(', ')} · ${escapeHTML(r.examples.join('; '))}</small></div>` +
+      `${Object.entries(r.amounts).map(([c, v]) => `${v.toLocaleString()} ${escapeHTML(c)}`).join(', ')} · ${escapeHTML(r.examples.join('; '))}</small></div>` +
       '<div class="acts"><button class="btn btn-ghost" data-no-pay title="No trip: online, or already known">✕</button></div></div>').join('')}</div>`;
   box.querySelectorAll('[data-no-pay]').forEach(b => b.addEventListener('click', async () => {
     const row = b.closest('.sugg');
@@ -394,12 +396,26 @@ async function renderHealth() {
     `${escapeHTML(st.provider || '')} (${escapeHTML(st.source)})</small><button class="btn btn-ghost" data-keep="${st.id}">Keep this one</button></div>`;
   const fine = key => `<button class="btn btn-ghost" data-fine="${escapeHTML(key)}" title="Fine as it is">Fine</button>`;
   let html = '<p class="subtitle">What looks wrong in your data, each with a fix. "Fine" sets it aside for good.</p>';
+  if (d.photoJobs?.length) html += `<h3 class="sugg-title">Photo jobs that failed (${d.photoJobs.length})</h3><div class="sugg-group">${d.photoJobs.map(x =>
+    `<div class="sugg" data-key="${escapeHTML(x.key)}"><div class="pics"><span class="pic-icon">⚠️</span></div>` +
+    `<div><b>${escapeHTML(x.what)}</b><small>${fmtDate(new Date(x.at).toISOString().slice(0, 10))} ${new Date(x.at).toTimeString().slice(0, 5)}` +
+    `${x.again ? ' · tried again every hour' : ''}</small><small class="health-error">${escapeHTML(x.error || '')}</small></div>` +
+    `<div class="acts">${fine(x.key)}</div></div>`).join('')}</div>`;
   if (d.copies) html += `<div class="sugg-group"><h4><span>🏨 ${d.copies} stays are copies of another (the same nights and place, from two sources)</span>` +
     `<button class="btn btn-primary" data-dedupe>Remove the copies</button></h4><small class="sp-note">The one that knows most is kept: its position, the hotel, the price. The others are deleted and do not come back.</small></div>`;
   if (d.twice.length) html += `<h3 class="sugg-title">Stays booked for the same nights (${d.twice.length})</h3><p class="subtitle">One was often cancelled, or a plan. Keep the one you slept in; "Fine" when both are right (two rooms, moving on the same day).</p>` +
     `<div class="sugg-group">${d.twice.slice(0, HEALTH_PAGE).map(x => `<div class="health-pair" data-key="${escapeHTML(x.key)}" data-ids="${x.stays.map(s => s.id).join(',')}">` +
       `<span>${x.nights} night${x.nights > 1 ? 's' : ''}</span>${x.stays.map(stayCard).join('')}${fine(x.key)}</div>`).join('')}` +
       (d.twice.length > HEALTH_PAGE ? `<small class="sp-note">… and ${d.twice.length - HEALTH_PAGE} more after these.</small>` : '') + '</div>';
+  const bases = d.bases || [];
+  if (bases.length) html += `<h3 class="sugg-title">Nights with no stay, where your runs start (${bases.length})</h3><p class="subtitle">A run, walk or ride that starts and ends at one spot mostly starts where you slept. ` +
+    `Add the stay (name the place or hotel if you like), or ✕ when you did not sleep there.</p>` +
+    `<div class="sugg-group">${bases.slice(0, HEALTH_PAGE).map(x => `<div class="sugg" data-key="${escapeHTML(x.key)}"><div class="pics"><span class="pic-icon">🏃</span></div>` +
+      `<div><b>${escapeHTML(x.place || `${x.lat.toFixed(3)}, ${x.lon.toFixed(3)}`)}</b><small>${tripRange(x.start, x.end)} · ${x.nights} night${x.nights > 1 ? 's' : ''} · ` +
+      `${x.loops} ${x.loops > 1 ? 'loops start' : 'loop starts'} here${x.names.length ? ` (${x.names.map(escapeHTML).join(', ')})` : ''}</small>` +
+      `<div class="album-fields"><input data-f="place" value="${escapeHTML(x.place)}" placeholder="Town" aria-label="Place"><input data-f="hotel" placeholder="Hotel (if you know it)" aria-label="Hotel"></div></div>` +
+      `<div class="acts"><button class="btn btn-primary" data-base>Add stay</button><button class="btn btn-ghost" data-fine="${escapeHTML(x.key)}" title="Not a stay">✕</button></div></div>`).join('')}` +
+      (bases.length > HEALTH_PAGE ? `<small class="sp-note">… and ${bases.length - HEALTH_PAGE} more after these.</small>` : '') + '</div>';
   if (d.unplaced.length) html += `<h3 class="sugg-title">Not on the map: no place found (${d.unplaced.length})</h3><div class="sugg-group">${d.unplaced.map(x =>
     `<div class="sugg" data-key="health|unplaced|${x.kind}|${x.id}" data-kind="${x.kind}" data-id="${x.id}"><div class="pics"><span class="pic-icon">${x.kind === 'stay' ? '🏨' : '🚌'}</span></div>` +
     `<div><b>${escapeHTML(x.text)}</b><small>${fmtDate((x.date || '').slice(0, 10))}</small><div class="album-fields">` +
@@ -416,7 +432,7 @@ async function renderHealth() {
       `<div class="album-fields"><input data-f="number" value="${escapeHTML(f.flight_number)}" placeholder="e.g. KL1234" aria-label="Flight number"></div></div>` +
       `<div class="acts"><button class="btn btn-primary" data-flight>Save</button>${fine(`health|flight|${f.id}`)}</div></div>`).join('')}` +
       (d.flights.length > HEALTH_PAGE ? `<small class="sp-note">… and ${d.flights.length - HEALTH_PAGE} more after these.</small>` : '') + '</div>';
-  if (!d.copies && !d.twice.length && !d.unplaced.length && !d.straight.length && !d.flights.length) html += '<p class="subtitle">Nothing looks wrong. 🎉</p>';
+  if (!d.copies && !d.twice.length && !bases.length && !d.unplaced.length && !d.straight.length && !d.flights.length && !d.photoJobs?.length) html += '<p class="subtitle">Nothing looks wrong. 🎉</p>';
   box.innerHTML = html;
   const gone = el => { el.remove(); };
   const put = (url, body, method = 'PUT') => fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }).then(r => r.json());
@@ -440,6 +456,15 @@ async function renderHealth() {
     if (row.dataset.kind === 'stay') { await put(`/api/stays/${row.dataset.id}`, { place: f('place'), unplaced: false }); await post(`/api/stays/${row.dataset.id}/retry`, {}); }
     else { await put(`/api/ground/${row.dataset.id}`, { from: f('from'), to: f('to'), unplaced: false }); await post(`/api/ground/${row.dataset.id}/retry`, {}); }
     toast('Looking it up again: on the map in a minute');
+    gone(row);
+  }));
+  const baseOf = Object.fromEntries(bases.map(x => [x.key, x]));
+  box.querySelectorAll('[data-base]').forEach(b => b.addEventListener('click', async () => {
+    const row = b.closest('[data-key]'), x = baseOf[row.dataset.key], f = k => row.querySelector(`[data-f="${k}"]`)?.value.trim();
+    const place = f('place') || x.place || `${x.lat.toFixed(3)}, ${x.lon.toFixed(3)}`;
+    allStays.push(await post('/api/stays', { code: `runs-${x.start}-${x.lat.toFixed(3)},${x.lon.toFixed(3)}`, what: 'stay', place, hotel: f('hotel') || '',
+      start: x.start, end: x.end, lat: x.lat, lon: x.lon, source: 'activities', provider: '', type: `where your runs started (${x.loops})` }));
+    toast(`Added: ${place}, ${tripRange(x.start, x.end)}`);
     gone(row);
   }));
   box.querySelectorAll('[data-retry]').forEach(b => b.addEventListener('click', async () => {

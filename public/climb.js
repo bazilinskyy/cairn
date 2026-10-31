@@ -41,7 +41,7 @@ function renderClimb(c) {
   const link = r => `<a href="#" class="sp-link" data-activity="${r.id}">${fmtDate(r.date)}</a>`;
   const section = (title, body, note = '') => `<div class="chart-section"><h3>${title}</h3>${body}${note ? `<p class="sp-note">${note}</p>` : ''}</div>`;
   const recordNote = r => `Record: ${escapeHTML(r.rider || '')}, ${escapeHTML(r.event || '')} ${r.year || ''}, ${escapeHTML(r.measured || '')}` +
-    `${r.from_note ? ` (${escapeHTML(r.from_note)})` : ''} (<a href="${escapeHTML(r.source)}" target="_blank" rel="noopener">source</a>).` +
+    `${r.from_note ? ` (${escapeHTML(r.from_note)})` : ''} (<a href="${safeUrl(r.source)}" target="_blank" rel="noopener">source</a>).` +
     `${r.note ? ` <span title="${escapeHTML(r.note)}">ⓘ</span>` : ''}`;
   const tile = (label, value, sub = '') => `<div class="stat-card"><div class="label">${label}</div><div class="value" style="font-size:20px">${value}</div>${sub ? `<div class="sub">${sub}</div>` : ''}</div>`;
   let html = `<div class="chart-section" style="padding:0;overflow:hidden"><div id="climb-map" style="height:320px"></div></div>` +
@@ -70,7 +70,7 @@ function renderClimb(c) {
       '</div>' +
       (a.efforts.length ? `<div class="sp-scroll"><table class="sp-table"><thead><tr><th>Ride</th><th>Time</th><th>Power</th><th>W/kg</th><th>HR</th><th>VAM</th><th>FTP, kg that day</th><th>FTP would do</th><th>Weather</th></tr></thead><tbody>` +
         a.efforts.map((e, i) => `<tr><th>${link(e)}${i === 0 ? ' 🏆' : ''}<small>${escapeHTML(e.name || '')}</small></th><td><b>${clock(e.seconds)}</b></td>` +
-          `<td>${e.power ? e.power + ' W' : ''}</td><td>${e.wkg ?? ''}</td><td>${e.hr ?? ''}</td><td>${Math.round(a.gain / (e.seconds / 3600)).toLocaleString()} m/h</td>` +
+          `<td>${e.power ? Number(e.power) + ' W' : ''}</td><td>${escapeHTML(e.wkg ?? '')}</td><td>${escapeHTML(e.hr ?? '')}</td><td>${Math.round(a.gain / (e.seconds / 3600)).toLocaleString()} m/h</td>` +
           `<td>${e.ftp ? e.ftp + ' W' : ''}${e.kg ? `, ${e.kg} kg` : ''}</td><td>${e.predicted ? `${clock(e.predicted)} <small>(${diff(e.seconds - e.predicted)})</small>` : ''}</td>` +
           `<td data-weather="${e.id}"></td></tr>`).join('') +
         '</tbody></table></div>' : (a.times ? `<p class="sp-note">Ridden ${a.times}× (${a.rides.map(link).join(', ')}), but those rides have no timed track.</p>` : '')),
@@ -87,7 +87,7 @@ function renderClimb(c) {
         (b.predicted ? tile('That day\'s FTP would do', clock(b.predicted), `${b.ftp} W, ${b.kg} kg · you ${diff(b.seconds - b.predicted)}`) : '') + '</div>' : '') +
       (o.efforts?.length ? `<div class="sp-scroll"><table class="sp-table"><thead><tr><th>Ride</th><th>Time</th><th>Power</th><th>W/kg</th><th>HR</th><th>VAM</th><th>FTP, kg that day</th><th>FTP would do</th><th>Weather</th></tr></thead><tbody>` +
         o.efforts.map((e, i) => `<tr><th>${link(e)}${i === 0 ? ' 🏆' : ''}<small>${escapeHTML(e.name || '')}</small></th><td><b>${clock(e.seconds)}</b></td>` +
-          `<td>${e.power ? e.power + ' W' : ''}</td><td>${e.wkg ?? ''}</td><td>${e.hr ?? ''}</td><td>${e.gain ? Math.round(e.gain / (e.seconds / 3600)).toLocaleString() + ' m/h' : ''}</td>` +
+          `<td>${e.power ? Number(e.power) + ' W' : ''}</td><td>${escapeHTML(e.wkg ?? '')}</td><td>${escapeHTML(e.hr ?? '')}</td><td>${e.gain ? Math.round(e.gain / (e.seconds / 3600)).toLocaleString() + ' m/h' : ''}</td>` +
           `<td>${e.ftp ? e.ftp + ' W' : ''}${e.kg ? `, ${e.kg} kg` : ''}</td><td>${e.predicted ? `${clock(e.predicted)} <small>(${diff(e.seconds - e.predicted)})</small>` : ''}</td>` +
           `<td data-weather="${e.id}"></td></tr>`).join('') +
         '</tbody></table></div>' : `<p>${o.rides.map(link).join(', ')}</p>`),
@@ -95,7 +95,7 @@ function renderClimb(c) {
   });
   if (!c.known && c.times) html += section('Ways up', '<p class="sp-note">Still being worked out from the roads and the terrain.</p>');
   html += section('About', `<p id="climb-wiki" class="sp-note" style="font-size:13px">${c.wiki ? 'Loading…' : ''}</p>` +
-    `<p>${c.wiki ? `<a href="${c.wiki}" target="_blank" rel="noopener">Wikipedia</a> · ` : ''}` +
+    `<p>${safeUrl(c.wiki) ? `<a href="${safeUrl(c.wiki)}" target="_blank" rel="noopener">Wikipedia</a> · ` : ''}` +
     `<a href="https://climbfinder.com/en/search?q=${encodeURIComponent(c.name)}" target="_blank" rel="noopener">Climbfinder</a> · ` +
     `<a href="https://www.google.com/search?q=${encodeURIComponent(c.name + ' cycling climb record')}" target="_blank" rel="noopener">Records</a></p>`,
     'Your times: from passing the foot of a way up to passing its top, in the ride\'s timed track (Garmin). FTP of the day: Garmin\'s, from the ride\'s intensity factor; weight: your last weigh-in before it. Predicted times: a model of the power it takes to lift you and the bike (8 kg), roll and push the air, holding what an FTP gives for that long. Top climber: 60 kg at 6 W/kg for an hour.');
