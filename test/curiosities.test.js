@@ -70,3 +70,9 @@ test('music: the top of the days asked, per day its most played track', () => {
   assert.deepStrictEqual(trip.days['2026-07-14'].top, { artist: 'Air', name: 'La femme d\'argent', plays: 2 });
   assert.strictEqual(m.top({ days: new Set(['2026-07-20']) }).tracks[0].name, 'D.A.N.C.E.');
 });
+
+test('below sea level deeper than a polder only in the land\'s depressions, not the sea off an island', () => {
+  const { inDepression } = require('../stats');
+  assert.ok(inDepression([31.5, 35.4]));  // the Dead Sea
+  assert.ok(!inDepression([39.0, 2.0]));  // the sea off an island
+});

@@ -14,7 +14,7 @@ const { awayNights } = require('./stats');
 
 const OSRM = 'https://router.project-osrm.org/route/v1/driving/';
 const WORK = /conferen|congress|symposi|workshop|summit|seminar|colloqui|summer school|winter school|meeting|kick-?off|defen[cs]e|viva|keynote|invited talk|panel|committee|review|project|hackathon|expo\b|trade fair|training|course\b|lecture|visit to|site visit|retreat|plenary/i;
-const MIN_DAYS = 3, MAX_FLOWN_DAYS = 90, MOVE_KM = 1, ROAD_KM = 10, PICKUP_KM = 30, ROAD_MAX_KM = 900, CAR_KMH = 140, FERRY_KM = 20, ROAD_V = 2;
+const MIN_DAYS = 3, MAX_FLOWN_DAYS = 90, MOVE_KM = 1, ROAD_KM = 10, HOP_KM = 2, WALK_KMH = 7, PICKUP_KM = 30, ROAD_MAX_KM = 900, CAR_KMH = 140, FERRY_KM = 20, ROAD_V = 2;
 const regionName = (() => {
   try { const n = new Intl.DisplayNames(['en'], { type: 'region' }); return cc => { try { return n.of(cc); } catch (_) { return cc; } }; } catch (_) { return cc => cc; }
 })();
@@ -194,7 +194,9 @@ function create({ towns, cities, days, flights, airports, groundTrips, stays, ac
         const km = ground.km(last.at, e.at);
         if (km >= MOVE_KM) {
           const hours = Math.max((e.t - last.t) / 3600, 0.01), car = carOn(last.t);
-          const road = km >= ROAD_KM && km <= ROAD_MAX_KM && (car || km / hours <= CAR_KMH);
+          // on a car day a shorter hop faster than a walk was driven too (a photo by the road between two drives),
+          // so the drive goes on through it instead of breaking there
+          const road = (km >= ROAD_KM && km <= ROAD_MAX_KM && (car || km / hours <= CAR_KMH)) || (car && km >= HOP_KM && km / hours >= WALK_KMH);
           moves.push({ from: last.at, to: e.at, t0: last.t, t1: e.t, km: Math.round(km * 10) / 10, kind: road ? (car ? 'drive' : 'road') : 'move' });
         } else if (!e.cover) continue;  // a few steps on: keep the earlier place as where you were
       }

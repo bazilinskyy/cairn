@@ -1431,7 +1431,7 @@ function drawGround() {
     r.trips.push(t);
     if (!r.best || (!r.best.path && t.path)) r.best = t;
   });
-  const how = { transitous: 'timetable track (Transitous)', osrm: 'road route (OSRM)', clues: 'the likeliest road through your photos on the way (OSRM)', stops: 'the road through the stops you named (OSRM)', sea: 'the ferry line (OpenStreetMap, OSRM)', direct: 'straight across the water', road: 'along the roads: no railway found, a guess', rail: 'likeliest railway line, a best guess (BRouter)', straight: 'straight line: no track found' };
+  const how = { transitous: 'timetable track (Transitous)', osrm: 'road route (OSRM)', clues: 'the likeliest road through your photos on the way (OSRM)', stops: 'the road through the stops you named (OSRM)', sea: 'the ferry line (OpenStreetMap, OSRM)', ferry: 'the ferry line (OpenStreetMap)', water: 'through the water, around the coasts', direct: 'straight across the water', road: 'along the roads: no railway found, a guess', rail: 'likeliest railway line, a best guess (BRouter)', straight: 'straight line: no track found' };
   Object.values(routes).flat().forEach(({ trips, best }) => {
     const pts = best.path ? decodePath(best.path) : [[best.from_lat, best.from_lon], [best.to_lat, best.to_lon]];
     // a trip added by hand may know only its year or month, and stand for several
@@ -1440,9 +1440,9 @@ function drawGround() {
     const popup = `<b>${groundModes[groundKind(best)].split(' ')[0]} ${escapeHTML(best.from)} → ${escapeHTML(best.to)}</b><br>` +
       (best.stops?.length ? `<small>through ${best.stops.map(escapeHTML).join(', ')}</small><br>` : '') +
       `<small>${count} trip${count !== 1 ? 's' : ''} · ${fmtDist(best.distance || 0)} · ` +
-      `${how[best.path_source] || 'looking up the track…'}</small><br>` +
+      `${(best.mode === 'ferry' && best.path_source === 'stops' ? 'by the ports you named, along the ferry lines' : how[best.path_source]) || 'looking up the track…'}</small><br>` +
       `<small>${dates.slice(0, 6).join(', ')}${dates.length > 6 ? ', …' : ''}</small>` +
-      (['drive', 'bus', 'hitch'].includes(best.mode) && trips.length === 1 ? `<div class="stops-edit"><input placeholder="Went through… (towns, with commas)" ` +
+      (['drive', 'bus', 'hitch', 'ferry'].includes(best.mode) && trips.length === 1 ? `<div class="stops-edit"><input placeholder="${best.mode === 'ferry' ? 'Called at… (ports, with commas)' : 'Went through… (towns, with commas)'}" ` +
         `value="${escapeHTML((best.stops || []).join(', '))}" aria-label="Towns on the way"><button class="btn btn-ghost">Save</button></div>` : '');
     L.polyline(pts, {
       color: mapVar('--' + groundKind(best)), weight: Math.min(2.4 + Math.log2(trips.length) * 0.5, 4), opacity: 0.85,

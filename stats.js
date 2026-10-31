@@ -14,7 +14,16 @@ const COAST_URL = 'https://raw.githubusercontent.com/nvkelso/natural-earth-vecto
 const DEM = 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium';
 const DEM_Z = 10;          // tiles of about 40 km, a height every 150 m
 const SEA_KM = 2;          // a day by the sea: somewhere within this of the coast
-const HEIGHTS = [1000, 2000, 3000];
+const HEIGHTS = [500, 1000, 1500, 2000, 2500, 3000, 4000];
+// below sea level: land under it (Dutch polders, the Dead Sea at -430 m), not the sea's depth the terrain tiles also
+// give, so only places this far from the coast
+const LOW_MIN = -450, LOW_COAST_KM = 2, LOW_SHALLOW = -10;
+// deeper than LOW_SHALLOW only in the land's own depressions ([south, west, north, east]); elsewhere it is the sea
+// (a ferry photo off an island can read -400 m)
+const DEPRESSIONS = [[29.5, 35.0, 33.0, 35.8], [36.5, 45.5, 47.5, 55.5], [35.8, -117.6, 37.0, -116.5], [42.4, 88.3, 43.3, 90.2],
+  [12.8, 39.6, 15.2, 41.2], [28.3, 25.3, 30.7, 29.7], [11.4, 42.2, 11.9, 42.7], [32.5, -116.3, 33.7, -115.3]];
+const inDepression = ([lat, lon]) => DEPRESSIONS.some(([s, w, n, e]) => lat >= s && lat <= n && lon >= w && lon <= e);
+const HOME_RINGS = [50, 500, 2000, 5000];  // km: at home, near, the region, the continent, far away
 const EARTH_KM = 40075, MOON_KM = 384400;
 const cell = (lat, lon) => `${lat.toFixed(2)},${lon.toFixed(2)}`;  // about 1 km
 
@@ -158,6 +167,15 @@ function create({ days, towns, cities, activities, stays, flights, airports, gro
       if (v != null && (!dayTop.has(p.day) || v > dayTop.get(p.day).h)) dayTop.set(p.day, { h: v, p });
     }
     const above = Object.fromEntries(HEIGHTS.map(m => [m, [...dayTop.values()].filter(x => x.h >= m).length]));
+    // below sea level: each day's lowest place on land (inland of the coast, above the Dead Sea)
+    const dayLow = new Map(), inland = new Map();
+    for (const p of pts) {
+      const c = cell(p.at[0], p.at[1]), v = h[c];
+      if (v == null || v >= 0 || v < LOW_MIN || (v < LOW_SHALLOW && !inDepression(p.at))) continue;
+      if (!inland.has(c)) inland.set(c, !coastGrid || coastKm(coastGrid, p.at[0], p.at[1]) > LOW_COAST_KM);
+      if (inland.get(c) && (!dayLow.has(p.day) || v < dayLow.get(p.day).h)) dayLow.set(p.day, { h: v, p });
+    }
+    const lowest = [...dayLow.values()].reduce((b, x) => (!b || x.h < b.h ? x : b), null);
     const topDay = [...dayTop.values()].reduce((b, x) => (!b || x.h > b.h ? x : b), null);
     let topAct = null;
     for (const [c, a] of actCells) { const v = h[c]; if (v != null && (!topAct || v > topAct.h)) topAct = { h: v, a, c }; }
@@ -169,6 +187,24 @@ function create({ days, towns, cities, activities, stays, flights, airports, gro
       if (v != null && v >= 1000) highNights += n;
       if (v != null && (!topNight || v > topNight.h)) topNight = { h: v, s };
     }
+
+    // how far from home each day (its farthest place), the months away, the weekdays you fly, crossing the equator
+    // and the date line, leap days
+    const dayFar = new Map();
+    if (home) for (const p of pts) { const k = ground.km(home, p.at); if (!dayFar.has(p.day) || k > dayFar.get(p.day)) dayFar.set(p.day, k); }
+    const rings = home ? [...HOME_RINGS, Infinity].map((max, i) => ({ min: i ? HOME_RINGS[i - 1] : 0, max: Number.isFinite(max) ? max : null,
+      days: [...dayFar.values()].filter(k => k >= (i ? HOME_RINGS[i - 1] : 0) && k < max).length })) : null;
+    const flown = flights().filter(f => past(f.date) && ap[f.from] && ap[f.to]);
+    const weekdays = [0, 0, 0, 0, 0, 0, 0];  // Monday first
+    flown.forEach(f => { weekdays[(new Date(f.date.slice(0, 10) + 'T12:00:00Z').getUTCDay() + 6) % 7]++; });
+    const crossings = { equator: flown.filter(f => Math.sign(ap[f.from].lat) !== Math.sign(ap[f.to].lat)).length,
+      dateLine: flown.filter(f => Math.abs(ap[f.from].lon - ap[f.to].lon) > 180).length };
+    const leapDays = [...new Set(pts.filter(p => p.day.slice(5) === '02-29').map(p => p.day))].sort().map(d => {
+      const counts = new Map();
+      pts.filter(p => p.day === d).forEach(p => { const t = town(p); if (t) counts.set(t, (counts.get(t) || 0) + 1); });
+      const t = [...counts].sort((a, b) => b[1] - a[1])[0]?.[0];
+      return t && { year: +d.slice(0, 4), town: t.name, country: t.cc, id: t.id };
+    }).filter(Boolean);
 
     // capitals
     const capitals = new Map();
@@ -237,7 +273,12 @@ function create({ days, towns, cities, activities, stays, flights, airports, gro
       extremes, zones, capitals: [...capitals.values()].sort((a, b) => a.first.localeCompare(b.first)),
       distance: { by, total, earth: Math.round(total / EARTH_KM * 10) / 10, moon: Math.round(total / MOON_KM * 100) },
       beds, longest, nye, mostCountries, rides: ridesWeather, body,
-      trips: { count: tr.length, awayDays: away.size }
+      trips: { count: tr.length, awayDays: away.size,
+        byMonth: Array.from({ length: 12 }, (_, m) => [...away].filter(d => +d.slice(5, 7) === m + 1).length) },
+      below: { days: dayLow.size, lowest: lowest && named(lowest.p, { h: lowest.h }) },
+      tops: Object.fromEntries([[0, [...dayTop.values()].filter(x => x.h < HEIGHTS[0]).length],
+        ...HEIGHTS.map((m, i) => [m, [...dayTop.values()].filter(x => x.h >= m && (i === HEIGHTS.length - 1 || x.h < HEIGHTS[i + 1])).length])]),
+      rings, weekdays, crossings, leapDays
     };
   }
 
@@ -315,4 +356,4 @@ function awayNightsOf(stays) {
 // the nights you slept in a stay: those booked, less those away on side trips (awayNights)
 const sleptNights = (s, away) => Math.max(0, bookedNights(s) - (away.get(s)?.nights || 0));
 
-module.exports = { create, coastIndex, coastKm, stayKind, groundKind, commuteSince, sideTrip, awayNights, sleptNights };
+module.exports = { inDepression, create, coastIndex, coastKm, stayKind, groundKind, commuteSince, sideTrip, awayNights, sleptNights };

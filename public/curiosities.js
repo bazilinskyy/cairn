@@ -27,6 +27,7 @@ async function renderCuriosities() {
     card('Days by the sea', c.sea.days.toLocaleString(), `${pct(c.sea.days)}: within ${c.sea.km} km of a coast`) +
     card(`Days above ${fmtHeight(1000)}`, h.above[1000].toLocaleString(), `${h.above[2000]} above ${fmtHeight(2000)}, ${h.above[3000]} above ${fmtHeight(3000)}`) +
     (h.top ? card('Highest place', fmtHeight(h.top.h), where(h.top)) : '') +
+    (c.below?.days ? card('Days below sea level', c.below.days.toLocaleString(), `lowest ${fmtHeight(c.below.lowest.h)}: ${where(c.below.lowest)}`) : '') +
     (h.activity ? card('Highest on foot or by bike', fmtHeight(h.activity.h), act(h.activity)) : '') +
     (h.topNight ? card('Highest night', fmtHeight(h.topNight.h), `${escapeHTML(h.topNight.hotel || h.topNight.place || '')}, ${fmtDate(h.topNight.start)}` +
       (h.highNights ? ` · ${h.highNights} nights above ${fmtHeight(1000)}` : '')) : '') +
@@ -37,6 +38,8 @@ async function renderCuriosities() {
     (x.farthest ? card('Farthest from home', fmtDist(x.farthest.km), where(x.farthest)) : '') +
     card('Southern hemisphere', `${c.zones.south.toLocaleString()} days`, `${c.zones.west.toLocaleString()} days west of Greenwich · ${c.zones.tropics.toLocaleString()} in the tropics` +
       (c.zones.arctic ? ` · ${c.zones.arctic} north of the Arctic Circle` : '')) +
+    (c.crossings && (c.crossings.equator || c.crossings.dateLine) ? card('Flown over the equator', c.crossings.equator,
+      `${c.crossings.dateLine} time${c.crossings.dateLine === 1 ? '' : 's'} over the date line`) : '') +
     card('Capitals', c.capitals.length, c.capitals.slice(-3).reverse().map(t => escapeHTML(t.name)).join(', ') + (c.capitals.length > 3 ? '…' : '')) +
     card('Distance, every means', fmtDist(d.total), `${d.earth}× around the earth · ${d.moon}% of the way to the moon`) +
     (c.mostCountries ? card('Most countries in a day', c.mostCountries.count, `${c.mostCountries.countries.map(cc => flagOf(cc).trim()).join(' ')} ${fmtDate(c.mostCountries.day)}`) : '') +
@@ -55,12 +58,28 @@ async function renderCuriosities() {
     Object.entries(d.by).sort((a, b) => b[1] - a[1]).map(([k, km]) => `<span>${escapeHTML(names[k] || k)}</span><div class="bar" style="width:${Math.max(1, km / max * 100)}%"></div><span>${fmtDist(km)}</span>`).join('') + '</div></div>';
   const ys = Object.entries(c.sea.byYear).sort(), seaMax = Math.max(...ys.map(y => y[1]));
   html += `<div><h4>Days by the sea, by year</h4><div class="curio-bars">${ys.map(([y, n]) => `<span>${y}</span><div class="bar" style="width:${n / seaMax * 100}%"></div><span>${n}</span>`).join('')}</div></div></div>`;
+  // days by their highest place, by how far from home, the months away and the weekdays you fly
+  const barList = (rows, w = 90) => { const top = Math.max(1, ...rows.map(r => r[1])); return `<div class="curio-bars" style="grid-template-columns: ${w}px 1fr 60px">` +
+    rows.map(([label, n]) => `<span>${label}</span><div class="bar" style="width:${Math.max(n ? 1 : 0, n / top * 100)}%"></div><span>${n.toLocaleString()}</span>`).join('') + '</div>'; };
+  if (c.tops) {
+    const steps = Object.keys(c.tops).map(Number).sort((a, b) => a - b);
+    const bands = steps.map((m, i) => [i === 0 ? `under ${fmtHeight(steps[1])}` : i === steps.length - 1 ? `${fmtHeight(m)}+` : `${fmtHeight(m)}–${fmtHeight(steps[i + 1])}`, c.tops[m]]);
+    html += `<div class="music-cols" style="margin-top:16px"><div><h4>Days by their highest place</h4>${barList(bands.reverse(), 110)}</div>`;
+    html += c.rings ? `<div><h4>Days by how far from home</h4>${barList(c.rings.map(r => [r.max ? `${r.min ? fmtDist(r.min) + '–' : 'under '}${fmtDist(r.max)}` : `${fmtDist(r.min)}+`, r.days]), 120)}</div></div>` : '</div>';
+  }
+  if (c.trips?.byMonth) {
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'], days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    html += `<div class="music-cols" style="margin-top:16px"><div><h4>Days away, by month</h4>${barList(c.trips.byMonth.map((n, i) => [months[i], n]), 50)}</div>` +
+      (c.weekdays ? `<div><h4>Flights, by weekday</h4>${barList(c.weekdays.map((n, i) => [days[i], n]), 50)}</div>` : '') + '</div>';
+  }
   const beds = Object.entries(c.beds).sort((a, b) => b[1] - a[1]);
   html += `<p style="margin-top:16px"><b>Nights in stays:</b> ${beds.map(([k, n]) => `${escapeHTML(k)} ${n.toLocaleString()}`).join(' · ')}</p>`;
   if (c.nye.length) html += `<p><b>New Year's Eve:</b> ${c.nye.map(n => `${n.year} ${flagOf(n.country)}<a href="#" class="sp-link" onclick="event.preventDefault(); openCityReport(${n.id})">${escapeHTML(n.town)}</a>`).join(' · ')}</p>`;
+  if (c.leapDays?.length) html += `<p><b>29 February:</b> ${c.leapDays.map(n => `${n.year} ${flagOf(n.country)}<a href="#" class="sp-link" onclick="event.preventDefault(); openCityReport(${n.id})">${escapeHTML(n.town)}</a>`).join(' · ')}</p>`;
   if (c.capitals.length) html += `<p><b>Capitals:</b> ${c.capitals.map(t => `${flagOf(t.country)}<a href="#" class="sp-link" onclick="event.preventDefault(); openCityReport(${t.id})">${escapeHTML(t.name)}</a>`).join(' · ')}</p>`;
   html += `<p class="sp-note">From every day Cairn knows a place for (${c.days.toLocaleString()} days since ${fmtDate(c.first)}): flights, trains, stays, activities, photos and Timeline. ` +
-    `By the sea: Natural Earth's coastline. Heights: the ground's height at the place (AWS Terrain Tiles), so a flight counts where it landed, not in the air. ` +
+    `By the sea: Natural Earth's coastline. Heights: the ground's height at the place (AWS Terrain Tiles), so a flight counts where it landed, not in the air; ` +
+    `below sea level only inland, more than 2 km from a coast (the tiles give the sea's depth too). How far from home: from your home airports, each day's farthest place. ` +
     `Ride weather: Open-Meteo's history. Sleep and heart: Garmin, on trip days and on the others.</p></div>`;
   box.innerHTML = html;
 }

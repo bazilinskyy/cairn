@@ -202,3 +202,9 @@ test("a ferry's ports: those of its own islands, not the next islands' that lie 
   const tenerife = [28.29, -16.62], gomera = [28.1, -17.23], cristianos = [28.048, -16.716], santaCruz = [28.47, -16.245], sanSebastian = [28.09, -17.11];
   assert.deepStrictEqual(g.bestPorts([cristianos, santaCruz], [sanSebastian], tenerife, gomera), [cristianos, sanSebastian]);
 });
+
+test('how far a photo is from a track: to its nearest piece, not its nearest point', () => {
+  const track = [[50.00, 10.00], [50.06, 9.50]];  // a long straight piece
+  assert.ok(g.offTrack(track, [50.03, 9.75]) < 0.5);  // half way along, on it
+  assert.ok(Math.abs(g.offTrack(track, [49.98, 9.77]) - 6) < 1.5);  // beside it, about 6 km off
+});

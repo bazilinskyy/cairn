@@ -324,6 +324,26 @@ async function fillGaps(pts, mode, time) {
 
 // The likeliest railway line between two places (BRouter's rail profile on OpenStreetMap's tracks): a best guess for
 // trains no timetable Cairn can ask knows (Ukraine, India), drawn like a timetable's track
+// ... through points on the way (the photos you took on the train), in order
+async function railVia(pts) {
+  const d = await getJSON(`${BROUTER}?lonlats=${pts.map(p => `${p[1]},${p[0]}`).join('|')}&profile=rail&alternativeidx=0&format=geojson`);
+  const path = (d?.features?.[0]?.geometry?.coordinates || []).map(([lon, lat]) => [lat, lon]);
+  return plausible(path, pts[0], pts[pts.length - 1]) ? path : null;
+}
+
+// How far a point is from a track, km (to its nearest piece, flat over short distances)
+function offTrack(pts, p) {
+  const kx = Math.cos(p[0] * Math.PI / 180);
+  let best = Infinity;
+  for (let i = 1; i < pts.length; i++) {
+    const [ay, ax] = [pts[i - 1][0], pts[i - 1][1] * kx], [by, bx] = [pts[i][0], pts[i][1] * kx], [py, px] = [p[0], p[1] * kx];
+    const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy, f = l2 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / l2)) : 0;
+    best = Math.min(best, Math.hypot(px - ax - f * dx, py - ay - f * dy) * 111.2);
+  }
+  return best;
+}
+const OFF_TRACK_KM = 3;  // a photo on the way this far from a train's or bus's track: the track went elsewhere
+
 async function railGuess(a, b) {
   const d = await getJSON(`${BROUTER}?lonlats=${a[1]},${a[0]}|${b[1]},${b[0]}&profile=rail&alternativeidx=0&format=geojson`);  // busy: the lookups pause
   const pts = (d?.features?.[0]?.geometry?.coordinates || []).map(([lon, lat]) => [lat, lon]);
@@ -920,6 +940,17 @@ async function route(trip, clues = null) {
     if (via.length) { pts = await osrmVia([a, ...via, b]); if (pts) source = 'clues', trip.via = via.length; }
   }
   if (!pts && ['bus', 'hitch', 'drive'].includes(trip.mode)) pts = await osrm(a, b), source = 'osrm';  // hitchhiking and by car: along the roads
+  if (!pts && trip.mode === 'ferry' && trip.stops_at?.length) {  // calling at the ports you named (by the other islands)
+    const ends = [a];
+    for (const s of trip.stops_at) { const t = await nearestOf(STATION_TAGS.ferry, s); ends.push(t && km(t, s) < 10 ? t : s); }
+    ends.push(b);
+    pts = [];
+    for (let i = 1; i < ends.length; i++) {
+      const [x, y] = [ends[i - 1], ends[i]];
+      pts.push(...toPorts(await ferryLines(x, y) || await seaRoute(x, y) || await waterRoute(x, y) || [x, y], x, y));
+    }
+    source = 'stops';
+  }
   if (!pts && trip.mode === 'ferry') pts = await ferryLines(a, b), source = 'ferry';  // the ships' lines OpenStreetMap maps
   if (!pts && trip.mode === 'ferry') pts = await seaRoute(a, b), source = 'sea';
   if (!pts && trip.mode === 'train') {  // from stations: BRouter starts on a track (the nearest may be a park railway: then the next)
@@ -938,6 +969,16 @@ async function route(trip, clues = null) {
   if (!pts && trip.mode === 'train') pts = await osrm(a, b), source = 'road';  // no railway found: along the roads, a guess
   if (!pts && trip.mode === 'ferry') pts = await waterRoute(a, b), source = 'water';  // no ferry line known: through the water
   if (!pts && trip.mode === 'ferry') pts = [a, b], source = 'direct';  // ferries mostly go straight across: drawn so
+  // a train or bus whose photos on the way are off its track (a timetable of today's lines, the likeliest railway):
+  // through them instead, when a way through them is found
+  if (pts && clues && ['train', 'bus'].includes(trip.mode) && source !== 'stops') {
+    const off = viaPoints(a, b, clues(trip, a, b)).filter(p => offTrack(pts, p) > OFF_TRACK_KM);
+    if (off.length) {
+      let through = null;
+      try { through = trip.mode === 'train' ? await railVia([a, ...off, b]) : await osrmVia([a, ...off, b]); } catch (_) { through = null; }
+      if (through && off.every(p => offTrack(through, p) <= OFF_TRACK_KM)) pts = through, source = 'clues', trip.via = off.length;
+    }
+  }
   if (pts && trip.mode === 'ferry') pts = toPorts(pts, a, b);
   if (pts) {
     trip.path = encode(simplify(pts));
@@ -1059,4 +1100,4 @@ async function bikeRoute(points) {
   return route ? { path: route.geometry.coordinates.map(([lon, lat]) => [lat, lon]), km: route.distance / 1000 } : null;
 }
 
-module.exports = { ROUTE_VERSION, bestPorts, waterRoute, toPorts, ferryLines, setRailCache, shortestRail, railGap, railOverpass, viaPoints, trackPoints, driveHours, bikeRoute, setCoast, km, decode, encode, simplify, plausible, gappy, planTime, startNear, forget, forgetStay, enrich, pick, similar, geocode, placeStay };
+module.exports = { ROUTE_VERSION, offTrack, bestPorts, waterRoute, toPorts, ferryLines, setRailCache, shortestRail, railGap, railOverpass, viaPoints, trackPoints, driveHours, bikeRoute, setCoast, km, decode, encode, simplify, plausible, gappy, planTime, startNear, forget, forgetStay, enrich, pick, similar, geocode, placeStay };
