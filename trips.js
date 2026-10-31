@@ -191,20 +191,23 @@ function create({ towns, cities, days, flights, airports, groundTrips, stays, ac
     const cars = st.filter(s => s.what === 'car');
     const carOn = t => cars.some(c => dayOf(t) >= c.start && dayOf(t) <= (c.end || c.start));
     const moves = [];
-    let last = null;
+    let last = null, left = null;  // left: the last time you were seen at last's place (you left it after that)
     for (const e of ev) {
-      if (last && last.cover && e.cover === last.cover) { last = e; continue; }  // drawn by its own line
+      if (last && last.cover && e.cover === last.cover) { last = e; left = null; continue; }  // drawn by its own line
       if (last) {
         const km = ground.km(last.at, e.at);
         if (km >= MOVE_KM) {
-          const hours = Math.max((e.t - last.t) / 3600, 0.01), car = carOn(last.t);
+          // how fast: from when you left (the last photo there), not from when you came (a morning's photos at a
+          // hotel, then a short drive on)
+          const hours = Math.max((e.t - Math.max(last.t, left ?? last.t)) / 3600, 0.01), car = carOn(last.t);
           // on a car day a shorter hop faster than a walk was driven too (a photo by the road between two drives),
           // so the drive goes on through it instead of breaking there
           const road = (km >= ROAD_KM && km <= ROAD_MAX_KM && (car || km / hours <= CAR_KMH)) || (car && km >= HOP_KM && km / hours >= WALK_KMH);
           moves.push({ from: last.at, to: e.at, t0: last.t, t1: e.t, km: Math.round(km * 10) / 10, kind: road ? (car ? 'drive' : 'road') : 'move' });
-        } else if (!e.cover) continue;  // a few steps on: keep the earlier place as where you were
+        } else if (!e.cover) { left = e.t; continue; }  // a few steps on: keep the earlier place as where you were
       }
       last = e;
+      left = null;
     }
     const known = loadDrives(), missing = [];
     for (const m of moves) {
