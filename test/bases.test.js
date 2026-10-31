@@ -39,3 +39,18 @@ test('two spots for the same night: where the run starts, not the hike at a trai
   assert.strictEqual(list.length, 1);
   assert.deepStrictEqual([list[0].lat, list[0].names], [37.18, ['Running']]);
 });
+
+test('a bike tour: a ride ending where the next morning\'s starts is that night\'s bed; one ride alone is not', () => {
+  const ride = (from, to, date, hours) => ({ date, name: 'Ride', sport: 'Ride', elapsed_time: hours * 3600, path: ground.encode([from, to]) });
+  const a = [47.39, 0.69], b = [47.59, 1.33], c = [47.90, 1.90];  // Tours, Blois, Orléans
+  const list = make([ride(a, b, '2012-05-03 09:00:00', 6), ride(b, c, '2012-05-04 08:30:00', 7)]).list();
+  assert.deepStrictEqual(list.map(x => [x.start, x.end, x.lat, x.loops]), [['2012-05-03', '2012-05-04', 47.59, 2]]);  // Blois; not the ends seen once
+});
+
+test('a lone hike out of town is a trailhead, not a bed; in a town it is', () => {
+  const at = [46.5, 8.0];
+  assert.deepStrictEqual(make([loop(at, '2012-08-20 10:00:00', 'Hiking', 'Hike')]).list(), []);
+  const inTown = bases.create({ activities: () => [loop(at, '2012-08-20 10:00:00', 'Hiking', 'Hike')], stays: () => [], homes: () => [[52.0, 4.36]],
+    km: ground.km, decode: ground.decode, townAt: () => ({ name: 'Bergdorf', cc: 'CH' }) }).list();
+  assert.strictEqual(inTown.length, 1);
+});

@@ -4,8 +4,8 @@ itself, so the library stays the one place that knows where each photo was taken
 
   uv run --with osxphotos --with 'pyobjc<13' python imports/photos_place.py data/photo_places.json
 
-Reads {file path: {"lat", "lon", "written"?}} and sets the location of each photo not written yet (its library id is in
-its file name). Prints one JSON line per photo set, {"path", "ok"}, for Cairn to mark it written; changes nothing else.
+Reads {file path: {"lat", "lon", "written"?, "auto"?}} and sets the location of each photo not written yet (its library id is
+in its file name); not those Cairn placed by itself ("auto": a guess, kept in Cairn). Prints one JSON line per photo set, {"path", "ok"}, for Cairn to mark it written; changes nothing else.
 Waits for nothing: when another job drives Photos (an import), it prints {"busy": true} and stops, and Cairn tries
 again later.
 """
@@ -29,7 +29,7 @@ def main(argv=None):
     if not args:
         sys.exit(__doc__)
     places = json.loads(Path(args[0]).read_text())
-    todo = [(p, v) for p, v in places.items() if not v.get("written") and LIBRARY.search(p)]
+    todo = [(p, v) for p, v in places.items() if not v.get("written") and not v.get("auto") and LIBRARY.search(p)]
     if not todo:
         return 0
     if busy():

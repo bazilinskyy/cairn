@@ -23,6 +23,7 @@ async function openPlacePhotos() {
   const albumCount = new Map();
   d.photos.forEach(p => p.albums.forEach(a => albumCount.set(a, (albumCount.get(a) || 0) + 1)));
   box.innerHTML = `
+    <div id="pp-auto" class="sp-note"></div>
     <div class="pp-bar">
       <b id="pp-count"></b>
       <select id="pp-album" aria-label="Album"><option value="">All albums</option><option value="none">Not in an album</option>${
@@ -56,6 +57,26 @@ async function openPlacePhotos() {
   ppMap();
   ppFilter();
   ppUndoBar();
+  ppAuto();
+}
+
+// the ones Cairn can place by itself (/api/photos/auto): near a photo with a place, or on a day all else puts you in one
+// town; kept in Cairn only (a guess), all taken back at once
+async function ppAuto() {
+  const a = await fetch('/api/photos/auto').then(r => (r.ok ? r.json() : null)).catch(() => null), box = document.getElementById('pp-auto');
+  if (!a || !box) return;
+  const n = x => x.toLocaleString();
+  box.innerHTML = (a.total ? `Cairn can place ${n(a.total)} of these by itself: ${n(a.near)} taken within half an hour of a photo with a place, ` +
+      `${n(a.day + a.between)} on days when all else puts you in one town (at that town). Not batches copied or posted at once (their times are not when they were taken), ` +
+      `and kept in Cairn only, not written into Photos. <button class="btn btn-ghost" onclick="ppAutoGo()">Place them</button> ` : '') +
+    (a.placed ? `${n(a.placed)} placed by Cairn so far. <button class="btn btn-ghost" onclick="ppAutoGo(true)">Take them back</button>` : '');
+}
+async function ppAutoGo(undo) {
+  const r = await fetch('/api/photos/auto', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ undo: !!undo }) })
+    .then(x => (x.ok ? x.json() : null)).catch(() => null);
+  if (!r) return toast('Could not place them');
+  toast(undo ? `Took back ${r.removed.toLocaleString()} places` : `Placed ${r.placed.toLocaleString()} photos`);
+  openPlacePhotos();
 }
 
 // the photos the filters leave, and the grid of them by day

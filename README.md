@@ -61,6 +61,7 @@ Two parts:
 | ![A trip day by day: rides with their weather, trains, where you slept, sleep and heart rate](docs/trip-story.jpg)<br><sub>A trip day by day</sub> | ![A year in review](docs/year.jpg)<br><sub>A year in review</sub> |
 | ![A town's page with its own map and photos](docs/city.jpg)<br><sub>A town's page</sub> | ![A country's page: its flag, its map with everything there, its towns](docs/country.jpg)<br><sub>A country's page</sub> |
 | ![A climb's page: the ways up, your ride up coloured by gradient, your times against your FTP, a top climber and the record](docs/climb.jpg)<br><sub>A climb's page: its ways up, your times, the record</sub> | ![Where you slept: the stays alone, by kind of bed (hotels, hostels, Airbnb, friends' places, Couchsurfing, camping)](docs/map-stays.jpg)<br><sub>Where you slept, by kind of bed</sub> |
+| ![What you spent: on stays, and by card and cash, per year, country, town and trip](docs/spending.jpg)<br><sub>What you spent: stays, card and cash</sub> | ![Placing photos that have no place: by day, in a town or on the map, or by Cairn itself](docs/place-photos.jpg)<br><sub>Placing photos that have no place</sub> |
 
 <p align="center"><img src="docs/years.jpg" alt="The years side by side" width="900"><br><sub>The years side by side</sub></p>
 
@@ -598,6 +599,8 @@ uv run --with osxphotos --with 'pyobjc<13' python imports/photos.py --points dat
 
 `--unplaced data/photo_unplaced.json` lists the photos with no place, with the albums they are in, for **Trips → 📍 Place photos** (`#place-photos`): they are shown by day; select one or many (a click, shift-click for a run, a day's checkbox, or filter by album or year and select all shown), then place them in a town (search it, or the town Cairn has you in that day, one click) or drag them onto the map to put them at that exact spot. A double-click shows a photo whole. Each placing can be undone on the page. Places are kept in `data/photo_places.json`, are on the map and count for your days at once, and are written into the Photos library itself in the background half a minute later (`imports/photos_place.py`, never while another job drives Photos; `"photos_write_back": false` in `config` keeps them in Cairn only). An undo after that only takes the place out of Cairn. From the laptop it works through the ssh tunnel (see [Running on an always-on Mac](#running-on-an-always-on-mac)).
 
+Cairn can also place many of them by itself (**Place them** at the top of the page): a photo taken within half an hour of one with a place goes to that spot, and a photo on a day when everything else (flights, trips, stays, activities, other photos) puts you within 20 km of one town goes to that town, as does one on a day with none of these between days at most three before and after in the same town. Travel days are left to you, and so are photos whose time is not when they were taken: 40 or more within an hour, a run of ten or more each within 30 s of the one before (a batch copied or uploaded at once), an album named for another year, and profile and cover pictures. These guesses are kept in Cairn only (`"auto"` in `data/photo_places.json`), not written into Photos; they are on the map as "placed by Cairn", never count as evidence for placing more, and **Take them back** removes them all.
+
 **Google Maps Timeline.** Export it on your phone (Android: Settings > Location > Location services > Timeline > Export Timeline data; iPhone: Google Maps > Settings > Personal content > Export Timeline data), or use an older Takeout of Location History, then:
 
 ```
@@ -718,7 +721,7 @@ Add `--send mini:repos/contrail/data/<file>.json` to copy the result to the Mac 
 **+ Add → 🩺 Fix** lists what looks wrong, each with its fix, or **Fine** to set it aside for good:
 - **stays that copy another** (the same nights and place, from two sources: a booking email and the Booking.com export, a Couchsurfing request and its confirmation): **Remove the copies** keeps the one that knows most (its position, hotel, price) and deletes the others for good;
 - **stays booked for the same nights** in different places (one cancelled, or a plan): keep the one you slept in;
-- **nights with no stay, where your runs start**: a run, walk or ride that starts and ends at one spot mostly starts where you slept, so nights away from home that no stay covers, with such loops, are offered as a stay there (one per run of nights at the same spot; a morning loop counts for the night before). Name the town or hotel and **Add stay**, or ✕. Spots near your home places, spots you ran from for months (where you lived) and a lone loop within 100 km of those are left out;
+- **nights with no stay, where your runs and rides start**: a run, walk or ride that starts and ends at one spot mostly starts where you slept, and a ride from one place to another (a bike tour) leaves one bed in the morning and reaches the next in the afternoon, so nights away from home that no stay covers, with such spots, are offered as a stay there (one per run of nights at the same spot; a morning loop, or a one-way ride's start, counts for the night before, a one-way ride's end in the afternoon for that night; a run of nights is not carried across a night with a loop elsewhere). Name the town or hotel and **Add stay**, or ✕. Spots near your home places, spots you ran from for months (where you lived), a lone loop within 100 km of those, a lone hike out of town (a trailhead), a spot only one one-way ride gives (it may end at a station) and, near home, one only one-way rides give (a day's ride out, home by train) are left out, and so are swims, skiing and paddling;
 - **trips and stays with no place found**: correct the name and look it up again;
 - **trains and buses drawn straight**: look them up again;
 - **flights without their airline's code** ("151" for "S4151").
@@ -885,6 +888,8 @@ Moving to MongoDB later only needs the data layer in `app.js` (the `flights` arr
 | `GET` | `/api/photos/points` | every photo in `data/photo_points.json` as `[id, unix time, lat, lon, video]` (gzip) |
 | `GET` | `/api/photos/unplaced` | the photos with no place not placed yet, `{photos: [{id, t, name, albums, video}], albums, days: {day: town Cairn has you in}, placed}` |
 | `GET` | `/api/photos/unplaced/:id/thumb`, `/api/photos/unplaced/:id/full` | one of them as a JPEG |
+| `GET` | `/api/photos/auto` | how many Cairn can place by itself, `{near, day, between, total, placed}` (`?list=1`: each with its guess) |
+| `POST` | `/api/photos/auto` | places them (`{undo: true}`: takes all of Cairn's own places back) |
 | `POST` | `/api/photos/place` | `{ids, lat, lon, name}` places those photos there; `{ids, undo: true}` takes the places back |
 | `GET` | `/api/photos/:id/thumb`, `/api/photos/:id/full` | a photo as a JPEG at most 480 px, or whole (made with `sips`, kept in `data/photo_cache`); a video's first frame, or the video |
 | `GET` | `/api/climbs/:id/photos` | the photos taken going up a climb: `id`, `t`, `lat`, `lon`, `video`, `ride`, `way` |
@@ -902,7 +907,7 @@ Moving to MongoDB later only needs the data layer in `app.js` (the `flights` arr
 | `GET` | `/api/review/by-year` | every year side by side: days, days away, trips, countries and towns (and new), distance by means, nights by kind of bed, photos, first climbs, € |
 | `GET` | `/api/suggestions/gaps` | trips abroad with no way there or back (`unreached`), and runs of 30 days or more with no place (`quiet`) |
 | `GET` | `/api/wishlist` | `saved` places, `climbs` to ride near where you go, `countries` still to go |
-| `GET` | `/api/health` | what looks wrong: `copies`, `twice`, `unplaced`, `straight`, `flights`, `photoJobs`, `bases` (nights with no stay where your runs start) |
+| `GET` | `/api/health` | what looks wrong: `copies`, `twice`, `unplaced`, `straight`, `flights`, `photoJobs`, `bases` (nights with no stay where your runs and rides start) |
 | `POST` | `/api/health/dedupe` | remove the stays that copy another |
 | `POST` | `/api/ground/:id/retry`, `/api/stays/:id/retry` | look a trip's or a stay's place (and track) up again |
 | `GET` | `/api/suggestions/todos`, `/api/suggestions/tripdocs` | trips your to-dos mention that nothing else knows; trip-doc rows not on the map |

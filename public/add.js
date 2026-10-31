@@ -408,7 +408,7 @@ async function renderHealth() {
       `<span>${x.nights} night${x.nights > 1 ? 's' : ''}</span>${x.stays.map(stayCard).join('')}${fine(x.key)}</div>`).join('')}` +
       (d.twice.length > HEALTH_PAGE ? `<small class="sp-note">… and ${d.twice.length - HEALTH_PAGE} more after these.</small>` : '') + '</div>';
   const bases = d.bases || [];
-  if (bases.length) html += `<h3 class="sugg-title">Nights with no stay, where your runs start (${bases.length})</h3><p class="subtitle">A run, walk or ride that starts and ends at one spot mostly starts where you slept. ` +
+  if (bases.length) html += `<h3 class="sugg-title">Nights with no stay, where your runs and rides start (${bases.length})</h3><p class="subtitle">A run, walk or ride that starts and ends at one spot mostly starts where you slept, and a ride from one place to another (a bike tour) leaves one bed in the morning and reaches the next. ` +
     `Add the stay (name the place or hotel if you like), or ✕ when you did not sleep there.</p>` +
     `<div class="sugg-group">${bases.slice(0, HEALTH_PAGE).map(x => `<div class="sugg" data-key="${escapeHTML(x.key)}"><div class="pics"><span class="pic-icon">🏃</span></div>` +
       `<div><b>${escapeHTML(x.place || `${x.lat.toFixed(3)}, ${x.lon.toFixed(3)}`)}</b><small>${tripRange(x.start, x.end)} · ${x.nights} night${x.nights > 1 ? 's' : ''} · ` +
@@ -463,7 +463,7 @@ async function renderHealth() {
     const row = b.closest('[data-key]'), x = baseOf[row.dataset.key], f = k => row.querySelector(`[data-f="${k}"]`)?.value.trim();
     const place = f('place') || x.place || `${x.lat.toFixed(3)}, ${x.lon.toFixed(3)}`;
     allStays.push(await post('/api/stays', { code: `runs-${x.start}-${x.lat.toFixed(3)},${x.lon.toFixed(3)}`, what: 'stay', place, hotel: f('hotel') || '',
-      start: x.start, end: x.end, lat: x.lat, lon: x.lon, source: 'activities', provider: '', type: `where your runs started (${x.loops})` }));
+      start: x.start, end: x.end, lat: x.lat, lon: x.lon, source: 'activities', provider: '', type: `where your runs and rides started (${x.loops})` }));
     toast(`Added: ${place}, ${tripRange(x.start, x.end)}`);
     gone(row);
   }));

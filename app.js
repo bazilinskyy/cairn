@@ -619,7 +619,9 @@ let placedMemo = { places: null, albums: null, out: [] };
 function placedPhotos() {
   const places = readImport(PHOTO_PLACES, {}), al = typeof albums !== 'undefined' ? albums.photoEntries() : [];
   if (placedMemo.places !== places || placedMemo.albums !== al) {
-    placedMemo = { places, albums: al, out: [...Object.entries(places).map(([file, v]) => [v.t, v.lat, v.lon, file, '']), ...al] };
+    // a photo placed here, by you or by itself, is not also at its album's place
+    // (a 'c': placed by Cairn itself, a guess: not for what needs the exact spot, nor for placing more)
+    placedMemo = { places, albums: al, out: [...Object.entries(places).map(([file, v]) => [v.t, v.lat, v.lon, file, v.auto ? 'c' : '']), ...al.filter(e => !places[e[3]])] };
   }
   return placedMemo.out;
 }
@@ -670,6 +672,87 @@ function nearSpot(t) {
   const best = [g[lo - 1], g[lo]].filter(Boolean).sort((a, b) => Math.abs(a[1] - t) - Math.abs(b[1] - t))[0];
   return Math.abs(best[1] - t) <= NEAR_MIN * 60 ? [best[2], best[3], Math.round((best[1] - t) / 60)] : null;
 }
+// Placing the rest without you (POST /api/photos/auto): each photo not placed yet, by what else puts you somewhere then.
+// near: a photo with a place within NEAR_MIN (nearSpot); day: a day when all your places (flights, trips, stays,
+// activities, other photos) lie within DAY_KM of one town, at that town; between: a day with none of them, between days
+// at most NO_DATA_DAYS before and after spent in the same town (a week at home with no photo placed). A photo taken near
+// midnight (UTC: the day may be the next or the one before where you were) needs that day to agree too. Travel days
+// are left to you, and so are photos whose time is not when they were taken: one of BURST or more within an hour, or
+// of a run of RUN or more each at most RUN_S seconds after the one before (a batch copied or uploaded at once, the
+// time of that), in an album named for another year ("Rome 2011" photos dated 2012), or in one of photos posted
+// again later (profile and cover pictures). [{ id, file, t, at: [lat, lon], name, how }]
+const DAY_KM = 20, NO_DATA_DAYS = 3, MIDNIGHT_H = 3, BURST = 40, RUN = 10, RUN_S = 30;
+const REPOSTED = /(profile pictures|cover photos|instagram photos|bitstrips photos|mobile uploads|timeline photos)$/i;
+function autoPlaces() {
+  // each day's town (as dayTownMap) and how far from it the day's places go, from places that are not guesses of this
+  loadTowns();
+  const places = readImport(PHOTO_PLACES, {}), mine = placesAndDays('', '').filter(p => !p.guess), count = new Map(), spread = new Map();
+  mine.forEach(p => { const t = townOfAt(p.at, p.city); if (!t) return; const m = count.get(p.day) || new Map(); m.set(t, (m.get(t) || 0) + 1); count.set(p.day, m); });
+  const where = new Map([...count].map(([d, m]) => [d, [...m].sort((x, y) => y[1] - x[1])[0][0]]));
+  for (const p of mine) {
+    const t = where.get(p.day);
+    if (t) spread.set(p.day, Math.max(spread.get(p.day) || 0, ground.km([t.lat, t.lon], p.at)));
+  }
+  const addDays = (d, n) => new Date(Date.parse(d) + n * 864e5).toISOString().slice(0, 10);
+  const oneTown = d => where.has(d) && spread.get(d) <= DAY_KM ? where.get(d) : null;
+  const townOn = d => {
+    if (where.has(d)) return oneTown(d);
+    let before = null, after = null;
+    for (let i = 1; i <= NO_DATA_DAYS && before === null; i++) if (where.has(addDays(d, -i))) before = oneTown(addDays(d, -i)) || false;
+    for (let i = 1; i <= NO_DATA_DAYS && after === null; i++) if (where.has(addDays(d, i))) after = oneTown(addDays(d, i)) || false;
+    return before && after && before.id === after.id ? { ...before, between: true } : null;
+  };
+  const all = [...unplacedById()].filter(([, [t, , , al]]) => t && !(al || []).some(a => /^To delete/.test(a)));
+  const rows = all.filter(([, [, file]]) => !places[file]);
+  const times = all.map(([, r]) => r[0]).sort((a, b) => a - b), burst = new Set();  // all of them, placed or not
+  for (let i = 0, j = 0; j < times.length; j++) {
+    while (times[j] - times[i] > 3600) i++;
+    if (j - i + 1 >= BURST) for (let k = i; k <= j; k++) burst.add(times[k]);
+  }
+  for (let i = 0, j = 1; j <= times.length; j++) {
+    if (j < times.length && times[j] - times[j - 1] <= RUN_S) continue;
+    if (j - i >= RUN) for (let k = i; k < j; k++) burst.add(times[k]);
+    i = j;
+  }
+  const otherYear = (t, al) => {
+    const y = new Date(t * 1000).getUTCFullYear();
+    return (al || []).some(a => { const named = (a.match(/\b(19|20)\d\d\b/g) || []).map(Number); return named.length && !named.includes(y); })
+      || (al || []).some(a => REPOSTED.test(a));
+  };
+  const out = [];
+  for (const [id, [t, file, , albumList]] of rows) {
+    if (burst.has(t) || otherYear(t, albumList)) continue;
+    const near = nearSpot(t);
+    if (near) { out.push({ id, file, t, at: [near[0], near[1]], name: 'near a photo with a place', how: 'near' }); continue; }
+    const day = new Date(t * 1000).toISOString().slice(0, 10), h = new Date(t * 1000).getUTCHours();
+    const town = townOn(day);
+    if (!town) continue;
+    const edge = h < MIDNIGHT_H ? addDays(day, -1) : h >= 24 - MIDNIGHT_H ? addDays(day, 1) : null, other = edge && townOn(edge);
+    if (edge && where.has(edge) && other?.id !== town.id) continue;
+    out.push({ id, file, t, at: [town.lat, town.lon], name: town.name, how: town.between ? 'between' : 'day' });
+  }
+  return out;
+}
+app.get('/api/photos/auto', (req, res) => {
+  const list = autoPlaces(), count = { near: 0, day: 0, between: 0 };
+  if (req.query.list) return res.json(list.map(({ file, ...x }) => ({ ...x, albums: unplacedById().get(x.id)[3] || [] })));
+  list.forEach(x => count[x.how]++);
+  const places = readImport(PHOTO_PLACES, {});
+  res.json({ ...count, total: list.length, placed: Object.values(places).filter(v => v.auto).length });
+});
+// places them all, marked auto (kept in Cairn: not written into Photos, a guess at the town); { undo: true } takes all
+// the auto ones back
+app.post('/api/photos/auto', (req, res) => {
+  const places = { ...readImport(PHOTO_PLACES, {}) };
+  let n = 0;
+  if (req.body?.undo) for (const [f, v] of Object.entries(places)) { if (v.auto) { delete places[f]; n++; } }
+  else for (const x of autoPlaces()) {
+    places[x.file] = { lat: Math.round(x.at[0] * 1e6) / 1e6, lon: Math.round(x.at[1] * 1e6) / 1e6, t: x.t, name: x.name, at: new Date().toISOString(), auto: x.how };
+    n++;
+  }
+  fs.writeFileSync(PHOTO_PLACES, JSON.stringify(places));
+  res.json(req.body?.undo ? { removed: n } : { placed: n });
+});
 // [{ id, t, name, albums: [index], video, near }], the ones not placed yet, by time; the albums' names; and per day
 // where Cairn has you that day (the town most of the day's places are in), to place a day's photos there in one go
 app.get('/api/photos/unplaced', (_req, res) => {
@@ -908,7 +991,7 @@ let untrusted = new Set();  // the check-ins left out (allPlacesAndDays)
 function allPlacesAndDays(withStays) {
   const from = '', to = '';
   const pts = [], inPeriod = d => d && (!from || d >= from) && (!to || d <= to);
-  const add = (at, d, city) => { if (at && inPeriod(d)) pts.push({ at, day: d, city }); };
+  const add = (at, d, city, guess) => { if (at && inPeriod(d)) pts.push(guess ? { at, day: d, city, guess } : { at, day: d, city }); };
   const eachDay = (a, b, fn) => {  // a stay or Timeline visit: every day from the first to the last, at most 90
     for (let t = Date.parse(a), n = 0; t <= Date.parse(b || a) && n < 90; t += 864e5, n++) fn(new Date(t).toISOString().slice(0, 10));
   };
@@ -941,7 +1024,7 @@ function allPlacesAndDays(withStays) {
     shot.forEach(p => {
       if (inAir(p[1], [p[2], p[3]])) return;
       const d = new Date(p[1] * 1000).toISOString().slice(0, 10), key = `${d}|${p[2].toFixed(2)}|${p[3].toFixed(2)}`;
-      if (!seen.has(key)) { seen.add(key); add([p[2], p[3]], d); }
+      if (!seen.has(key)) { seen.add(key); add([p[2], p[3]], d, undefined, p[5] === 'c'); }
     });
   } else readImport(PHOTOS_FILE, []).forEach(c => (c.days || []).forEach(d => add([c.lat, c.lon], d)));
   // check-ins, posts with a place, reviews and rides (imports/checkins.py): where you were that day

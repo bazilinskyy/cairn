@@ -365,7 +365,7 @@ function photoPopup(p) {
   const date = p[5] === 'y' ? `${when.getUTCFullYear()}` : `${fmtDate(photoDay(p))} ${when.toISOString().slice(11, 16)} UTC`;
   return `<div class="photo-pop"><a href="/api/photos/${p[0]}/full" target="_blank" rel="noopener" title="Open the whole ${p[4] ? 'video' : 'photo'}">` +
     `<img src="/api/photos/${p[0]}/thumb" alt="" loading="lazy" width="240"></a><br><small>${p[4] ? '🎬 ' : '📷 '}` +
-    `${date}${p[5] ? ' · placed by its album' : ''} · <a href="/api/photos/${p[0]}/full" target="_blank" rel="noopener">open ${p[4] ? 'video' : 'full size'}</a></small></div>`;
+    `${date}${p[5] === 'c' ? ' · placed by Cairn (a guess)' : p[5] ? ' · placed by its album' : ''} · <a href="/api/photos/${p[0]}/full" target="_blank" rel="noopener">open ${p[4] ? 'video' : 'full size'}</a></small></div>`;
 }
 
 let heatLoading = null;
