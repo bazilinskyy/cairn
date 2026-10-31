@@ -1303,7 +1303,10 @@ app.get('/api/trips', (_req, res) => res.json(tripStore.list()));
 // from town to town; not on a day that has a car journey of your own
 function derivedDrives(list = tripStore.drives()) {
   loadTowns();
-  const own = new Set(trips.filter(t => t.mode === 'drive').map(t => (t.date || '').slice(0, 10)));  // your own drives replace the day's
+  // your own drives replace the day's when known only by the day; one with its times only its own hours (the worked-out
+  // moves leave those out already), so the rest of the day's driving stays (to the start of a drive you entered)
+  const timed = t => !t.approx && (t.arrival || /^\d{4}-\d\d-\d\d \d\d:\d\d/.test(t.date || '') && !/ 12:00(:00)?$/.test(t.date));
+  const own = new Set(trips.filter(t => t.mode === 'drive' && !timed(t)).map(t => (t.date || '').slice(0, 10)));
   const name = at => (towns && cities.townAt(towns, at[0], at[1])?.name) || `${at[0].toFixed(2)}, ${at[1].toFixed(2)}`;
   return list.filter(d => !own.has(d.day)).map((d, i) => ({ id: `drive-${i}`, mode: 'drive', derived: true, date: `${d.day} 12:00:00`,
     from: name(d.from), to: name(d.to), from_lat: d.from[0], from_lon: d.from[1], to_lat: d.to[0], to_lon: d.to[1],

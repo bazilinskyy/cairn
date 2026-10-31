@@ -25,7 +25,7 @@ const NOT_PLACES = new Set(('january february march april may june july august s
   'erasmus school summer party wedding birthday profile pictures photos photo instagram cover book chapter photosession museum ' +
   'show classic car cars and of the in on at to with my our volume part final euro remont dachi retrotrain childhood family friends ' +
   'ii iii iv дача abandoned airfield jey pavlo jonathan isle hill hills river lake mountain mountains park beach city town village ' +
-  'north south east west old new great little upper lower').split(' '));
+  'north south east west old new great little upper lower ios fur mina').split(' '));  // iOS, für, minä: not Ios, Fur, Minna
 // how specific a place is: a town before its region before its country
 const RANK = { city: 0, town: 0, village: 0, hamlet: 0, suburb: 0, locality: 0, island: 0, islet: 0, peak: 0, cape: 0, water: 0, lake: 0,
   river: 1, bay: 1, county: 1, district: 1, municipality: 1, region: 2, state: 2, province: 2, archipelago: 2, peninsula: 2, country: 3, continent: 4 };
@@ -34,6 +34,7 @@ const AREAS = new Set(['country', 'state', 'region', 'province', 'county', 'isla
 const MIN_POP = 10000;    // a town named by a phrase of the album's name ("Saint Petersburg", "Fort William")
 const WORD_POP = 50000;    // by a single word of it: smaller ones of that name are more often wrong than right
 const BIG_CITY = 300000;   // another name of a town counts only for a city this big
+const FAR_KM = 3000;       // a single word as another name of a town: only this near where you were that year
 let countries = null;
 const isCountry = q => (countries = countries || countryNames()).has(norm(q));
 function countryNames() {  // names of countries, which beat towns of the same name (Montenegro the country, not the town in Brazil)
@@ -220,9 +221,13 @@ function create({ dir, cacheFile, placesFile, km, towns, near = () => null, flig
       const hit = (isCountry(q) && await exactly(q)) || pickTown(townsNamed(q, MIN_POP), year) || await exactly(q);
       if (hit) return hit;
     }
+    // a single word that is another name of a big town far from where you were that year is more likely a word of
+    // another language ("minä", Finnish for "I": Minna in Nigeria)
+    const bias = year ? near(year) : null;
+    const likely = (t, q) => (t && (norm(t.name) === norm(q) || !bias || km(t.at, bias) <= FAR_KM) ? t : null);
     let found = null;
     for (const q of words) {
-      const hit = (isCountry(q) && await exactly(q)) || pickTown(townsNamed(q, WORD_POP), year) || await exactly(q);
+      const hit = (isCountry(q) && await exactly(q)) || likely(pickTown(townsNamed(q, WORD_POP), year), q) || await exactly(q);
       if (hit && (!found || hit.rank < found.rank)) found = hit;
     }
     return found;

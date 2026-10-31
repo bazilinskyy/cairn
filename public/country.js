@@ -99,7 +99,7 @@ function drawCountryMap(d) {
   if (countryMap) { try { countryMap.remove(); } catch (_) { /* never fully drawn */ } countryMap = null; }
   const box = document.getElementById('country-map');
   box.dataset.basemap = BASEMAPS[prefs.basemap] ? prefs.basemap : 'auto';
-  countryMap = L.map(box, { zoomControl: true, attributionControl: true, preferCanvas: true });  // canvas: a country's thousands of tracks
+  countryMap = L.map(box, { zoomControl: true, attributionControl: true, preferCanvas: true, worldCopyJump: true });  // canvas: a country's thousands of tracks
   toneMap(countryMap);
   const b = BASEMAPS[prefs.basemap] || BASEMAPS.auto, [url, attribution, maxZoom = 19] = b.tiles;
   L.tileLayer(url, { attribution, maxZoom }).addTo(countryMap);

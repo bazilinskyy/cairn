@@ -31,7 +31,7 @@ async function openWish() {
   if (wishMap) { wishMap.remove(); wishMap = null; }
   const el = document.getElementById('wish-map');
   el.dataset.basemap = BASEMAPS[prefs.basemap] ? prefs.basemap : 'auto';
-  wishMap = L.map(el, { zoomControl: true });
+  wishMap = L.map(el, { zoomControl: true, worldCopyJump: true });
   toneMap(wishMap);
   const b = BASEMAPS[prefs.basemap] || BASEMAPS.auto, [url, attribution, maxZoom = 19] = b.tiles;
   L.tileLayer(url, { attribution, maxZoom }).addTo(wishMap);

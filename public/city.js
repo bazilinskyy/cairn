@@ -133,7 +133,7 @@ function drawCityMap(d) {
   if (cityMap) { cityMap.remove(); cityMap = null; }
   const box = document.getElementById('city-map'), t = d.town;
   box.dataset.basemap = BASEMAPS[prefs.basemap] ? prefs.basemap : 'auto';
-  cityMap = L.map(box, { zoomControl: true, attributionControl: true }).setView([t.lat, t.lon], 12);
+  cityMap = L.map(box, { zoomControl: true, attributionControl: true, worldCopyJump: true }).setView([t.lat, t.lon], 12);
   toneMap(cityMap);
   const b = BASEMAPS[prefs.basemap] || BASEMAPS.auto, [url, attribution, maxZoom = 19] = b.tiles;
   L.tileLayer(url, { attribution, maxZoom }).addTo(cityMap);

@@ -1219,7 +1219,10 @@ function initMap() {
   // where the map was when you left it, in this browser
   let view = null;
   try { view = JSON.parse(localStorage.getItem('contrail-view') || 'null'); } catch (_) {}
-  map = L.map('map', { center: view?.center || [30, 15], zoom: view?.zoom ?? 2, zoomControl: false });
+  // the layers are drawn on one copy of the world: panned past the date line, the map jumps back to it (and a view
+  // saved on another copy opens there)
+  if (view?.center) view.center[1] = ((view.center[1] + 180) % 360 + 360) % 360 - 180;
+  map = L.map('map', { center: view?.center || [30, 15], zoom: view?.zoom ?? 2, zoomControl: false, worldCopyJump: true });
   map.on('moveend', () => {
     try { localStorage.setItem('contrail-view', JSON.stringify({ center: [map.getCenter().lat, map.getCenter().lng], zoom: map.getZoom() })); } catch (_) {}
   });

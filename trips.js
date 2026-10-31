@@ -151,10 +151,14 @@ function create({ towns, cities, days, flights, airports, groundTrips, stays, ac
       ev.push({ t: t0, at: [a.lat, a.lon], what: 'flight', cover: 'f' + f.id });
       ev.push({ t: t0 + ((h || 0) * 60 + (m || 0) || 120) * 60, at: [b.lat, b.lon], what: 'flight', cover: 'f' + f.id });
     }
-    for (const s of st) {
-      if (s.lat == null || s.what === 'car') continue;
-      ev.push({ t: localToUnix(s.start + ' 18:00', s.lon), at: [s.lat, s.lon], what: 'stay', in: s.start });
-      if (s.end) ev.push({ t: localToUnix(s.end + ' 10:00', s.lon), at: [s.lat, s.lon], what: 'stay', out: s.end });
+    // a stay you kept while away (a room in town, nights elsewhere on a road trip): its check-in or check-out on a day a
+    // shorter stay elsewhere has you sleeping there (the night after, the night before) is not where you were
+    const beds = st.filter(s => s.lat != null && s.what !== 'car' && s.start), nightsOf = s => Date.parse(s.end || s.start) - Date.parse(s.start);
+    const elsewhere = (s, day, before) => beds.some(o => o !== s && nightsOf(o) < nightsOf(s) && ground.km([o.lat, o.lon], [s.lat, s.lon]) >= ROAD_KM
+      && (before ? o.start < day && (o.end || o.start) >= day : o.start <= day && (o.end || o.start) > day));
+    for (const s of beds) {
+      if (!elsewhere(s, s.start, false)) ev.push({ t: localToUnix(s.start + ' 18:00', s.lon), at: [s.lat, s.lon], what: 'stay', in: s.start });
+      if (s.end && !elsewhere(s, s.end, true)) ev.push({ t: localToUnix(s.end + ' 10:00', s.lon), at: [s.lat, s.lon], what: 'stay', out: s.end });
     }
     // a check-out (10:00) after that morning's photos or rides elsewhere was earlier, before them; a check-in (18:00)
     // before that evening's elsewhere was later, after them: else the way goes back to the stay and out again

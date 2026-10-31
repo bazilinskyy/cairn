@@ -328,7 +328,7 @@ function drawTripMap(d, keepView = false) {
   const box = document.getElementById('trip-map');
   if (!box) return;
   box.dataset.basemap = BASEMAPS[prefs.basemap] ? prefs.basemap : 'auto';
-  tripMap = L.map(box, { zoomControl: true, attributionControl: true });
+  tripMap = L.map(box, { zoomControl: true, attributionControl: true, worldCopyJump: true });
   toneMap(tripMap);
   const b = BASEMAPS[prefs.basemap] || BASEMAPS.auto, [url, attribution, maxZoom = 19] = b.tiles;
   L.tileLayer(url, { attribution, maxZoom }).addTo(tripMap);

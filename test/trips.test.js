@@ -43,3 +43,12 @@ test('local clock times are read with a zone guessed from the longitude', () => 
   assert.strictEqual(trips.localToUnix('2026-11-16 10:00', 0), Date.parse('2026-11-16T10:00:00Z') / 1000);
   assert.strictEqual(trips.localToUnix('2026-11-16 10:00', 120), Date.parse('2026-11-16T02:00:00Z') / 1000);
 });
+
+test('a room kept in town while sleeping elsewhere: its check-out that day is not where you were', () => {
+  const room = { id: 1, what: 'stay', start: '2026-03-01', end: '2026-03-06', lat: 38.72, lon: -9.14 };   // Lisbon
+  const away = { id: 2, what: 'stay', start: '2026-03-05', end: '2026-03-06', lat: 40.21, lon: -8.43 };   // a night 200 km off
+  const s = store({ flights: [{ id: 1, date: '2026-03-01 10:00', from: 'EIN', to: 'LIS' }, { id: 2, date: '2026-03-06 18:00', from: 'LIS', to: 'EIN' }],
+    stays: [room, away] });
+  const id = s.list()[0].id, out = trips.localToUnix('2026-03-06 10:00', -9.14);
+  assert.ok(!s.get(id).moves.some(m => m.t1 === out && Math.abs(m.to[0] - 38.72) < 0.01), 'no way back to the room at its check-out');
+});

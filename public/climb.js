@@ -223,7 +223,7 @@ function drawClimbMap(c) {
   effortLayer = null;
   document.getElementById('climb-map').classList.add('mini-map');
   document.getElementById('climb-map').dataset.basemap = BASEMAPS[prefs.basemap] ? prefs.basemap : 'auto';
-  climbMap = L.map('climb-map', { zoomControl: true, attributionControl: true });
+  climbMap = L.map('climb-map', { zoomControl: true, attributionControl: true, worldCopyJump: true });
   toneMap(climbMap);
   const b = BASEMAPS[prefs.basemap] || BASEMAPS.auto, [url, attribution, maxZoom = 19] = b.tiles;
   L.tileLayer(url, { attribution, maxZoom }).addTo(climbMap);
