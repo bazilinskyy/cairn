@@ -315,7 +315,8 @@ function drawStays() {
     const total = list.reduce((t, x) => t + nights(x), 0);
     const count = n => (car ? `${n} day${n !== 1 ? 's' : ''}` : `${n} night${n !== 1 ? 's' : ''}`);
     const line = x => `${fmtDate(x.start)} – ${fmtDate(x.end || x.start)} · ${count(nights(x))}${awayNote(x)}` +
-      `${x.hotel ? ' · ' + escapeHTML(x.hotel) : ''}${!car && x.type ? ' · ' + escapeHTML(x.type) : ''}${x.price ? ' · ' + escapeHTML(x.price) : ''}${x.provider ? ' · ' + escapeHTML(x.provider) : ''}`;
+      `${x.hotel ? ' · ' + escapeHTML(x.hotel) : ''}${!car && x.type ? ' · ' + escapeHTML(x.type) : ''}${x.price ? ' · ' + escapeHTML(x.price) : ''}${x.provider ? ' · ' + escapeHTML(x.provider) : ''}` +
+      `<button class="del-btn" data-del="stay" data-id="${x.id}" title="Delete this ${car ? 'rental car' : 'stay'}" aria-label="Delete this ${car ? 'rental car' : 'stay'}">✕</button>`;
     const head = list.length > 1
       ? `${car ? '🚗 Rental cars' : '🏨 Stays'}, ${escapeHTML(s.place)}</b><br><small>${list.length} ${car ? 'rentals' : 'stays'}, ${count(total)}</small>`
       : `${car ? '🚗 Rental car' : '🏨 ' + escapeHTML(s.type || 'Stay')}, ${escapeHTML(s.place)}</b>`;

@@ -98,6 +98,12 @@ function parseCSVLine(line) {
   return fields;
 }
 
+// airports opened since OpenFlights' list was last updated (2017): a flight there has no distance or line otherwise
+const NEWER_AIRPORTS = {
+  BER: { name: 'Berlin Brandenburg Airport', city: 'Berlin', country: 'Germany', lat: 52.3667, lon: 13.5033, tz: 'Europe/Berlin' },
+  YIA: { name: 'Yogyakarta International Airport', city: 'Yogyakarta', country: 'Indonesia', lat: -7.9047, lon: 110.0573, tz: 'Asia/Jakarta' }
+};
+
 function parseAirports(dat) {
   const result = {};
   for (const line of dat.split('\n')) {
@@ -325,6 +331,7 @@ async function init() {
 
   if (fs.existsSync(AIRPORTS_FILE)) {
     airports = parseAirports(fs.readFileSync(AIRPORTS_FILE, 'utf8'));
+    for (const [iata, a] of Object.entries(NEWER_AIRPORTS)) if (!airports[iata]) airports[iata] = a;
     console.log(`[init] Loaded ${Object.keys(airports).length} airports`);
   }
 
@@ -1070,7 +1077,8 @@ app.get('/api/countries', async (req, res) => {
     const place = scheme ? regions.placeNow(scheme, at[0], at[1]) : townOf(at, city);
     if (!place) return null;
     const id = scheme ? place.id : place.cc;
-    return all[id] = all[id] || { country: id, name: scheme ? place.name : undefined, days: new Set(), towns: new Set(), nights: 0,
+    // cc: the country code, for its flag (a list's place: its own, or the country it is part of)
+    return all[id] = all[id] || { country: id, name: scheme ? place.name : undefined, cc: scheme ? place.cc || (/^[A-Z]{2}$/.test(place.id) ? place.id : undefined) : place.cc, days: new Set(), towns: new Set(), nights: 0,
       flights: 0, train: 0, bus: 0, ferry: 0, hitch: 0, drive: 0, cars: 0, activities: 0, km: 0, photos: 0 };
   };
   placesAndDays(from, to).forEach(p => {

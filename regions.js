@@ -141,7 +141,10 @@ function compile(units, scheme) {
     return { places, unitPlace: units.map(of), boxes: [] };
   }
   const list = LISTS.tcc;
-  const places = list.map(p => ({ id: p.id, name: p.name, region: p.region }));
+  // cc: for its flag; a place drawn by a box or by a map unit of its own: the country it belongs to (none for Northern Cyprus)
+  const BELONGS = { 6: 'CL', 12: 'CL', 14: 'KI', 26: 'JP', 106: 'BR', 125: 'GB', 148: 'IT', 181: 'AR', 183: 'GB', 184: 'CL', 186: 'NZ', 231: 'SO',
+    266: 'CX', 267: 'CC', 277: 'YE', 318: 'GE' };
+  const places = list.map(p => ({ id: p.id, name: p.name, region: p.region, cc: p.rules.find(r => r.iso)?.iso || BELONGS[p.id] }));
   const byCode = new Map(), whole = new Map(), boxes = [];
   list.forEach((p, i) => p.rules.forEach(r => {
     if (r.bbox) boxes.push({ box: r.bbox, place: i });

@@ -486,6 +486,8 @@
     .sugg .pics img { width: 36px; height: 36px; object-fit: cover; border-radius: 4px; background: var(--surface2); }
     .sugg small { color: var(--text2); display: block; }
     .stops-edit { display: flex; gap: 6px; margin-top: 6px; }
+    .del-btn { background: none; border: none; color: var(--text-dim, #888); cursor: pointer; padding: 0 4px; font-size: 12px; line-height: 1; }
+    .del-btn:hover { color: #e5534b; }
     .stops-edit input { flex: 1; min-width: 0; font-size: 12px; padding: 4px 6px; }
     .sugg small.health-error { font-family: ui-monospace, Menlo, monospace; font-size: 11px; overflow-wrap: anywhere; }
     .sugg .acts { display: flex; gap: 6px; align-items: center; }
@@ -824,6 +826,7 @@
               <th data-col="distance">Distance</th>
               <th data-col="duration">Duration</th>
               <th data-col="plane">Aircraft</th>
+              <th aria-label="Delete"></th>
             </tr>
           </thead>
           <tbody id="flights-tbody"></tbody>
@@ -1213,6 +1216,36 @@ function toast(msg, type = 'success') {
   setTimeout(() => el.classList.remove('show'), 3000);
 }
 
+// --- Deleting: a flight, a train, bus, ferry or drive of your own, a stay or rental car (✕ in the flights list and in
+// the map's popups), asked first, then gone from the map and the lists at once ---
+
+const DELETABLE = {
+  flight: ['/api/flights', () => allFlights, f => `the flight ${f.flight_number ? f.flight_number + ', ' : ''}${f.from} → ${f.to} on ${(f.date || '').slice(0, 10)}`],
+  ground: ['/api/ground', () => allTrips, t => `the ${t.mode === 'drive' ? 'drive' : t.mode} ${t.from} → ${t.to} on ${(t.date || '').slice(0, 10)}`],
+  stay: ['/api/stays', () => allStays, s => `the ${s.what === 'car' ? 'rental car' : 'stay'} in ${s.place}, ${s.start} – ${s.end || s.start}`]
+};
+async function deleteItem(kind, id) {
+  const [url, list, label] = DELETABLE[kind] || [], all = list?.(), i = all ? all.findIndex(x => String(x.id) === String(id)) : -1;
+  if (i < 0) return;
+  const item = all[i];
+  if (!confirm(`Delete ${label(item)}?`)) return;
+  const r = await fetch(`${url}/${item.id}`, { method: 'DELETE' }).catch(() => null);
+  if (!r?.ok) return toast('Could not delete it', 'error');
+  all.splice(i, 1);
+  map.closePopup();
+  if (kind === 'flight') { renderTable(document.getElementById('search').value); redrawMap(); }
+  else if (kind === 'ground') drawGround();
+  else drawStays();
+  toast(`Deleted ${label(item)}`);
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-del]');
+  if (!b) return;
+  e.preventDefault();
+  e.stopPropagation();
+  deleteItem(b.dataset.del, b.dataset.id);
+});
+
 // --- Map ---
 
 function initMap() {
@@ -1439,12 +1472,15 @@ function drawGround() {
     const pts = best.path ? decodePath(best.path) : [[best.from_lat, best.from_lon], [best.to_lat, best.to_lon]];
     // a trip added by hand may know only its year or month, and stand for several
     const when = t => (t.approx === 'year' ? t.date.slice(0, 4) : t.approx === 'month' ? t.date.slice(0, 7) : (t.date || '').slice(0, 10)) + (t.times > 1 ? ` (×${t.times})` : '');
-    const dates = trips.map(when).sort().reverse(), count = trips.reduce((n, t) => n + (t.times || 1), 0);
+    const count = trips.reduce((n, t) => n + (t.times || 1), 0);
     const popup = `<b>${groundModes[groundKind(best)].split(' ')[0]} ${escapeHTML(best.from)} → ${escapeHTML(best.to)}</b><br>` +
       (best.stops?.length ? `<small>through ${best.stops.map(escapeHTML).join(', ')}</small><br>` : '') +
       `<small>${count} trip${count !== 1 ? 's' : ''} · ${fmtDist(best.distance || 0)} · ` +
       `${(best.mode === 'ferry' && best.path_source === 'stops' ? 'by the ports you named, along the ferry lines' : how[best.path_source]) || 'looking up the track…'}</small><br>` +
-      `<small>${dates.slice(0, 6).join(', ')}${dates.length > 6 ? ', …' : ''}</small>` +
+      // each date; one of your own with ✕ to delete it (a drive worked out from your photos has none to delete)
+      `<small>${[...trips].sort((a, b) => (b.date || '').localeCompare(a.date || '')).slice(0, 8).map(t => `<span style="white-space:nowrap">${escapeHTML(when(t))}` +
+        (t.derived ? '' : `<button class="del-btn" data-del="ground" data-id="${t.id}" title="Delete this trip" aria-label="Delete the trip of ${escapeHTML(when(t))}">✕</button>`) +
+        '</span>').join(', ')}${trips.length > 8 ? ', …' : ''}</small>` +
       (['drive', 'bus', 'hitch', 'ferry'].includes(best.mode) && trips.length === 1 ? `<div class="stops-edit"><input placeholder="${best.mode === 'ferry' ? 'Called at… (ports, with commas)' : 'Went through… (towns, with commas)'}" ` +
         `value="${escapeHTML((best.stops || []).join(', '))}" aria-label="Towns on the way"><button class="btn btn-ghost">Save</button></div>` : '');
     L.polyline(pts, {
@@ -1643,6 +1679,11 @@ async function renderTopCities() {
     </div>`).join('') || '<small>Nothing yet</small>';
 }
 
+// the flag of a list's place (the Travelers' Century Club's Alaska: the United States'); England, Scotland and Wales
+// their own
+const NATION_FLAGS = { England: 'gbeng', Scotland: 'gbsct', Wales: 'gbwls' };
+const placeFlag = c => (NATION_FLAGS[c.name] ? '🏴' + [...NATION_FLAGS[c.name]].map(x => String.fromCodePoint(0xE0000 + x.charCodeAt(0))).join('') + '\u{E007F} ' : flagOf(c.cc));
+
 // Per country, all time (app.js /api/countries); sorted by the column clicked
 let countryStats = [], countrySort = ['days', -1];
 async function renderCountryStats(fetchAgain = true) {
@@ -1658,7 +1699,7 @@ async function renderCountryStats(fetchAgain = true) {
     : c[k] ? c[k].toLocaleString() : '';
   const table = document.getElementById('country-stats');
   table.innerHTML = '<thead><tr>' + cols.map(([k, label]) => `<th data-sort="${k}" class="${k === key ? 'sorted' : ''}">${label}${k === key ? (dir < 0 ? ' ↓' : ' ↑') : ''}</th>`).join('') +
-    '</tr></thead><tbody>' + rows.map(c => '<tr><th>' + (/^[A-Z]{2}$/.test(c.country) ? countryLink(c.country, flagOf(c.country) + escapeHTML(name(c))) : flagOf(c.country) + escapeHTML(name(c))) + '</th>' +
+    '</tr></thead><tbody>' + rows.map(c => '<tr><th>' + (/^[A-Z]{2}$/.test(c.country) ? countryLink(c.country, flagOf(c.country) + escapeHTML(name(c))) : placeFlag(c) + escapeHTML(name(c))) + '</th>' +
       cols.slice(1).map(([k]) => `<td>${cell(c, k)}</td>`).join('') + '</tr>').join('') + '</tbody>';
   table.querySelectorAll('th[data-sort]').forEach(th => th.addEventListener('click', () => {
     const k = th.dataset.sort;
@@ -1709,6 +1750,7 @@ function renderTable(filter = '') {
       <td class="dim">${f.distance ? fmtDist(f.distance) : '—'}</td>
       <td class="dim">${escapeHTML(f.duration || '—')}</td>
       <td class="dim">${escapeHTML(f.plane || '—')}</td>
+      <td><button class="del-btn" data-del="flight" data-id="${f.id}" title="Delete this flight" aria-label="Delete this flight">✕</button></td>
     </tr>
   `).join('');
   document.querySelectorAll('#flights-tbody [data-iata]').forEach(el => el.addEventListener('click', () => openAirport(el.dataset.iata)));
