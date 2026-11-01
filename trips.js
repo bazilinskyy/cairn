@@ -148,11 +148,12 @@ function create({ towns, cities, days, flights, airports, groundTrips, stays, ac
       ev.push({ t: t0, at: [t.from_lat, t.from_lon], what: 'ground', cover: 'g' + t.id });
       ev.push({ t: t1, at: [t.to_lat, t.to_lon], what: 'ground', cover: 'g' + t.id });
     }
+    const homeAp = new Set(homeAirports());
     for (const f of fl) {
       const a = ap[f.from], b = ap[f.to], t0 = unix(f.date, a.lat, a.lon);
       const [h, m] = (f.duration || '').split(':').map(Number);
-      ev.push({ t: t0, at: [a.lat, a.lon], what: 'flight', cover: 'f' + f.id });
-      ev.push({ t: t0 + ((h || 0) * 60 + (m || 0) || 120) * 60, at: [b.lat, b.lon], what: 'flight', cover: 'f' + f.id });
+      ev.push({ t: t0, at: [a.lat, a.lon], what: 'flight', cover: 'f' + f.id, off: true });
+      ev.push({ t: t0 + ((h || 0) * 60 + (m || 0) || 120) * 60, at: [b.lat, b.lon], what: 'flight', cover: 'f' + f.id, on: true, from: [a.lat, a.lon], home: homeAp.has(f.to) });
     }
     // a stay you kept while away (a room in town, nights elsewhere on a road trip): its check-in or check-out on a day a
     // shorter stay elsewhere has you sleeping there (the night after, the night before) is not where you were
@@ -176,14 +177,32 @@ function create({ towns, cities, days, flights, airports, groundTrips, stays, ac
       }
     }
     // a rental car: where it was picked up, just before the first place on its days more than PICKUP_KM from there
-    // (the drive starts at the airport, not at the first photo on the way)
+    // (the drive starts at the airport, not at the first photo on the way). You had it from its first day (from your
+    // landing near it, when you flew in that day) until a flight, and again after one landing near it (within
+    // ROAD_MAX_KM, or nearer than where it left: a domestic flight while you kept it, or a second car there); not
+    // after one home (it was returned before: the moves at home that evening were not by car)
+    const carHours = [];
     for (const c of st) {
-      if (c.what !== 'car' || c.lat == null || !c.start) continue;
+      if (c.what !== 'car' || !c.start) continue;
       const from = unix(c.start + ' 00:00', c.lat, c.lon), to = unix((c.end || c.start) + ' 23:59', c.lat, c.lon);
-      const first = seen.filter(e => e.t >= from && e.t <= to && ground.km(e.at, [c.lat, c.lon]) > PICKUP_KM).sort((a, b) => a.t - b.t)[0];
-      // only a place you were near that day or the one before (a car placed in a whole country is not)
-      const there = ev.some(e => e.t >= from - 86400 && e.t < (first?.t ?? to) && ground.km(e.at, [c.lat, c.lon]) <= PICKUP_KM);
-      if (first && there) ev.push({ t: first.t - 60, at: [c.lat, c.lon], what: 'car' });
+      // not before you landed near it that day (the way to the airport at home that morning was not by car)
+      const near = e => c.lat == null || (!(e.home && ground.km(e.at, [c.lat, c.lon]) > PICKUP_KM)
+        && (ground.km(e.at, [c.lat, c.lon]) <= ROAD_MAX_KM || ground.km(e.at, [c.lat, c.lon]) < ground.km(e.from, [c.lat, c.lon])));
+      const since = Math.max(from, ...ev.filter(e => e.on && e.t >= from && e.t < from + 86400 && near(e)).map(e => e.t));
+      const legs = ev.filter(e => (e.off || e.on) && e.t > since && e.t <= to).sort((a, b) => a.t - b.t);
+      const until = legs.find(e => e.off)?.t ?? to;
+      let open = since;
+      for (const e of legs) {
+        if (e.off && open != null) { carHours.push([open, e.t]); open = null; }
+        else if (e.on && open == null && c.lat != null && near(e)) open = e.t;
+      }
+      if (open != null) carHours.push([open, to]);
+      if (c.lat != null) {  // the first place by land (not the next airport: on a small island nothing else is that far)
+        const first = seen.filter(e => e.what !== 'flight' && e.t >= since && e.t <= until && ground.km(e.at, [c.lat, c.lon]) > PICKUP_KM).sort((a, b) => a.t - b.t)[0];
+        // only a place you were near that day or the one before (a car placed in a whole country is not)
+        const there = ev.some(e => e.t >= from - 86400 && e.t < (first?.t ?? to) && ground.km(e.at, [c.lat, c.lon]) <= PICKUP_KM);
+        if (first && there) ev.push({ t: first.t - 60, at: [c.lat, c.lon], what: 'car' });
+      }
     }
     // a photo or a stay's check-in during a flight, train or activity is on the way (or its clock is off): left out,
     // also one at the very minute it leaves (a check-in at 18:00, the bus at 18:00)
@@ -191,8 +210,7 @@ function create({ towns, cities, days, flights, airports, groundTrips, stays, ac
     ev.filter(e => e.cover).forEach(e => { const x = spans[e.cover] = spans[e.cover] || [e.t, e.t]; x[0] = Math.min(x[0], e.t); x[1] = Math.max(x[1], e.t); });
     const during = e => !e.cover && Object.values(spans).some(([a, b]) => e.t >= a && e.t < b);
     ev.splice(0, ev.length, ...ev.filter(e => !during(e)).sort((a, b) => a.t - b.t));
-    const cars = st.filter(s => s.what === 'car');
-    const carOn = t => cars.some(c => dayOf(t) >= c.start && dayOf(t) <= (c.end || c.start));
+    const carOn = t => carHours.some(([a, b]) => t >= a && t <= b);
     const moves = [];
     let last = null, left = null;  // left: the last time you were seen at last's place (you left it after that)
     for (const e of ev) {

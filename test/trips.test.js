@@ -55,6 +55,33 @@ test('the times of a flight are read in the zone of its airport, summer time inc
   assert.ok(!moves.some(m => [m.from, m.to].some(at => Math.abs(at[0] - 44.8) < 0.01)), 'no way to the photo and on');
 });
 
+test('a rental car abroad is not driven at home: not on the way to the airport before landing, nor after the flight home', () => {
+  const car = { id: 1, what: 'car', start: '2026-03-01', end: '2026-03-06', lat: 38.77, lon: -9.13 };  // picked up at Lisbon's airport
+  const at = (iso, lat, lon, id) => [id, Date.parse(iso) / 1000, lat, lon];
+  const s = store({ stays: [car],
+    flights: [{ id: 1, date: '2026-03-01 12:00', from: 'EIN', to: 'LIS', duration: '02:50' }, { id: 2, date: '2026-03-06 12:00', from: 'LIS', to: 'EIN', duration: '02:40' }],
+    photos: [at('2026-03-01T07:00:00Z', 51.99, 4.36, 1), at('2026-03-01T09:30:00Z', 51.45, 5.38, 2),   // to the airport at home that morning
+      at('2026-03-03T10:00:00Z', 38.72, -9.14, 3), at('2026-03-03T16:00:00Z', 40.21, -8.43, 4),         // driving in Portugal
+      at('2026-03-06T16:00:00Z', 51.45, 5.38, 5), at('2026-03-06T19:00:00Z', 51.99, 4.36, 6)] });      // home by train that evening
+  const moves = s.get(s.list()[0].id).moves.filter(m => m.km >= 10);
+  const kind = (lat, day) => moves.filter(m => Math.abs(m.from[0] - lat) < 0.6 && new Date(m.t0 * 1000).toISOString().startsWith(day)).map(m => m.kind);
+  assert.ok(kind(51.7, '2026-03-01').length && !kind(51.7, '2026-03-01').includes('drive'), 'the morning at home was not by car');
+  assert.ok(kind(51.7, '2026-03-06').length && !kind(51.7, '2026-03-06').includes('drive'), 'the evening at home was not by car');
+  assert.ok(moves.some(m => m.kind === 'drive' && Math.abs(m.to[0] - 40.21) < 0.01), 'the drive in Portugal still is');
+});
+
+test('a car for the day you fly home is driven before the flight, not after landing at home', () => {
+  const car = { id: 1, what: 'car', start: '2026-03-06', end: '2026-03-07', lat: 38.77, lon: -9.13 };
+  const at = (iso, lat, lon, id) => [id, Date.parse(iso) / 1000, lat, lon];
+  const s = store({ stays: [car],
+    flights: [{ id: 1, date: '2026-03-01 12:00', from: 'EIN', to: 'LIS', duration: '02:50' }, { id: 2, date: '2026-03-06 16:00', from: 'LIS', to: 'EIN', duration: '02:40' }],
+    photos: [at('2026-03-06T08:00:00Z', 38.72, -9.14, 1), at('2026-03-06T11:00:00Z', 38.70, -9.42, 2),    // a drive out that morning
+      at('2026-03-06T20:00:00Z', 51.45, 5.38, 3), at('2026-03-06T22:00:00Z', 51.99, 4.36, 4)] });          // home by train after
+  const moves = s.get(s.list()[0].id).moves.filter(m => m.km >= 10);
+  assert.ok(moves.some(m => m.kind === 'drive' && Math.abs(m.to[1] + 9.42) < 0.01), 'the drive that morning');
+  assert.ok(!moves.some(m => m.kind === 'drive' && m.from[0] > 50), 'nothing at home by car');
+});
+
 test('a room kept in town while sleeping elsewhere: its check-out that day is not where you were', () => {
   const room = { id: 1, what: 'stay', start: '2026-03-01', end: '2026-03-06', lat: 38.72, lon: -9.14 };   // Lisbon
   const away = { id: 2, what: 'stay', start: '2026-03-05', end: '2026-03-06', lat: 40.21, lon: -8.43 };   // a night 200 km off
