@@ -11,6 +11,7 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <script src="wrap.js"></script>
   <script src="layers.js"></script>
   <script src="sports.js"></script>
   <script src="city.js"></script>
@@ -488,6 +489,13 @@
     .stops-edit { display: flex; gap: 6px; margin-top: 6px; }
     .del-btn { background: none; border: none; color: var(--text-dim, #888); cursor: pointer; padding: 0 4px; font-size: 12px; line-height: 1; }
     .del-btn:hover { color: #e5534b; }
+    .del-btn.edit-btn:hover { color: #a78bfa; }
+    .edit-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+    .edit-grid label { font-size: 12px; color: var(--text2); }
+    .edit-grid label.wide { grid-column: 1 / -1; }
+    .edit-grid input, .edit-grid select { width: 100%; background: var(--surface2); border: 1px solid var(--border); border-radius: 6px;
+      padding: 8px 10px; color: var(--text); font-size: 13px; margin: 3px 0 12px; }
+    @media (max-width: 480px) { .edit-grid { grid-template-columns: 1fr; } }
     .stops-edit input { flex: 1; min-width: 0; font-size: 12px; padding: 4px 6px; }
     .sugg small.health-error { font-family: ui-monospace, Menlo, monospace; font-size: 11px; overflow-wrap: anywhere; }
     .sugg .acts { display: flex; gap: 6px; align-items: center; }
@@ -970,6 +978,17 @@
   </div>
 </div>
 
+<div class="modal-backdrop" id="edit-modal" onclick="if(event.target===this)closeEdit()">
+  <div class="modal">
+    <h3 id="edit-title">Edit</h3>
+    <form id="edit-form" class="edit-grid" onsubmit="event.preventDefault();saveEdit()"></form>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeEdit()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveEdit()">Save</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-backdrop" id="tripit-modal" onclick="if(event.target===this)closeTripItModal()">
   <div class="modal">
     <h3>↓ Import from TripIt</h3>
@@ -1239,12 +1258,62 @@ async function deleteItem(kind, id) {
   toast(`Deleted ${label(item)}`);
 }
 document.addEventListener('click', e => {
-  const b = e.target.closest('[data-del]');
+  const b = e.target.closest('[data-del], [data-edit]');
   if (!b) return;
   e.preventDefault();
   e.stopPropagation();
-  deleteItem(b.dataset.del, b.dataset.id);
+  if (b.dataset.edit) editItem(b.dataset.edit, b.dataset.id);
+  else deleteItem(b.dataset.del, b.dataset.id);
 });
+
+// --- Editing (✎ beside each ✕): the fields of one flight, trip or stay in a dialog; only what changed is sent, and a
+// trip or stay whose places change is looked up again by Cairn ---
+
+const EDITABLE = {  // [field, label, placeholder or choices, wide]
+  flight: [['date', 'Date and time', 'YYYY-MM-DD HH:MM'], ['flight_number', 'Flight number', 'KL1234'], ['from', 'From (airport code)', 'AMS'],
+    ['to', 'To (airport code)', 'LIS'], ['airline', 'Airline'], ['duration', 'Duration', 'HH:MM'], ['plane', 'Plane'], ['note', 'Note', '', true]],
+  ground: [['mode', 'How', ['train', 'bus', 'ferry', 'drive', 'hitch']], ['service', 'Line or number'], ['date', 'Left', 'YYYY-MM-DD HH:MM'],
+    ['arrival', 'Arrived', 'YYYY-MM-DD HH:MM'], ['from', 'From'], ['to', 'To']],
+  stay: [['place', 'Place', '', true], ['hotel', 'Where you stayed', '', true], ['start', 'From', 'YYYY-MM-DD'], ['end', 'To', 'YYYY-MM-DD'],
+    ['price', 'Price'], ['provider', 'Booked with']]
+};
+let editing = null;
+function editItem(kind, id) {
+  const [, list, label] = DELETABLE[kind] || [], item = list?.().find(x => String(x.id) === String(id));
+  if (!item) return;
+  editing = { kind, item };
+  document.getElementById('edit-title').textContent = `Edit ${label(item)}`;
+  document.getElementById('edit-form').innerHTML = EDITABLE[kind].map(([k, name, hint, wide]) => `<label class="${wide ? 'wide' : ''}">${name}` +
+    (Array.isArray(hint) ? `<select name="${k}">${hint.map(o => `<option${o === item[k] ? ' selected' : ''}>${o}</option>`).join('')}</select>`
+      : `<input name="${k}" value="${escapeHTML(String(item[k] ?? ''))}" placeholder="${escapeHTML(hint || '')}">`) + '</label>').join('') +
+    '<button type="submit" hidden></button>';
+  document.getElementById('edit-modal').classList.add('open');
+  map.closePopup();
+}
+function closeEdit() {
+  document.getElementById('edit-modal').classList.remove('open');
+  editing = null;
+}
+async function saveEdit() {
+  if (!editing) return;
+  const { kind, item } = editing, changes = {};
+  new FormData(document.getElementById('edit-form')).forEach((v, k) => {
+    v = v.trim();
+    if (kind === 'flight' && ['from', 'to', 'flight_number'].includes(k)) v = v.toUpperCase().replace(/\s+/g, '');
+    if (v !== String(item[k] ?? '')) changes[k] = v;
+  });
+  if (!Object.keys(changes).length) return closeEdit();
+  const r = await fetch(`${DELETABLE[kind][0]}/${item.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(changes) }).catch(() => null);
+  const saved = r && await r.json().catch(() => null);
+  if (!r?.ok) return toast(saved?.error ? `Not saved: ${saved.error}` : 'Could not save it', 'error');
+  for (const k of Object.keys(item)) if (!(k in saved)) delete item[k];  // what Cairn forgot (a moved trip's track) goes here too
+  Object.assign(item, saved);
+  closeEdit();
+  if (kind === 'flight') { renderTable(document.getElementById('search').value); redrawMap(); }
+  else if (kind === 'ground') drawGround();
+  else drawStays();
+  toast(`Saved ${DELETABLE[kind][2](item)}${kind !== 'flight' && ['from', 'to', 'place', 'date', 'mode'].some(k => k in changes) ? ': on the map again in a minute' : ''}`);
+}
 
 // --- Map ---
 
@@ -1256,6 +1325,7 @@ function initMap() {
   // saved on another copy opens there)
   if (view?.center) view.center[1] = ((view.center[1] + 180) % 360 + 360) % 360 - 180;
   map = L.map('map', { center: view?.center || [30, 15], zoom: view?.zoom ?? 2, zoomControl: false, worldCopyJump: true });
+  wrapWorld(map);  // wrap.js: the copies of the world beside this one drawn too
   map.on('moveend', () => {
     try { localStorage.setItem('contrail-view', JSON.stringify({ center: [map.getCenter().lat, map.getCenter().lng], zoom: map.getZoom() })); } catch (_) {}
   });
@@ -1479,7 +1549,8 @@ function drawGround() {
       `${(best.mode === 'ferry' && best.path_source === 'stops' ? 'by the ports you named, along the ferry lines' : how[best.path_source]) || 'looking up the track…'}</small><br>` +
       // each date; one of your own with ✕ to delete it (a drive worked out from your photos has none to delete)
       `<small>${[...trips].sort((a, b) => (b.date || '').localeCompare(a.date || '')).slice(0, 8).map(t => `<span style="white-space:nowrap">${escapeHTML(when(t))}` +
-        (t.derived ? '' : `<button class="del-btn" data-del="ground" data-id="${t.id}" title="Delete this trip" aria-label="Delete the trip of ${escapeHTML(when(t))}">✕</button>`) +
+        (t.derived ? '' : `<button class="del-btn edit-btn" data-edit="ground" data-id="${t.id}" title="Edit this trip" aria-label="Edit the trip of ${escapeHTML(when(t))}">✎</button>` +
+          `<button class="del-btn" data-del="ground" data-id="${t.id}" title="Delete this trip" aria-label="Delete the trip of ${escapeHTML(when(t))}">✕</button>`) +
         '</span>').join(', ')}${trips.length > 8 ? ', …' : ''}</small>` +
       (['drive', 'bus', 'hitch', 'ferry'].includes(best.mode) && trips.length === 1 ? `<div class="stops-edit"><input placeholder="${best.mode === 'ferry' ? 'Called at… (ports, with commas)' : 'Went through… (towns, with commas)'}" ` +
         `value="${escapeHTML((best.stops || []).join(', '))}" aria-label="Towns on the way"><button class="btn btn-ghost">Save</button></div>` : '');
@@ -1681,8 +1752,9 @@ async function renderTopCities() {
 
 // the flag of a list's place (the Travelers' Century Club's Alaska: the United States'); England, Scotland and Wales
 // their own
+// Places with no emoji flag of their own get a plain white one
 const NATION_FLAGS = { England: 'gbeng', Scotland: 'gbsct', Wales: 'gbwls' };
-const placeFlag = c => (NATION_FLAGS[c.name] ? '🏴' + [...NATION_FLAGS[c.name]].map(x => String.fromCodePoint(0xE0000 + x.charCodeAt(0))).join('') + '\u{E007F} ' : flagOf(c.cc));
+const placeFlag = c => (NATION_FLAGS[c.name] ? '🏴' + [...NATION_FLAGS[c.name]].map(x => String.fromCodePoint(0xE0000 + x.charCodeAt(0))).join('') + '\u{E007F} ' : flagOf(c.cc) || '🏳️ ');
 
 // Per country, all time (app.js /api/countries); sorted by the column clicked
 let countryStats = [], countrySort = ['days', -1];
@@ -1750,7 +1822,7 @@ function renderTable(filter = '') {
       <td class="dim">${f.distance ? fmtDist(f.distance) : '—'}</td>
       <td class="dim">${escapeHTML(f.duration || '—')}</td>
       <td class="dim">${escapeHTML(f.plane || '—')}</td>
-      <td><button class="del-btn" data-del="flight" data-id="${f.id}" title="Delete this flight" aria-label="Delete this flight">✕</button></td>
+      <td style="white-space:nowrap"><button class="del-btn edit-btn" data-edit="flight" data-id="${f.id}" title="Edit this flight" aria-label="Edit this flight">✎</button><button class="del-btn" data-del="flight" data-id="${f.id}" title="Delete this flight" aria-label="Delete this flight">✕</button></td>
     </tr>
   `).join('');
   document.querySelectorAll('#flights-tbody [data-iata]').forEach(el => el.addEventListener('click', () => openAirport(el.dataset.iata)));
@@ -1849,12 +1921,18 @@ document.getElementById('btn-save').addEventListener('click', async () => {
   };
 
   try {
-    const res  = await fetch('/api/flights', {
+    const send = () => fetch('/api/flights', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(flight)
     });
-    const saved = await res.json();
+    let res = await send(), saved = await res.json();
+    if (res.status === 409) {  // Cairn has it already: added only when asked again
+      const x = saved.same;
+      if (!confirm(`Already in your flights: ${[x.flight_number, x.from + ' → ' + x.to].filter(Boolean).join(' ')} on ${x.date}. Add it again?`)) return;
+      flight.force = true;
+      res = await send(); saved = await res.json();
+    }
     if (!res.ok) throw new Error(saved.error || 'Save failed');
 
     allFlights.unshift(saved);

@@ -98,10 +98,11 @@ function simplify(pts, eps = 0.0005) {
   return pts.filter((_, i) => keep[i]);
 }
 
-// A track belongs to this trip when it starts and ends near its stations and is not a long detour
-function plausible(pts, a, b) {
+// A track belongs to this trip when it starts and ends near its stations and is not a long detour (longer only when
+// the trip's own hours allow it: `longest` km, a train round the mountains)
+function plausible(pts, a, b, longest = 0) {
   const direct = km(a, b);
-  return pts.length > 1 && km(pts[0], a) < 30 && km(pts[pts.length - 1], b) < 30 && pathKm(pts) < 2.2 * direct + 30 && !overshoots(pts, b);
+  return pts.length > 1 && km(pts[0], a) < 30 && km(pts[pts.length - 1], b) < 30 && pathKm(pts) < Math.max(2.2 * direct + 30, longest) && !overshoots(pts, b);
 }
 
 // A track that passes its end and comes back to it (a timetable's train on to Rotterdam and back to Breda): once
@@ -235,6 +236,9 @@ async function geocode(name, bias, maxKm, lang = '') {
     return st && km(st, town) < 15 ? st : town;
   }
   const tags = AIRPORT_RX.test(name || '') ? ['aeroway:aerodrome'] : PLACE_TAGS;
+  // a village only spelled like the name ("Milaan, Italië", a booking in Dutch: Milzano) is kept while the shorter
+  // names are tried ("Milaan": Milan); it stands when none of them finds more
+  let weak = null;
   for (const [q, shortened] of variants(name)) {
     const key = `${q}|${bias ? bias.map(x => x.toFixed(0)).join(',') : ''}|${lang}`;
     if (!geoCache.has(key)) {
@@ -250,9 +254,10 @@ async function geocode(name, bias, maxKm, lang = '') {
     }
     const anyAirport = AIRPORT_RX.test(q) && !/\p{L}/u.test(q.replace(AIRPORT_RX, ''));  // "airport", "Airport"
     const hit = pick(geoCache.get(key), q, { shortened, bias, maxKm, anyAirport });
-    if (hit) return hit.at;
+    if (hit && (shortened || hit.name === norm(q) || rank(hit) >= 4)) return hit.at;
+    weak = weak || hit;
   }
-  return null;
+  return weak?.at || null;
 }
 
 // The candidate (Photon's answers, in its order) that is this place, or undefined. A bare "airport" is the one
@@ -326,9 +331,22 @@ async function fillGaps(pts, mode, time) {
 // trains no timetable Cairn can ask knows (Ukraine, India), drawn like a timetable's track
 // ... through points on the way (the photos you took on the train), in order
 async function railVia(pts) {
-  const d = await getJSON(`${BROUTER}?lonlats=${pts.map(p => `${p[1]},${p[0]}`).join('|')}&profile=rail&alternativeidx=0&format=geojson`);
+  let d = null;
+  try {
+    d = await getJSON(`${BROUTER}?lonlats=${pts.map(p => `${p[1]},${p[0]}`).join('|')}&profile=rail&alternativeidx=0&format=geojson`);
+  } catch (e) {
+    if (!/brouter\.de/.test(e.message)) throw e;
+  }
   const path = (d?.features?.[0]?.geometry?.coordinates || []).map(([lon, lat]) => [lat, lon]);
-  return plausible(path, pts[0], pts[pts.length - 1]) ? path : null;
+  if (plausible(path, pts[0], pts[pts.length - 1])) return path;
+  // BRouter turning Cairn away: OpenStreetMap's tracks from each point to the next (railOverpass)
+  const out = [];
+  for (let i = 1; i < pts.length; i++) {
+    const piece = await railOverpass(pts[i - 1], pts[i]);
+    if (!piece) return null;
+    out.push(...piece);
+  }
+  return plausible(out, pts[0], pts[pts.length - 1]) ? out : null;
 }
 
 // How far a point is from a track, km (to its nearest piece, flat over short distances)
@@ -342,12 +360,13 @@ function offTrack(pts, p) {
   }
   return best;
 }
-const OFF_TRACK_KM = 3;  // a photo on the way this far from a train's or bus's track: the track went elsewhere
+const OFF_TRACK_KM = 3;
+const TRAIN_KMH = 120;  // a train's hours times this: the longest way round its track can be  // a photo on the way this far from a train's or bus's track: the track went elsewhere
 
-async function railGuess(a, b) {
+async function railGuess(a, b, longest = 0) {
   const d = await getJSON(`${BROUTER}?lonlats=${a[1]},${a[0]}|${b[1]},${b[0]}&profile=rail&alternativeidx=0&format=geojson`);  // busy: the lookups pause
   const pts = (d?.features?.[0]?.geometry?.coordinates || []).map(([lon, lat]) => [lat, lon]);
-  return plausible(pts, a, b) ? pts : null;
+  return plausible(pts, a, b, longest) ? pts : null;
 }
 
 // A long one in pieces (BRouter's public server gives up after 8 seconds): the road route's stations about every
@@ -410,8 +429,8 @@ function keepPiece(q, elements) {
 }
 const railRest = new Map();  // after Overpass failed on a train: until when its railway guess waits (the other trains go on)
 const RAIL_REST_MS = 5 * 60e3;  // a few minutes: Overpass is slow at busy times, but most of its answers come
-async function railOverpass(a, b, old = false) {
-  const key = [...a, ...b].map(x => x.toFixed(2)).join(',') + (old ? '|old' : '');
+async function railOverpass(a, b, old = false, longest = 0) {
+  const key = [...a, ...b].map(x => x.toFixed(2)).join(',') + (old ? '|old' : '') + (longest ? `|${Math.round(longest)}` : '');
   if (railCache.has(key)) return railCache.get(key);
   if ((railRest.get(key) || 0) > Date.now()) throw new Error('overpass: resting after a failure');
   // along the road, or the straight line every RAIL_SAMPLE_KM: when there is no road (OSRM busy), or it goes far round
@@ -478,7 +497,7 @@ async function railOverpass(a, b, old = false) {
     add(await piece(`[out:json][timeout:240];(${rails(bb, '')}${rails(bb, '[!"service"]', 'disused')});(._;>;);out skel qt;`));
     pts = shortestRail(elements, a, b);
   }
-  pts = pts && plausible(pts, a, b) ? pts : null;
+  pts = pts && plausible(pts, a, b, longest) ? pts : null;
   railCache.set(key, pts);
   return pts;
 }
@@ -955,11 +974,12 @@ async function route(trip, clues = null) {
   if (!pts && trip.mode === 'ferry') pts = await seaRoute(a, b), source = 'sea';
   if (!pts && trip.mode === 'train') {  // from stations: BRouter starts on a track (the nearest may be a park railway: then the next)
     const [as, bs] = [await placesNear('railway:station', a, 3), await placesNear('railway:station', b, 3)];
-    pts = await railOverpass(as[0] && km(as[0], a) < 15 ? as[0] : a, bs[0] && km(bs[0], b) < 15 ? bs[0] : b, (trip.date || '') < RAIL_OLD);
+    const longest = trip.arrival ? (driveHours(trip) || 0) * TRAIN_KMH : 0;  // its timetable's hours: how far round it can go
+    pts = await railOverpass(as[0] && km(as[0], a) < 15 ? as[0] : a, bs[0] && km(bs[0], b) < 15 ? bs[0] : b, (trip.date || '') < RAIL_OLD, longest);
     const pairs = [[0, 0], [1, 1], [0, 1], [1, 0], [2, 2]].filter(([i, j]) => as[i] && bs[j] && km(as[i], a) < 15 && km(bs[j], b) < 15);
     try {  // else BRouter, when it answers; when it does not, Overpass' "no railway" stands: the road for now (tried again later)
-      for (const [i, j] of pairs) if (!pts) pts = await railGuess(as[i], bs[j]);
-      if (!pts) pts = await railGuess(a, b);
+      for (const [i, j] of pairs) if (!pts) pts = await railGuess(as[i], bs[j], longest);
+      if (!pts) pts = await railGuess(a, b, longest);
       if (!pts && km(a, b) > LEG_STEP_KM) pts = await railGuessLong(as[0] || a, bs[0] || b);
     } catch (e) {
       if (!/brouter\.de/.test(e.message)) throw e;

@@ -91,6 +91,19 @@ test('unknown id gives 404', async () => {
   assert.strictEqual((await call('DELETE', '/api/flights/999')).status, 404);
 });
 
+test('a flight already there is added only when asked again', async () => {
+  const again = { date: '2026-11-16', from: 'AMS', to: 'MAD', flight_number: '' };
+  const res = await call('POST', '/api/flights', again);
+  assert.strictEqual(res.status, 409);
+  assert.strictEqual((await res.json()).same.id, 1);
+  assert.strictEqual((await call('POST', '/api/flights', { date: '2026-11-16', from: 'AMS', to: 'BCN', flight_number: 'KL1236' })).status, 409);
+  const forced = await call('POST', '/api/flights', { ...again, force: true });
+  assert.strictEqual(forced.status, 200);
+  const added = await forced.json();
+  assert.ok(!('force' in added));
+  assert.strictEqual((await call('DELETE', `/api/flights/${added.id}`)).status, 200);
+});
+
 test('ground trips: added, updated in place when posted again, edited and deleted', async () => {
   const bus = { date: '2026-10-24 13:15:00', mode: 'bus', from: 'Albufeira', to: 'Vila Nova de Milfontes', event_id: 'E1', source: 'flightmail' };
   const a = await (await call('POST', '/api/ground', bus)).json();
@@ -204,6 +217,14 @@ test('a side trip from a base stay: its nights come off the base, and the pair i
   const h = await (await call('GET', '/api/health')).json();
   assert.ok(!h.twice.some(t => t.stays.some(s => s.id === base.id)));
   for (const s of [base, side]) await call('DELETE', `/api/stays/${s.id}`);
+});
+
+test('two stays for the same night: a host comes first, marked as the one kept before a booking', async () => {
+  const hotel = await (await call('POST', '/api/stays', { code: 'HOTEL1', what: 'stay', place: 'Porto', start: '2018-06-01', end: '2018-06-03', lat: 41.15, lon: -8.61, provider: 'Booking.com' })).json();
+  const host = await (await call('POST', '/api/stays', { code: 'cs-someone-20180601', what: 'stay', place: 'Matosinhos', start: '2018-06-01', end: '2018-06-03', lat: 41.18, lon: -8.69, provider: 'Couchsurfing' })).json();
+  const pair = (await (await call('GET', '/api/health')).json()).twice.find(t => t.stays.some(s => s.id === host.id));
+  assert.deepStrictEqual(pair.stays.map(s => [s.id, s.host]), [[host.id, true], [hotel.id, false]]);
+  for (const s of [hotel, host]) await call('DELETE', `/api/stays/${s.id}`);
 });
 
 test('a photo index run that failed is on the health page until it runs well again', async () => {

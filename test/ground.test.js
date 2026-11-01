@@ -24,6 +24,10 @@ test('a track must start and end at the stations without a long detour', () => {
   assert.ok(g.plausible([a, [51.2, 4.5], b], a, b));
   assert.ok(!g.plausible([[52.37, 4.9], b], a, b));
   assert.ok(!g.plausible([a, [45, 10], b], a, b));
+  // a railway round the mountains: too far round for the straight line, not for a train of a few hours
+  const round = [a, [51.3, 6.2], b];
+  assert.ok(!g.plausible(round, a, b));
+  assert.ok(g.plausible(round, a, b, 3 * 120));
 });
 
 test('past trips are looked up on the same weekday in the coming week', () => {

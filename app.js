@@ -216,13 +216,14 @@ let lookingUp = false, lookAgain = false;
 // leaving until arriving, or with no arrival time as long as the road would take and two hours more; a journey that
 // knows only its day (noon, no arrival) the whole day. Up to the first one at the far end.
 function journeyClues(t, a, b) {
-  const unix = (s, lon) => { const m = /^(\d{4}-\d\d-\d\d)[ T](\d\d:\d\d)/.exec(s || ''); return m ? Date.parse(`${m[1]}T${m[2]}:00Z`) / 1000 - Math.round(lon / 15) * 3600 : null; };
-  const dayOnly = !t.arrival && /12:00:00$/.test(t.date || ''), start = unix(dayOnly ? `${t.date.slice(0, 10)} 00:00` : t.date, a[1]);
+  // local times in the zone of the town at each end (cities.js), so photos with their UTC times fall in the trip's hours
+  const unix = (s, at) => cities.localUnix(loadTowns(), s, at[0], at[1]);
+  const dayOnly = !t.arrival && /12:00:00$/.test(t.date || ''), start = unix(dayOnly ? `${t.date.slice(0, 10)} 00:00` : t.date, a);
   if (start == null) return [];
-  const end = t.arrival ? unix(t.arrival, b[1]) : start + (dayOnly ? 30 : ground.km(a, b) / 50 + 2) * 3600;
+  const end = t.arrival ? unix(t.arrival, b) : start + (dayOnly ? 30 : ground.km(a, b) / 50 + 2) * 3600;
   const flying = flyingSpans().filter(([off, on]) => on > start && off < end);  // a flight home after the drive: its photos are no road
   const seen = ownPlacePhotos().filter(p => p[1] >= start && p[1] <= end && !flying.some(([off, on]) => p[1] > off && p[1] < on)).map(p => [p[1], p[2], p[3]]);
-  (readImport(TIMELINE_FILE, {}).visits || []).forEach(v => { const s = unix(v.start, v.lon); if (s >= start && s <= end) seen.push([s, v.lat, v.lon]); });
+  (readImport(TIMELINE_FILE, {}).visits || []).forEach(v => { const s = unix(v.start, [v.lat, v.lon]); if (s >= start && s <= end) seen.push([s, v.lat, v.lon]); });
   // nor one too far from the last to have been driven to (over 200 km/h: a flight with no times, its photos the plane's)
   const out = [];
   let last = [start, ...a];
@@ -436,6 +437,11 @@ app.post('/api/flights', (req, res) => {
   const f = req.body, bad = badField('flight', f);
   if (bad) return res.status(400).json({ error: bad });
   if (!f.from || !f.to || !f.date) return res.status(400).json({ error: 'from, to, and date are required' });
+  // the same flight again (same day, and the same route or flight number, as tripmail checks): refused unless asked twice
+  const same = !f.force && flights.find(x => (x.date || '').slice(0, 10) === f.date.slice(0, 10)
+    && ((x.from === f.from && x.to === f.to) || (f.flight_number && x.flight_number === f.flight_number)));
+  if (same) return res.status(409).json({ error: 'already there', same });
+  delete f.force;
   if (!f.distance && airports[f.from] && airports[f.to]) {
     const a = airports[f.from], b = airports[f.to];
     f.distance = haversine(a.lat, a.lon, b.lat, b.lon);
@@ -1559,6 +1565,8 @@ app.post('/api/health/dedupe', (_req, res) => {
   res.json({ removed: gone.length });
 });
 
+// a night with a host (Couchsurfing, BeWelcome, Trustroots): kept before a hotel or Airbnb booked for the same night
+const HOSTED = /^(couchsurfing|bewelcome|trustroots)$/i, hosted = s => HOSTED.test(s.provider || '') || /^(cs|bw|tr)-/.test(s.code || '');
 app.get('/api/health', (_req, res) => {
   const no = dismissedSet(), beds = stays.filter(s => s.what !== 'car' && s.start && s.end && s.end > s.start).sort((a, b) => a.start.localeCompare(b.start));
   const twice = [];
@@ -1566,7 +1574,7 @@ app.get('/api/health', (_req, res) => {
     for (let j = i + 1; j < beds.length && beds[j].start < beds[i].end; j++) {
       const a = beds[i], b = beds[j], key = `health|twice|${Math.min(a.id, b.id)}|${Math.max(a.id, b.id)}`;
       const nights = Math.round((Date.parse(a.end < b.end ? a.end : b.end) - Date.parse(b.start > a.start ? b.start : a.start)) / 864e5);
-      if (nights > 0 && !no.has(key) && !sideTrip(a, b) && !sideTrip(b, a) && !(a.start === b.start && (a.end || a.start) === (b.end || b.start) && placeKey(a.place) === placeKey(b.place))) twice.push({ key, nights, stays: [a, b].map(s => ({ id: s.id, start: s.start, end: s.end, place: s.place, hotel: s.hotel || s.type || '', provider: s.provider || '', source: s.source || 'email' })) });
+      if (nights > 0 && !no.has(key) && !sideTrip(a, b) && !sideTrip(b, a) && !(a.start === b.start && (a.end || a.start) === (b.end || b.start) && placeKey(a.place) === placeKey(b.place))) twice.push({ key, nights, stays: (hosted(b) && !hosted(a) ? [b, a] : [a, b]).map(s => ({ id: s.id, start: s.start, end: s.end, place: s.place, hotel: s.hotel || s.type || '', provider: s.provider || '', source: s.source || 'email', host: hosted(s) && !(hosted(a) && hosted(b)) })) });
     }
   }
   const unplaced = [...trips.filter(t => t.unplaced).map(t => ({ kind: 'ground', id: t.id, date: t.date, text: `${t.mode}: ${t.from} → ${t.to}`, from: t.from, to: t.to })),

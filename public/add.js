@@ -393,7 +393,8 @@ async function renderHealth() {
   const d = await fetch('/api/health').then(r => (r.ok ? r.json() : null)).catch(() => null);
   if (!d) { box.innerHTML = '<p class="subtitle">Could not check.</p>'; return; }
   const stayCard = st => `<div class="health-stay"><b>${escapeHTML(st.hotel || st.place || '')}</b><small>${escapeHTML(st.place || '')} · ${tripRange(st.start, st.end)} · ` +
-    `${escapeHTML(st.provider || '')} (${escapeHTML(st.source)})</small><button class="btn btn-ghost" data-keep="${st.id}">Keep this one</button></div>`;
+    `${escapeHTML(st.provider || '')} (${escapeHTML(st.source)})</small>${st.host ? '<small>🤝 a host: kept before a booking</small>' : ''}` +
+    `<button class="btn ${st.host ? 'btn-primary' : 'btn-ghost'}" data-keep="${st.id}">Keep this one</button></div>`;
   const fine = key => `<button class="btn btn-ghost" data-fine="${escapeHTML(key)}" title="Fine as it is">Fine</button>`;
   let html = '<p class="subtitle">What looks wrong in your data, each with a fix. "Fine" sets it aside for good.</p>';
   if (d.photoJobs?.length) html += `<h3 class="sugg-title">Photo jobs that failed (${d.photoJobs.length})</h3><div class="sugg-group">${d.photoJobs.map(x =>

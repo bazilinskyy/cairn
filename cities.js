@@ -23,7 +23,7 @@ function load(file) {
   for (const line of text.split('\n')) {
     const f = line.split('\t');
     if (f.length < 15 || SKIP.has(f[7])) continue;
-    const town = { id: +f[0], name: f[1], cc: f[8], lat: +f[4], lon: +f[5], pop: +f[14] || 1000, fc: f[7], own: [norm(f[1]), norm(f[2])] };
+    const town = { id: +f[0], name: f[1], cc: f[8], lat: +f[4], lon: +f[5], pop: +f[14] || 1000, fc: f[7], tz: f[17] || '', own: [norm(f[1]), norm(f[2])] };
     // its names to match an airport's city by: other spellings only for towns over 50,000 ("Kiev" is Kyiv)
     town.names = new Set([f[1], f[2], ...(town.pop >= 50000 ? f[3].split(',') : [])].map(norm).filter(Boolean));
     const key = Math.floor(town.lat) + ',' + Math.floor(town.lon);
@@ -49,6 +49,25 @@ function townAt(grid, lat, lon) {
     }
   }
   return best;
+}
+
+// A local clock time ("2023-08-29 18:05") as unix seconds, in the time zone of the town nearest the place (summer
+// time included: Germany in August is two hours ahead, not the none its longitude gives); by the longitude when no
+// town is near
+function localUnix(grid, s, lat, lon) {
+  const m = /^(\d{4}-\d\d-\d\d)[ T](\d\d:\d\d)/.exec(s || '');
+  if (!m) return null;
+  const wall = Date.parse(`${m[1]}T${m[2]}:00Z`), tz = grid && (nearest(grid, lat, lon, 50) || townAt(grid, lat, lon))?.tz;
+  if (!tz) return wall / 1000 - Math.round(lon / 15) * 3600;
+  const offset = at => {  // the zone's clock minus UTC at that moment, ms
+    const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit' }).formatToParts(new Date(at)).map(x => [x.type, x.value]));
+    return Date.UTC(+p.year, p.month - 1, +p.day, +p.hour, +p.minute, +p.second) - at;
+  };
+  try {
+    const first = wall - offset(wall);
+    return (wall - offset(first)) / 1000;  // once more: the offset at the moment itself (a time near a clock change)
+  } catch (_) { return wall / 1000 - Math.round(lon / 15) * 3600; }  // a zone Intl does not know
 }
 
 // The town nearest a place within maxKm, whatever its size (not the one that pulls hardest, as townAt: a climb's
@@ -166,4 +185,4 @@ function biggestNamed(grid, name) {
   return own || other;
 }
 
-module.exports = { load, townAt, nearest, townNamed, rank, starts, byId, search, biggestNamed };
+module.exports = { load, townAt, nearest, townNamed, rank, starts, byId, search, biggestNamed, localUnix };

@@ -182,6 +182,8 @@ flowchart LR
   br -->|"no railway"| straight["A straight line, dashed"]
 ```
 
+A railway guess may be at most about twice the straight distance, or as far as the train could go in its own hours (from its departure and arrival times) when that is more: a line round the mountains between two valleys.
+
 ### The open services it uses
 
 No account is needed for any of these; each is asked at most about once a second and the answer is kept.
@@ -720,7 +722,7 @@ Add `--send mini:repos/contrail/data/<file>.json` to copy the result to the Mac 
 
 **+ Add → 🩺 Fix** lists what looks wrong, each with its fix, or **Fine** to set it aside for good:
 - **stays that copy another** (the same nights and place, from two sources: a booking email and the Booking.com export, a Couchsurfing request and its confirmation): **Remove the copies** keeps the one that knows most (its position, hotel, price) and deletes the others for good;
-- **stays booked for the same nights** in different places (one cancelled, or a plan): keep the one you slept in;
+- **stays booked for the same nights** in different places (one cancelled, or a plan): keep the one you slept in (a night with a host, Couchsurfing, BeWelcome or Trustroots, comes first: it is kept before a hotel or Airbnb booked for the same night);
 - **nights with no stay, where your runs and rides start**: a run, walk or ride that starts and ends at one spot mostly starts where you slept, and a ride from one place to another (a bike tour) leaves one bed in the morning and reaches the next in the afternoon, so nights away from home that no stay covers, with such spots, are offered as a stay there (one per run of nights at the same spot; a morning loop, or a one-way ride's start, counts for the night before, a one-way ride's end in the afternoon for that night; a run of nights is not carried across a night with a loop elsewhere). Name the town or hotel and **Add stay**, or ✕. Spots near your home places, spots you ran from for months (where you lived), a lone loop within 100 km of those, a lone hike out of town (a trailhead), a spot only one one-way ride gives (it may end at a station) and, near home, one only one-way rides give (a day's ride out, home by train) are left out, and so are swims, skiing and paddling;
 - **trips and stays with no place found**: correct the name and look it up again;
 - **trains and buses drawn straight**: look them up again;
@@ -761,6 +763,9 @@ curl -o cairn-backup-no-activities.tar.gz "localhost:3000/api/backup?activities=
 4. Check the fields and click **Save Flight**
 
 If the flight is not found (common for old flights), click **Fill Manually**. The minimum is **From**, **To** and **Date**.
+A flight already there (the same day, and the same route or flight number) is not added twice unless you say so.
+
+**✎** beside a flight in the list, or beside a trip or stay in its popup on the map, changes it (dates, places, flight number, where you stayed); **✕** deletes it, after asking. A trip or stay whose places change is looked up again.
 
 ### Importing from openflights.org
 
@@ -872,7 +877,7 @@ Moving to MongoDB later only needs the data layer in `app.js` (the `flights` arr
 | `GET` | `/api/flights` | all flights as a JSON array |
 | `GET` | `/api/airports` | airport metadata for the airports in your flights |
 | `POST` | `/api/flights/lookup` | look up a flight by number and date via AeroDataBox: `{ "flight_number": "KL1234", "date": "2026-11-16" }` → airports, airline, aircraft, distance, duration, local departure and arrival times |
-| `POST` | `/api/flights` | add a flight (at least `from`, `to` and `date`); the distance is computed when missing |
+| `POST` | `/api/flights` | add a flight (at least `from`, `to` and `date`); the distance is computed when missing. One already there (same day, same route or flight number) is refused with `409` and the one found, unless `force: true` |
 | `PUT` | `/api/flights/:id` | change fields of a flight; the distance is recomputed when the route changes |
 | `DELETE` | `/api/flights/:id` | delete a flight |
 | `GET` | `/api/ground` | all trains, buses, ferries and car journeys |
