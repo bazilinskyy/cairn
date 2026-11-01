@@ -29,7 +29,7 @@ const dayOf = s => { const m = /^(\d{4})[/-](\d\d?)[/-](\d\d?)$/.exec((s || '').
 
 // The books on your read shelf, from the export's text: { id, title, author, rating, pages, year, finished, added, read_count }
 function fromExport(text) {
-  const [head, ...rows] = parseCsv(text.replace(/^﻿/, ''));
+  const [head, ...rows] = parseCsv(text.replace(/^\uFEFF/, ''));
   const col = name => (head || []).indexOf(name);
   if (col('Title') < 0 || col('Date Read') < 0 || col('Exclusive Shelf') < 0) throw new Error('not a Goodreads library export (no Title, Date Read or Exclusive Shelf column)');
   const get = (r, name) => (col(name) < 0 ? '' : (r[col(name)] || '').trim());
