@@ -249,6 +249,8 @@ No account is needed for any of these; each is asked at most about once a second
 | `stats.js`, `public/curiosities.js` | the curiosities: days by the sea and up in the mountains, extremes, capitals, distances, beds, ride weather, sleep |
 | `weather.js` | the weather on your rides (Open-Meteo's history) |
 | `lastfm.js` | your Last.fm scrobbles, for the music on trips and towns |
+| `books.js` | your Goodreads library export, for the books on the map, trips and towns |
+| `uploads.js` | the imports in Settings: a data download's files uploaded, then read by its import script |
 | `public/climb.js`, `climb_records.json` | a climb's page: its map, your times with a profile, predictions, and the best known times (with sources) |
 | `public/terrain.js` | the 3D view: globe or flat map with terrain (MapLibre GL), the 2D map's layers, flights through the air (deck.gl) |
 | `climbs.js`, `ascents.js`, `climbs.json` | famous cycling climbs, their ways up (roads and terrain heights) and which your rides went up |
@@ -665,6 +667,12 @@ Your [Last.fm](https://www.last.fm) scrobbles show what you played on each trip 
 
 No restart is needed: Cairn fetches your whole history in the background a few minutes after it starts (or now, with `curl -X POST localhost:3000/api/music/sync`; about a minute per 10,000 scrobbles), then the new ones every six hours, and keeps them in `data/lastfm.json`. A scrobble counts on its day in UTC.
 
+### Books
+
+The books you read show where you were the day you finished each: a 📚 pin on the map (one per place, its books in the popup) and a list on each trip's and town's page. Export your library from [Goodreads](https://www.goodreads.com) (My Books → Import and export → Export library) and pick the CSV under ⚙️ Settings → Imports → 📚 Goodreads. A new export replaces the last one. The place is the stay you slept in that night, or else the town you were seen in most that day (photos, rides, Timeline, check-ins); a day with neither has no pin.
+
+Goodreads' export has only the day you finished a book, not the day you started it, nor the earlier times of a book read again, and Goodreads has no API for them any more.
+
 ### Curiosities
 
 The **Stats** tab ends with curiosities from every day Cairn knows a place for (up to today): days by the sea (within 2 km of [Natural Earth](https://www.naturalearthdata.com)'s coastline, `data/coastline.geojson`, 10 MB, downloaded on first use) and days above 1,000, 2,000 and 3,000 m, the highest place, the highest you went on foot or by bike, the highest night (the ground's height at each place from the AWS Terrain Tiles, kept in `data/heights.json`; the first time takes a minute or two), the farthest you went north, south, east and west and from home, days in the southern and western hemispheres and the tropics, the capitals you have been to, how far you went by each means (trains between the towns you live and work in, from your places, count apart as 🔁 commutes; and how many times around the earth that is), the most countries in a day, the longest stay, nights per kind of bed (a friend's place and family each count apart), where each New Year's Eve was, the hottest, coldest, wettest and windiest rides, and your sleep, resting heart rate and steps away and at home.
@@ -699,6 +707,8 @@ which writes `data/saved_places.json` (the starred places with their position; a
 ### More of your life: data downloads
 
 Each of these reads a data download as it comes (zip or unpacked folder) and writes a file in `data/` (in the backup); give several at once, mixed. Standard library Python, no network.
+
+The easiest way is **⚙️ Settings → Imports**: a row per source (these, and Garmin's export, Google Timeline, Google Maps saved places and Goodreads), each with what to download, whether a new import adds to what is kept or replaces it, and how its last import went. Pick the files (several at once where a source has many) and Cairn uploads them, runs the import below on them in the background with [uv](https://docs.astral.sh/uv/) (`config.uv`, else `~/.local/bin/uv`) and removes the uploaded copies after. From the laptop it works through the ssh tunnel. The commands below do the same by hand.
 
 | Source | How to get it | Then |
 |---|---|---|
@@ -863,6 +873,7 @@ At most one request a second goes to each service; a service that is down is tri
 - `data/wellness.json`: `{"days": {"YYYY-MM-DD": {"rhr", "steps", "stress", "bb_max", "bb_min", "sleep" (s), "deep", "light", "rem", "awake", "bed", "wake" (UTC), "score"}}, "last_sync"}`, written by `imports/garmin.py`.
 - `data/weather.json`: `{activity id: {"temp", "tmin", "tmax" (°C), "rain" (mm), "wind", "gust" (km/h), "dir" (degrees, where it came from), "code" (WMO)}}`, kept by Cairn.
 - `data/lastfm.json`: `{"user", "scrobbles": [[unix time, artist, track, album]], "last_sync"}`, kept by Cairn.
+- `data/books.json`: `{"books": [{id, title, author, rating, pages, year, finished, added, read_count}], "imported"}`, from your Goodreads export.
 - `data/saved_places.json`: `[{"name", "lat", "lon", "list", "note", "url", "address", "saved"}]`, written by `imports/saved_places.py`.
 - `data/rates.json`, `data/prep_alerts.json`, `data/tripdoc_rows.json`, `data/albums.json`, `data/albums.scan.json`: euro rates by currency and day; the missing things already sent to the alerts channel; the trip docs' trains, buses and ferries not on the map; album places and the last reading of the albums.
 - `data/drives.json`, `data/heights.json`, `data/coastline.geojson`: road routes of a trip's moves, heights of places, the coastline; kept by Cairn, safe to delete (looked up again).
@@ -903,6 +914,11 @@ Moving to MongoDB later only needs the data layer in `app.js` (the `flights` arr
 | `GET` | `/api/wellness?from=&to=` | Garmin's days: sleep, resting heart rate, steps, stress, Body Battery |
 | `GET` | `/api/music?from=&to=`, `/api/music/status` | the top artists and tracks of a period, with the most played track per day; whether Last.fm is set up and how many scrobbles are kept |
 | `POST` | `/api/music/sync` | fetch the new scrobbles now |
+| `GET` | `/api/books?from=&to=`, `/api/books/status` | the books finished in a period, newest first, each with where you were (`at`, `town`, `stay`); how many are kept |
+| `POST` | `/api/books/import` | a Goodreads library export (the CSV as the body); replaces the books kept |
+| `GET` | `/api/imports` | the imports in Settings: each source with how its last import went (`last`), whether one runs, when its data last changed |
+| `PUT` | `/api/imports/:source/:batch?name=` | one file of a data download (the body); `batch` 8–32 lowercase letters and digits |
+| `POST` | `/api/imports/:source/:batch` | read the batch's files with the source's import, in the background |
 | `GET` | `/api/backup?activities=0` | everything you imported or added, as a `.tar.gz` (see [Backup](#backup)); `activities=0`: without the sports activities and their tracks |
 | `GET` | `/api/backup/summary` | what a backup would hold now: `files` (`name`, `bytes`), `tracks` |
 | `POST` | `/api/backup/restore` | a backup (the `.tar.gz` as the body) back in place: `created`, `files`, `tracks`, `before` (the data before, in `data/backups/`), `restarting` |

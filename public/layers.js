@@ -127,6 +127,8 @@ const cityLayer = L.layerGroup();
 const homeLayer = L.layerGroup();  // your places: hometown, where you live, where you work
 const checkinLayer = L.layerGroup();  // check-ins, posts with a place, reviews and rides from data downloads
 let allCheckins = [];
+const bookLayer = L.layerGroup();  // the books you read, where you finished each (Goodreads)
+let allBooks = [];
 // Activities by type: a legend row each; the activity layer draws the types whose row is on
 const ACT_KINDS = { ride: '🚴 Cycling', run: '🏃 Running', walk: '🥾 Walks & hikes', sport: '🏅 Other sports' };
 const kindLayer = Object.fromEntries(Object.keys(ACT_KINDS).map(k => [k, L.layerGroup()]));
@@ -160,7 +162,7 @@ function extraLayers() {
     ...Object.fromEntries(Object.entries(ACT_KINDS).map(([k, label]) => ['act-' + k, [label, kindLayer[k], '--' + k]])),
     tile: ['🟩 Explored tiles', tileLayer, '--tile', 'area'], climb: ['⛰️ Climbs', climbLayer, '--climb', 'dot'],
     country: ['🌍 Countries', countryLayer, '--country', 'area'], city: ['🏙️ Cities', cityLayer, '--city', 'dot'],
-    checkin: ['📍 Check-ins', checkinLayer, '--checkin', 'dot'], home: ['🌱 Your places', homeLayer, '--home', 'dot']
+    checkin: ['📍 Check-ins', checkinLayer, '--checkin', 'dot'], book: ['📚 Books', bookLayer, '--book', 'dot'], home: ['🌱 Your places', homeLayer, '--home', 'dot']
   };
 }
 
@@ -176,6 +178,7 @@ function extraCounts() {
     city: topCities.length,
     home: Object.values(settings.home || {}).filter(Boolean).length,
     checkin: allCheckins.filter(c => inWin(new Date(c.t * 1000).toISOString())).length,
+    book: allBooks.filter(b => b.at && inWin(b.finished)).length,
     climb: allClimbs.length ? `${allClimbs.filter(climbDone).length} / ${allClimbs.length}` : 0
   };
 }
@@ -185,6 +188,7 @@ function drawExtras() {
   drawPhotos();
   drawTimeline();
   drawCheckins();
+  drawBooks();
   drawActivities();
   drawTiles();
   drawCountries();
@@ -447,6 +451,28 @@ function drawCheckins() {
       .bindPopup(`<b>${CHECKIN_ICON[c.source] || '📍'} ${escapeHTML(c.name || (c.kind === 'ride' ? 'Ride' : 'Here'))}</b><br><small>${escapeHTML(c.source)} ${escapeHTML(c.kind || '')} · ` +
         `${fmtDate(when.toISOString())} ${when.toISOString().slice(11, 16)} UTC</small>`)
       .addTo(checkinLayer);
+  });
+}
+
+// The books you read (Goodreads), where you were the day you finished each: a pin per place, the books there in its popup
+function drawBooks() {
+  bookLayer.clearLayers();
+  const byPlace = new Map();
+  allBooks.filter(b => b.at && inWin(b.finished)).forEach(b => {
+    const k = b.at.map(x => x.toFixed(3)).join(',');
+    if (!byPlace.has(k)) byPlace.set(k, []);
+    byPlace.get(k).push(b);
+  });
+  const stars = n => (n ? ' ' + '★'.repeat(n) : '');
+  byPlace.forEach(list => {
+    const icon = L.divIcon({ className: '', iconSize: [list.length > 1 ? 40 : 24, 24], iconAnchor: [list.length > 1 ? 20 : 12, 12],
+      html: `<div class="book-pin">📚${list.length > 1 ? `<small>${list.length}</small>` : ''}</div>` });
+    const where = list[0].town ? `${flagOf(list[0].town.country)}${escapeHTML(list[0].town.name)}` : '';
+    L.marker(list[0].at, { icon, keyboard: false })
+      .bindPopup(`<b>📚 Finished ${list.length > 1 ? `${list.length} books ` : ''}here</b>${where ? ` <small>${where}${list[0].stay ? ' · ' + escapeHTML(list[0].stay) : ''}</small>` : ''}` +
+        list.slice(0, 30).map(b => `<br>${escapeHTML(b.title)} <small>${escapeHTML(b.author || '')} · ${fmtDate(b.finished)}${stars(b.rating)}</small>`).join('') +
+        (list.length > 30 ? `<br><small>and ${list.length - 30} more</small>` : ''), { maxWidth: 360 })
+      .addTo(bookLayer);
   });
 }
 

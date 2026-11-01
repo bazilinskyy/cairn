@@ -28,7 +28,7 @@ before(async () => {
   fs.copyFileSync(path.join(ROOT, 'activities.js'), path.join(dir, 'activities.js'));
   fs.copyFileSync(path.join(ROOT, 'regions.js'), path.join(dir, 'regions.js'));
   fs.copyFileSync(path.join(ROOT, 'country-lists.json'), path.join(dir, 'country-lists.json'));
-  ['climbs.js', 'ascents.js', 'efforts.js', 'climbs.json', 'photos.js', 'climb_records.json', 'trips.js', 'weather.js', 'stats.js', 'lastfm.js', 'suggestions.js', 'backup.js', 'albums.js', 'things.js', 'todotrips.js', 'prep.js', 'spending.js', 'review.js', 'bases.js'].forEach(f => fs.copyFileSync(path.join(ROOT, f), path.join(dir, f)));
+  ['climbs.js', 'ascents.js', 'efforts.js', 'climbs.json', 'photos.js', 'climb_records.json', 'trips.js', 'weather.js', 'stats.js', 'lastfm.js', 'suggestions.js', 'backup.js', 'albums.js', 'things.js', 'todotrips.js', 'prep.js', 'spending.js', 'review.js', 'bases.js', 'books.js', 'uploads.js'].forEach(f => fs.copyFileSync(path.join(ROOT, f), path.join(dir, f)));
   fs.copyFileSync(path.join(ROOT, 'default.config'), path.join(dir, 'default.config'));
   fs.cpSync(path.join(ROOT, 'public'), path.join(dir, 'public'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'data'));
@@ -217,6 +217,25 @@ test('a side trip from a base stay: its nights come off the base, and the pair i
   const h = await (await call('GET', '/api/health')).json();
   assert.ok(!h.twice.some(t => t.stays.some(s => s.id === base.id)));
   for (const s of [base, side]) await call('DELETE', `/api/stays/${s.id}`);
+});
+
+test('a book from the Goodreads export is where you slept the night you finished it; a book without the day is nowhere', async () => {
+  const stay = await (await call('POST', '/api/stays', { code: 'book-stay', what: 'stay', place: 'Chernivtsi', start: '2019-03-01', end: '2019-03-04', lat: 48.29, lon: 25.94 })).json();
+  const csv = 'Book Id,Title,Author,My Rating,Date Read,Date Added,Exclusive Shelf\n7,"Read, On The Road",Ann Example,4,2019/03/02,2019/01/01,read\n8,Undated,Bo Sample,0,,2019/01/01,read\n';
+  const r = await fetch(`${BASE}/api/books/import`, { method: 'POST', headers: { 'Content-Type': 'text/csv' }, body: csv });
+  assert.deepStrictEqual(await r.json(), { books: 2, dated: 1, imported: (await (await call('GET', '/api/books/status')).json()).imported });
+  const [book] = await (await call('GET', '/api/books')).json();
+  assert.deepStrictEqual([book.title, book.finished, book.at, book.town?.name], ['Read, On The Road', '2019-03-02', [48.29, 25.94], 'Chernivtsi']);
+  assert.strictEqual((await (await call('GET', '/api/city/710719')).json()).books.length, 1);
+  assert.strictEqual((await fetch(`${BASE}/api/books/import`, { method: 'POST', headers: { 'Content-Type': 'text/csv' }, body: 'a,b\n1,2\n' })).status, 400);
+  // the same export uploaded from Settings' imports
+  const put = await fetch(`${BASE}/api/imports/goodreads/testbatch1?name=export.csv`, { method: 'PUT', headers: { 'Content-Type': 'application/octet-stream' }, body: csv });
+  assert.deepStrictEqual(await put.json(), { name: 'export.csv', bytes: Buffer.byteLength(csv) });
+  assert.deepStrictEqual(await (await call('POST', '/api/imports/goodreads/testbatch1')).json(), { started: true });
+  let row;
+  for (let i = 0; i < 50 && !(row = (await (await call('GET', '/api/imports')).json()).find(s => s.key === 'goodreads')).last; i++) await new Promise(r => setTimeout(r, 100));
+  assert.deepStrictEqual([row.last.ok, row.last.message, row.last.files], [true, '2 books read, 1 with the day finished', ['export.csv']]);
+  await call('DELETE', `/api/stays/${stay.id}`);
 });
 
 test('two stays for the same night: a host comes first, marked as the one kept before a booking', async () => {

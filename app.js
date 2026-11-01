@@ -1259,6 +1259,7 @@ app.get('/api/city/:id', (req, res) => {
     activities: activitiesHere.sort(sortBy('date')),
     photos: [...photoDays].map(([day, n]) => ({ day, count: Math.max(1, Math.round(n)) })).sort(sortBy('day')), photo_ids: photoIds,
     timeline: timelineHere.sort(sortBy('start')),
+    books: booksRead(from, to).filter(b => b.town?.id === town.id),
     music: music.top({ days: new Set(days) })
   });
 });
@@ -1300,6 +1301,80 @@ const music = require('./lastfm').create({
 app.get('/api/music/status', (_req, res) => res.json(music.status()));
 app.post('/api/music/sync', (_req, res) => { music.sync(); res.json(music.status()); });
 app.get('/api/music', (req, res) => res.json(music.top({ from: req.query.from || '', to: req.query.to || '' })));
+
+// --- Books (books.js): your Goodreads library export, each book where you were the day you finished it ---
+
+const bookshelf = require('./books').create({ file: path.join(DATA_DIR, 'books.json'), log: m => console.log(m) });
+// Where you were on a day: the stay you slept in that night (the shortest, so a side trip and not the room kept at
+// its base), else the town you were seen in most that day (photos, rides, Timeline, ...); null without either
+function whereOn(day, byDay) {
+  const bed = stays.filter(s => s.what !== 'car' && s.lat != null && s.start <= day && (s.end || s.start) > day)
+    .sort((a, b) => Date.parse(a.end) - Date.parse(a.start) - (Date.parse(b.end) - Date.parse(b.start)))[0];
+  if (bed) return { at: [bed.lat, bed.lon], town: townOfAt([bed.lat, bed.lon]), stay: bed.hotel || bed.place || '' };
+  const seen = new Map();
+  for (const p of byDay.get(day) || []) {
+    const t = townOfAt(p.at, p.city);
+    if (t) seen.set(t, [(seen.get(t)?.[0] || 0) + 1, seen.get(t)?.[1] || p.at]);
+  }
+  const best = [...seen].sort((a, b) => b[1][0] - a[1][0])[0];
+  return best ? { at: best[1][1], town: best[0] } : null;
+}
+// The books read (from one day to another, both optional), each with where you finished it
+function booksRead(from = '', to = '') {
+  const list = bookshelf.list().filter(b => b.finished && (!from || b.finished >= from) && (!to || b.finished <= to));
+  const wanted = new Set(list.map(b => b.finished)), byDay = new Map();
+  if (list.length) placesAndDays(from, to).forEach(p => { if (wanted.has(p.day)) { if (!byDay.has(p.day)) byDay.set(p.day, []); byDay.get(p.day).push(p); } });
+  return list.map(b => {
+    const w = whereOn(b.finished, byDay);
+    return { ...b, at: w?.at || null, stay: w?.stay || '', town: w?.town ? { id: w.town.id, name: w.town.name, country: w.town.cc } : null };
+  }).sort((a, b) => b.finished.localeCompare(a.finished));
+}
+app.get('/api/books', (req, res) => res.json(booksRead(req.query.from || '', req.query.to || '')));
+app.get('/api/books/status', (_req, res) => res.json(bookshelf.status()));
+app.post('/api/books/import', express.text({ type: () => true, limit: '20mb' }), (req, res) => {
+  try {
+    res.json(bookshelf.importExport(String(req.body || '')));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// --- Imports from Settings (uploads.js): a data download's files uploaded, then read by its import script ---
+
+const { script } = require('./uploads');
+const py = (name, args, withs) => script(config.uv || path.join(require('os').homedir(), '.local/bin/uv'), path.join(__dirname, 'imports', name), args, withs);
+const outTo = name => ['--out', path.join(DATA_DIR, name)];
+const imports = require('./uploads').create({
+  dir: path.join(DATA_DIR, 'uploads'), statusFile: path.join(DATA_DIR, 'uploads.json'), log: m => console.log(m),
+  sources: {
+    garmin: { file: path.join(DATA_DIR, 'garmin.json'), label: '⌚ Garmin', accept: '.zip', what: 'Garmin\'s data export (garmin.com → Account → Data Management → Export your data): the zip, as it came',
+      note: 'Adds to the activities kept; also sleep and resting heart rate. Takes a while for years of activities.',
+      run: files => py('garmin.py', ['export', ...files, ...outTo('garmin.json')], ['fitdecode']) },
+    timeline: { file: path.join(DATA_DIR, 'timeline.json'), label: '🧭 Google Timeline', accept: '.json', what: 'Timeline.json from the phone (Settings → Location → Timeline → Export), or Takeout\'s Location History files',
+      note: 'Replaces the Timeline kept: give all of it at once.', run: files => py('timeline.py', [...files, ...outTo('timeline.json')]) },
+    saved: { file: path.join(DATA_DIR, 'saved_places.json'), label: '⭐ Google Maps saved places', accept: '.zip,.json,.csv', what: 'Google Takeout with "Maps (your places)" and "Saved": the zip(s)',
+      note: 'Replaces the saved places kept.', run: files => py('saved_places.py', [...files, ...outTo('saved_places.json')]) },
+    checkins: { file: path.join(DATA_DIR, 'checkins.json'), label: '📍 Check-ins, posts and rides', accept: '.zip,.json,.csv', what: 'Data downloads of Facebook, Instagram, VK, Google Maps reviews (Takeout), Uber or Bolt: the zips or CSVs, mixed',
+      note: 'Replaces only the services in the files given.', run: files => py('checkins.py', [...files, ...outTo('checkins.json')]) },
+    calendar: { file: path.join(DATA_DIR, 'calendar.json'), label: '📅 Calendars', accept: '.ics,.zip,.json', what: 'Google Takeout\'s Calendar, or .ics files from Outlook or Apple Calendar',
+      note: 'Replaces the events kept: give all your calendars at once.', run: files => py('calendar_events.py', [...files, ...outTo('calendar.json')]) },
+    bank: { file: path.join(DATA_DIR, 'transactions.json'), label: '💳 Bank and card payments', accept: '.csv', what: 'CSV statements: Revolut, N26, ING, ABN AMRO, Rabobank, bunq, or any with a date, amount and description',
+      note: 'Adds to the payments kept, each once.', run: files => py('bank.py', [...files, ...outTo('transactions.json')]) },
+    ov: { label: '🚆 OV-chipkaart', accept: '.csv', what: 'ov-chipkaart.nl → Mijn OV-chip → card → Reishistorie, as CSV (18 months back at most, per card)',
+      note: 'Updates the routes\' counts; adds nothing twice.', run: files => py('ovchipkaart.py', [...files, '--cairn', `http://127.0.0.1:${config.port}`]) },
+    goodreads: { file: path.join(DATA_DIR, 'books.json'), label: '📚 Goodreads', accept: '.csv', what: 'My Books → Import and export → Export library: goodreads_library_export.csv',
+      note: 'Replaces the books kept; each is placed where you were the day you finished it.',
+      run: async files => { const s = bookshelf.importExport(fs.readFileSync(files[files.length - 1], 'utf8')); return `${s.books} books read, ${s.dated} with the day finished`; } }
+  }
+});
+app.get('/api/imports', (_req, res) => res.json(imports.list()));
+app.put('/api/imports/:key/:batch', (req, res) => {  // ?name=: one file of the batch, as the body
+  imports.receive(req.params.key, req.params.batch, req.query.name, req).then(r => res.json(r), e => res.status(e.status || 500).json({ error: e.message }));
+});
+app.post('/api/imports/:key/:batch', (req, res) => {  // the batch uploaded: read it
+  const r = imports.start(req.params.key, req.params.batch);
+  res.status(r.status || 200).json(r);
+});
 
 // --- Trips (trips.js): the runs of days away, each with its story and its moves ---
 
@@ -1382,7 +1457,7 @@ const backups = require('./backup').create({
     ['flights.json', FLIGHTS_FILE], ['ground.json', GROUND_FILE], ['stays.json', STAYS_FILE], ['stays.removed.json', REMOVED_FILE],
     ['garmin.json', GARMIN_FILE], ['strava.json', path.join(__dirname, config.strava_file)], ['wellness.json', WELLNESS_FILE],
     ['photos.json', PHOTOS_FILE], ['photo_points.json', path.join(DATA_DIR, 'photo_points.json')], ['timeline.json', TIMELINE_FILE],
-    ['weather.json', path.join(DATA_DIR, 'weather.json')], ['lastfm.json', path.join(DATA_DIR, 'lastfm.json')],
+    ['weather.json', path.join(DATA_DIR, 'weather.json')], ['lastfm.json', path.join(DATA_DIR, 'lastfm.json')], ['books.json', path.join(DATA_DIR, 'books.json')],
     ['climb_ascents.json', path.join(DATA_DIR, 'climb_ascents.json')], ['drives.json', path.join(DATA_DIR, 'drives.json')],
     ['suggestions.dismissed.json', path.join(DATA_DIR, 'suggestions.dismissed.json')], ['saved_places.json', path.join(DATA_DIR, 'saved_places.json')],
     ['tripdoc_rows.json', path.join(DATA_DIR, 'tripdoc_rows.json')], ['albums.json', path.join(DATA_DIR, 'albums.json')],
@@ -1719,7 +1794,8 @@ app.post('/api/suggestions/dismiss', (req, res) => {
 app.get('/api/curiosities', (_req, res) => res.json(curiosities.get() || { pending: true }));
 app.get('/api/trips/:id', (req, res) => {
   const t = tripStore.get(req.params.id);
-  return t ? res.json({ ...t, music: music.top({ from: t.start, to: t.end }), spending: spending.forTrip(t.start, t.end) }) : res.status(404).json({ error: 'no such trip' });
+  return t ? res.json({ ...t, music: music.top({ from: t.start, to: t.end }), spending: spending.forTrip(t.start, t.end), books: booksRead(t.start, t.end) })
+    : res.status(404).json({ error: 'no such trip' });
 });
 
 app.get('/api/cities', (req, res) => {

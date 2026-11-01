@@ -26,7 +26,8 @@ const dayOf = t => {
   return d;
 };
 const addDays = (d, n) => new Date(Date.parse(d) + n * 864e5).toISOString().slice(0, 10);
-// local clock time ("2026-10-24 15:53") at a longitude as unix seconds: the zone guessed from the longitude
+// local clock time ("2026-10-24 15:53") at a longitude as unix seconds: the zone guessed from the longitude (without
+// the town list; with it, cities.localUnix reads the zone of the town nearby)
 const localToUnix = (s, lon) => {
   const m = /^(\d{4}-\d\d-\d\d)[ T]?(\d\d:\d\d)?/.exec(s || '');
   return m ? Date.parse(`${m[1]}T${m[2] || '12:00'}:00Z`) / 1000 - Math.round((lon || 0) / 15) * 3600 : null;
@@ -119,6 +120,8 @@ function create({ towns, cities, days, flights, airports, groundTrips, stays, ac
     const trip = list().find(t => t.id === id);
     if (!trip) return null;
     const grid = towns(), ap = airports();
+    // a local clock time in the zone of the town nearby (summer time included); by the longitude without the town list
+    const unix = (when, lat, lon) => (grid && lat != null && cities.localUnix(grid, when, lat, lon)) || localToUnix(when, lon);
     const inTrip = d => d && d.slice(0, 10) >= trip.start && d.slice(0, 10) <= trip.end;
     const fl = flights().filter(f => inTrip(f.date) && ap[f.from] && ap[f.to]).sort((a, b) => a.date.localeCompare(b.date));
     const gt = groundTrips().filter(t => inTrip(t.date)).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
@@ -141,12 +144,12 @@ function create({ towns, cities, days, flights, airports, groundTrips, stays, ac
     }
     for (const t of gt) {
       if (t.from_lat == null || t.to_lat == null) continue;
-      const t0 = localToUnix(t.date, t.from_lon), t1 = t.arrival ? localToUnix(t.arrival, t.to_lon) : t0 + Math.max(1800, (t.distance || 50) / 60 * 3600);
+      const t0 = unix(t.date, t.from_lat, t.from_lon), t1 = t.arrival ? unix(t.arrival, t.to_lat, t.to_lon) : t0 + Math.max(1800, (t.distance || 50) / 60 * 3600);
       ev.push({ t: t0, at: [t.from_lat, t.from_lon], what: 'ground', cover: 'g' + t.id });
       ev.push({ t: t1, at: [t.to_lat, t.to_lon], what: 'ground', cover: 'g' + t.id });
     }
     for (const f of fl) {
-      const a = ap[f.from], b = ap[f.to], t0 = localToUnix(f.date, a.lon);
+      const a = ap[f.from], b = ap[f.to], t0 = unix(f.date, a.lat, a.lon);
       const [h, m] = (f.duration || '').split(':').map(Number);
       ev.push({ t: t0, at: [a.lat, a.lon], what: 'flight', cover: 'f' + f.id });
       ev.push({ t: t0 + ((h || 0) * 60 + (m || 0) || 120) * 60, at: [b.lat, b.lon], what: 'flight', cover: 'f' + f.id });
@@ -157,18 +160,18 @@ function create({ towns, cities, days, flights, airports, groundTrips, stays, ac
     const elsewhere = (s, day, before) => beds.some(o => o !== s && nightsOf(o) < nightsOf(s) && ground.km([o.lat, o.lon], [s.lat, s.lon]) >= ROAD_KM
       && (before ? o.start < day && (o.end || o.start) >= day : o.start <= day && (o.end || o.start) > day));
     for (const s of beds) {
-      if (!elsewhere(s, s.start, false)) ev.push({ t: localToUnix(s.start + ' 18:00', s.lon), at: [s.lat, s.lon], what: 'stay', in: s.start });
-      if (s.end && !elsewhere(s, s.end, true)) ev.push({ t: localToUnix(s.end + ' 10:00', s.lon), at: [s.lat, s.lon], what: 'stay', out: s.end });
+      if (!elsewhere(s, s.start, false)) ev.push({ t: unix(s.start + ' 18:00', s.lat, s.lon), at: [s.lat, s.lon], what: 'stay', in: s.start });
+      if (s.end && !elsewhere(s, s.end, true)) ev.push({ t: unix(s.end + ' 10:00', s.lat, s.lon), at: [s.lat, s.lon], what: 'stay', out: s.end });
     }
     // a check-out (10:00) after that morning's photos or rides elsewhere was earlier, before them; a check-in (18:00)
     // before that evening's elsewhere was later, after them: else the way goes back to the stay and out again
     const seen = ev.filter(e => e.what !== 'stay'), far = (e, x) => ground.km(e.at, x.at) >= ROAD_KM;
     for (const x of ev) {
       if (x.out) {
-        const from = localToUnix(x.out + ' 00:00', x.at[1]), before = seen.filter(e => e.t >= from && e.t < x.t && far(e, x));
+        const from = unix(x.out + ' 00:00', ...x.at), before = seen.filter(e => e.t >= from && e.t < x.t && far(e, x));
         if (before.length) x.t = Math.min(...before.map(e => e.t)) - 60;
       } else if (x.in) {
-        const to = localToUnix(x.in + ' 23:59', x.at[1]), after = seen.filter(e => e.t > x.t && e.t <= to && far(e, x));
+        const to = unix(x.in + ' 23:59', ...x.at), after = seen.filter(e => e.t > x.t && e.t <= to && far(e, x));
         if (after.length) x.t = Math.max(...after.map(e => e.t)) + 60;
       }
     }
@@ -176,7 +179,7 @@ function create({ towns, cities, days, flights, airports, groundTrips, stays, ac
     // (the drive starts at the airport, not at the first photo on the way)
     for (const c of st) {
       if (c.what !== 'car' || c.lat == null || !c.start) continue;
-      const from = localToUnix(c.start + ' 00:00', c.lon), to = localToUnix((c.end || c.start) + ' 23:59', c.lon);
+      const from = unix(c.start + ' 00:00', c.lat, c.lon), to = unix((c.end || c.start) + ' 23:59', c.lat, c.lon);
       const first = seen.filter(e => e.t >= from && e.t <= to && ground.km(e.at, [c.lat, c.lon]) > PICKUP_KM).sort((a, b) => a.t - b.t)[0];
       // only a place you were near that day or the one before (a car placed in a whole country is not)
       const there = ev.some(e => e.t >= from - 86400 && e.t < (first?.t ?? to) && ground.km(e.at, [c.lat, c.lon]) <= PICKUP_KM);

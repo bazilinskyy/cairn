@@ -61,6 +61,7 @@
       --tile:     #66bb6a;
       --city:     #eceff1;
       --home:     #ffb300;
+      --book:     #4db6ac;
       --climb:    #c0ca33;
     }
 
@@ -70,7 +71,7 @@
       --surface: #111111; --surface2: #222222; --text: #ffffff; --text2: #dddddd; --accent: #00e5ff; --accent2: #d500f9;
       --train: #ffab00; --commute: #d7ccc8; --bus: #76ff03; --ferry: #ea80fc; --hitch: #ff9e80; --checkin: #ffe57f; --stay: #ff4f93; --stay2: #b388ff; --stay3: #ffa040; --car: #ffea00; --drive: #40c4ff; --photo: #18ffff;
       --timeline: #ffffff; --country: #b388ff; --ride: #ff6e40; --run: #b388ff; --walk: #ff80ab; --sport: #ffd740;
-      --tile: #69f0ae; --city: #ffffff; --home: #ffc400; --climb: #eeff41;
+      --tile: #69f0ae; --city: #ffffff; --home: #ffc400; --climb: #eeff41; --book: #64ffda;
     }
     .leaflet-pane[data-theme="sat"] > :is(svg, canvas) { filter: drop-shadow(0 0 1.2px rgba(0,0,0,0.95)); }
 
@@ -106,6 +107,7 @@
       --tile:      #2e7d32;
       --city:      #37474f;
       --home:      #e65100;
+      --book:      #00796b;
       --climb:     #827717;
     }
 
@@ -172,6 +174,13 @@
     /* your places on the map, all one size: a town that is two or three of them is a pill with each */
     .home-pin { height: 28px; border-radius: 14px; background: var(--surface); border: 2px solid var(--home); box-sizing: border-box;
       display: flex; align-items: center; justify-content: center; font-size: 15px; box-shadow: 0 1px 4px rgba(0,0,0,0.45); }
+    .book-pin { height: 24px; min-width: 24px; padding: 0 4px; border-radius: 12px; background: var(--surface); border: 2px solid var(--book); box-sizing: border-box;
+      display: flex; align-items: center; justify-content: center; gap: 2px; font-size: 13px; line-height: 1; }
+    .import-row { display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; padding: 8px 0; border-top: 1px solid var(--border); }
+    .import-row small { display: block; color: var(--text2); font-size: 12px; margin-top: 2px; }
+    .import-row .import-last { color: var(--text); }
+    .import-row .btn { flex-shrink: 0; }
+    .book-pin small { font-size: 10px; font-weight: 700; color: var(--text); }
     .leaflet-tooltip.home-label { background: var(--surface); color: var(--text); border: 1px solid var(--home); font-weight: 600; font-size: 11px; padding: 1px 6px; }
     .modal .settings-group input { accent-color: var(--accent); width: auto; margin: 0; padding: 0; flex: none; }
 
@@ -963,6 +972,11 @@
       <label><input type="radio" name="set-countries" value="tcc"> Travelers' Century Club (330): islands, parts of countries and claims count apart</label>
     </fieldset>
     <fieldset class="settings-group">
+      <legend>Imports</legend>
+      <p class="sp-note" style="margin:0 0 8px">The data downloads of your services, as they came: Cairn reads them here and keeps what it needs (the files themselves are not kept). Photos come from the Photos library, Garmin's new activities every night, Strava, TripIt and Last.fm on their own.</p>
+      <div id="imports-list"></div>
+    </fieldset>
+    <fieldset class="settings-group">
       <legend>Backup</legend>
       <p class="sp-note" style="margin:0 0 8px">Everything you imported or added (flights, trains, stays, sports activities and their tracks, sleep, photo places, Timeline, weather, music) as one file. Not the photos themselves, nor keys and sign-ins. <span id="backup-summary"></span></p>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
@@ -1124,6 +1138,7 @@ function openSettings() {
   document.querySelector(`input[name="set-countries"][value="${prefs.countries}"]`).checked = true;
   document.querySelector(`input[name="set-photos"][value="${prefs.photos || 'clusters'}"]`).checked = true;
   fillPlaces();
+  renderImports();
   document.getElementById('settings-modal').classList.add('open');
   fetch('/api/backup/summary').then(r => r.json()).then(b => {
     const mb = b.files.reduce((n, f) => n + f.bytes, 0) / 1e6;
@@ -1132,6 +1147,36 @@ function openSettings() {
 }
 document.getElementById('backup-activities').addEventListener('change', e => {
   document.getElementById('backup-download').href = e.target.checked ? '/api/backup' : '/api/backup?activities=0';
+});
+// Imports: a row per source with its last import; its files are uploaded one by one, then read on the server in the
+// background (a Garmin export takes minutes), the row showing how far it got
+let importsTimer = null;
+function renderImports() {
+  clearTimeout(importsTimer);
+  fetch('/api/imports').then(r => r.json()).then(list => {
+    const last = s => s.running ? '⏳ Importing…' : !s.last ? (s.changed ? `Data kept, last changed ${fmtDate(s.changed)}.` : 'Not imported yet.')
+      : `${s.last.ok ? '✓' : '✗'} ${fmtDate(s.last.at)}: ${escapeHTML(s.last.message || '')} <small>(${s.last.files.map(escapeHTML).join(', ')})</small>`;
+    document.getElementById('imports-list').innerHTML = list.map(s => `<div class="import-row">
+        <div><b>${escapeHTML(s.label)}</b><small>${escapeHTML(s.what)}. ${escapeHTML(s.note)}</small><small class="import-last">${last(s)}</small></div>
+        <label class="btn btn-ghost" style="cursor:pointer">${s.running ? 'Importing…' : 'Import…'}<input type="file" data-import="${s.key}" accept="${s.accept}" multiple hidden ${s.running ? 'disabled' : ''}></label>
+      </div>`).join('');
+    if (list.some(s => s.running)) importsTimer = setTimeout(renderImports, 3000);
+  }).catch(() => {});
+}
+document.getElementById('imports-list').addEventListener('change', async e => {
+  const key = e.target.dataset.import, files = [...e.target.files];
+  e.target.value = '';
+  if (!key || !files.length) return;
+  const batch = Math.random().toString(36).slice(2, 12).padEnd(10, '0');
+  for (const [i, f] of files.entries()) {
+    toast(`Uploading ${f.name}${files.length > 1 ? ` (${i + 1} of ${files.length})` : ''}…`);
+    const r = await fetch(`/api/imports/${key}/${batch}?name=${encodeURIComponent(f.name)}`, { method: 'PUT', headers: { 'Content-Type': 'application/octet-stream' }, body: f });
+    if (!r.ok) return toast(`Not uploaded: ${(await r.json().catch(() => ({}))).error || r.status}`, 'error');
+  }
+  const r = await fetch(`/api/imports/${key}/${batch}`, { method: 'POST' });
+  if (!r.ok) return toast(`Not imported: ${(await r.json().catch(() => ({}))).error || r.status}`, 'error');
+  toast('Importing… the row below says when it is done; reload the page then to see it.');
+  renderImports();
 });
 // A backup back in place: the data as it is now is kept first (data/backups/), then Cairn starts again with it
 document.getElementById('backup-file').addEventListener('change', async e => {
@@ -1968,6 +2013,7 @@ async function init() {
     optional('/api/timeline', { visits: [], paths: [] }), optional('/api/settings', { home_airports: [] }),
     optional('/api/activities/status', {}), optional('/api/checkins', [])
   ]);
+  allBooks = await optional('/api/books', []);
   computeJourneys();
 
   initMap();

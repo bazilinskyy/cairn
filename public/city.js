@@ -115,6 +115,7 @@ function renderCityReport() {
       `<td>${v.n.toLocaleString()}</td><td>${v.days}</td></tr>`)), 'From the photo places import; counts per day are spread over a place’s days.');
   }
   if (d.music?.plays) html += musicSection(d.music, 'Music played here', 'What you played on Last.fm on your days here');
+  if (d.books?.length) html += booksSection(d.books, 'Books finished here', 'From your Goodreads export: where you slept that night, or the town you were in most that day');
   if (d.timeline.length) {
     html += section('Google Timeline places', table(['When', 'Place'], d.timeline.slice(0, 200).map(v =>
       `<tr><th>${range(v.start, v.end)}</th><td>${escapeHTML(v.name || '')}</td></tr>`)));

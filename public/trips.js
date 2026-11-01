@@ -221,6 +221,7 @@ function renderTrip() {
       `<td>${(Math.round(dist(a.distance || 0) * 10) / 10).toLocaleString()}</td><td>${a.elevation ? fmtHeight(a.elevation) : ''}</td></tr>`)));
   }
   if (d.music?.plays) html += musicSection(d.music, 'Soundtrack', 'what you played on Last.fm from the first day to the last');
+  if (d.books?.length) html += booksSection(d.books, 'Books finished', 'From your Goodreads export: where you slept that night, or the town you were in most that day');
   if (climbed.length) {
     html += section('Famous climbs', `<p>${climbed.map(({ c, rides }) => `⛰️ <a href="#" class="sp-link" onclick="event.preventDefault(); openClimb('${c.id}')">${escapeHTML(c.name)}</a>` +
       ` <small>${rides.map(r => fmtDate(r.date)).join(', ')}</small>`).join('<br>')}</p>`);
@@ -312,6 +313,14 @@ async function printJournal() {
 const refitTripMap = () => { if (tripMap && document.getElementById('tab-trip').classList.contains('active')) { tripMap.invalidateSize(); if (tripMap.fitTo) tripMap.fitBounds(tripMap.fitTo, { padding: [24, 24], maxZoom: 12 }); } };
 window.addEventListener('beforeprint', refitTripMap);
 window.addEventListener('afterprint', refitTripMap);
+
+// The books you finished (Goodreads), for a trip's or a town's page: when, the book, where
+function booksSection(books, title, what) {
+  return `<div class="chart-section"><h3>${title} · ${books.length}</h3><div class="sp-scroll"><table class="sp-table"><thead><tr><th>Finished</th><th>Book</th><th>Where</th></tr></thead><tbody>` +
+    books.map(b => `<tr><th>${fmtDate(b.finished)}</th><td><b>${escapeHTML(b.title)}</b><small>${escapeHTML(b.author || '')}${b.rating ? ' · ' + '★'.repeat(b.rating) : ''}</small></td>` +
+      `<td>${b.town ? `${flagOf(b.town.country)}${escapeHTML(b.town.name)}` : ''}${b.stay ? `<small>${escapeHTML(b.stay)}</small>` : ''}</td></tr>`).join('') +
+    `</tbody></table></div><p class="sp-note">${what}</p></div>`;
+}
 
 // Top artists and tracks (Last.fm), for a trip's or a town's page
 function musicSection(m, title, what) {

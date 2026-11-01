@@ -17,10 +17,10 @@ fs.writeFileSync(path.join(dir, 'towns.txt'), [town(1, 'Eindhoven', 'NL', 51.44,
 const grid = cities.load(path.join(dir, 'towns.txt'));
 const airports = { EIN: { lat: 51.45, lon: 5.39, city: 'Eindhoven' }, LIS: { lat: 38.77, lon: -9.13, city: 'Lisbon' } };
 
-function store({ flights = [], stays = [], points = [] }) {
+function store({ flights = [], stays = [], points = [], photos = [], towns = grid }) {
   return trips.create({
-    towns: () => grid, cities, days: () => points, flights: () => flights, airports: () => airports, groundTrips: () => [],
-    stays: () => stays, activities: () => [], photos: () => [], homeAirports: () => ['EIN'], file: path.join(dir, 'drives.json'), log: () => {}
+    towns: () => towns, cities, days: () => points, flights: () => flights, airports: () => airports, groundTrips: () => [],
+    stays: () => stays, activities: () => [], photos: () => photos, homeAirports: () => ['EIN'], file: path.join(dir, 'drives.json'), log: () => {}
   });
 }
 
@@ -42,6 +42,17 @@ test('a day over the border is no trip; a night in a stay there is', () => {
 test('local clock times are read with a zone guessed from the longitude', () => {
   assert.strictEqual(trips.localToUnix('2026-11-16 10:00', 0), Date.parse('2026-11-16T10:00:00Z') / 1000);
   assert.strictEqual(trips.localToUnix('2026-11-16 10:00', 120), Date.parse('2026-11-16T02:00:00Z') / 1000);
+});
+
+test('the times of a flight are read in the zone of its airport, summer time included: a photo from the plane is on the way', () => {
+  const zoned = (id, name, cc, lat, lon, tz) => [id, name, name, '', lat, lon, 'P', 'PPL', cc, '', '', '', '', '', 200000, '', '', tz].join('\t');
+  const file = path.join(dir, 'zoned.txt');
+  fs.writeFileSync(file, [zoned(1, 'Eindhoven', 'NL', 51.44, 5.48, 'Europe/Amsterdam'), zoned(2, 'Lisbon', 'PT', 38.72, -9.14, 'Europe/Lisbon')].join('\n'));
+  // off at 10:00 in Eindhoven (08:00 UTC; 10:00 UTC by its longitude), a photo high over France at 08:45 UTC
+  const s = store({ towns: cities.load(file), photos: [[1, Date.parse('2026-07-01T08:45:00Z') / 1000, 44.8, -0.6]],
+    flights: [{ id: 1, date: '2026-07-01 10:00', from: 'EIN', to: 'LIS' }, { id: 2, date: '2026-07-05 18:00', from: 'LIS', to: 'EIN' }] });
+  const moves = s.get(s.list()[0].id).moves;
+  assert.ok(!moves.some(m => [m.from, m.to].some(at => Math.abs(at[0] - 44.8) < 0.01)), 'no way to the photo and on');
 });
 
 test('a room kept in town while sleeping elsewhere: its check-out that day is not where you were', () => {
