@@ -42,9 +42,9 @@ Two parts:
 
 | | |
 |---|---|
-| 🗺️ **One map of everything**<br>Flights on great circles, trains and buses along real tracks, car journeys along the likeliest roads, stays, rental cars, photos (clusters or a heatmap), Timeline, activities and explored tiles, climbs, towns and countries (ISO, sovereign, or the Travelers' Century Club). In 2D, or 3D on a globe with real terrain. | 🧳 **Trips, found by themselves**<br>Runs of days away, from all your data. A page per trip with its map (photo-to-photo moves along the roads, drives on rental-car days) and a day-by-day story: flights, trains, rides with their weather, photos, where and how you slept, the song of the day. |
+| 🗺️ **One map of everything**<br>Flights on great circles, trains and buses along real tracks, car journeys along the likeliest roads, stays, rental cars, photos (clusters or a heatmap), Timeline, activities and explored tiles, climbs, towns and countries (ISO, sovereign, or the Travelers' Century Club). In 2D, or 3D on a globe with real terrain. | 🧳 **Trips, found by themselves**<br>Runs of days away, from all your data. A page per trip with its map (photo-to-photo moves along the roads, drives while you had a car) and a day-by-day story: flights, trains, rides with their weather, photos, where and how you slept, the song of the day. |
 | 🏙️ **Towns**<br>Every town you have been to, with a page: its map, each visit, the stays, flights, activities, photos and the music you played there. | ⛰️ **Climbs**<br>1,082 famous cycling climbs: which you rode and which way up, your times against your FTP of that day and the record, a coloured profile, the weather and the photos you took on the way up. |
-| 🚴 **Sports and body**<br>Garmin or Strava: Eddington numbers, records, best efforts, explored tiles; sleep and resting heart rate per day; the weather on every ride. | 📊 **Stats and curiosities**<br>Per country and per year (a year in review), days by the sea and in the mountains, extremes, capitals, how far by each means, spending on stays. |
+| 🚴 **Sports and body**<br>Garmin or Strava: Eddington numbers, records, best efforts, explored tiles; sleep and resting heart rate per day; the weather on every ride. | 📊 **Stats and curiosities**<br>Per country and per year (a year in review), days by the sea and in the mountains, extremes, capitals, how far by each means, spending on stays. All of it, trip by trip, as a PDF to keep or print. |
 | 📅 **Planning**<br>Coming trips: what is booked, what is missing (a check-in, a bed, the way there), the forecast, climbs and saved places nearby; a morning alert. A wish list of places, climbs and countries. | 🧹 **Your data, kept right**<br>Add what nothing knows (even with only the year), suggestions from photos, albums and to-dos, one-click fixes for duplicates and gaps, backups in one file. |
 
 <details open>
@@ -162,7 +162,7 @@ flowchart TB
   away -->|"days in a row"| run["A run of days away"]
   run -->|"a night in a stay, a flight or a train,<br>or three days or more"| trip["🧳 A trip<br>named after its countries"]
   trip --> story["Day by day, in time order:<br>flights, trains, activities (with the weather),<br>photos, where you slept, sleep, music"]
-  trip --> moves["Moves between photos, activities and stays<br>with nothing of yours connecting them:<br>10 km or more along the roads (OSRM),<br>a drive on rental-car days"]
+  trip --> moves["Moves between photos, activities and stays<br>with nothing of yours connecting them:<br>10 km or more along the roads (OSRM),<br>a drive while you had a car"]
   pd --> curio["📊 Curiosities<br>by the sea (Natural Earth coast),<br>heights (AWS Terrain Tiles),<br>extremes, capitals, distances"]
 ```
 
@@ -217,7 +217,7 @@ No account is needed for any of these; each is asked at most about once a second
 - [Project layout](#repository-layout)
 - [Setup](#setup) · [Running Cairn](#running-cairn) · [Running on an always-on Mac](#running-on-an-always-on-mac)
 - [tripmail](#tripmail)
-- [Using Cairn](#using-cairn): [the map](#the-map), [sports](#sports-activities), [coming trips](#coming-trips), [spending](#spending), [year in review](#year-in-review), [wish list](#wish-list), [fix](#fix), [adding](#adding-by-hand-and-from-your-photos), [backup](#backup)
+- [Using Cairn](#using-cairn): [the map](#the-map), [sports](#sports-activities), [coming trips](#coming-trips), [spending](#spending), [year in review](#year-in-review), [report (PDF)](#report-pdf), [wish list](#wish-list), [fix](#fix), [adding](#adding-by-hand-and-from-your-photos), [backup](#backup)
 - [Data](#data) · [API](#api) · [Tests](#tests) · [Privacy](#privacy) · [Troubleshooting](#troubleshooting)
 - [Support Cairn](#support-cairn) · [Acknowledgements](#acknowledgements) · [License](#license)
 
@@ -251,6 +251,7 @@ No account is needed for any of these; each is asked at most about once a second
 | `lastfm.js` | your Last.fm scrobbles, for the music on trips and towns |
 | `books.js` | your Goodreads library export, for the books on the map, trips and towns |
 | `uploads.js` | the imports in Settings: a data download's files uploaded, then read by its import script |
+| `report.js` | the report of everything to print or keep as a PDF: the page, its trip sketches and the PDF made by Chrome |
 | `public/climb.js`, `climb_records.json` | a climb's page: its map, your times with a profile, predictions, and the best known times (with sources) |
 | `public/terrain.js` | the 3D view: globe or flat map with terrain (MapLibre GL), the 2D map's layers, flights through the air (deck.gl) |
 | `climbs.js`, `ascents.js`, `climbs.json` | famous cycling climbs, their ways up (roads and terrain heights) and which your rides went up |
@@ -308,6 +309,7 @@ cp default.secret secret
 | `ground_file`, `stays_file`, `photos_file`, `timeline_file`, `strava_file`, `strava_token_file` | `data/…` | where the map's other data is kept (see [Data](#data)) |
 | `things_db` | `""` | `"auto"` to read your Things 3 to-dos on this Mac (read-only), for the coming trips' checks and the trips your to-dos mention; or the path of its `main.sqlite` |
 | `takeout_photos_dir` | `""` | your Google Takeout's Google Photos folder, for the album suggestions when there is no `data/photo_albums.json` (the Photos library's albums, from `imports/photos.py --albums`; see [Adding by hand, and from your photos](#adding-by-hand-and-from-your-photos)) |
+| `chrome` | found | the Chrome or Chromium that prints the report as a PDF (see [Report (PDF)](#report-pdf)) |
 | `ground_lookups` | `true` | look up places and tracks of trains, buses, ferries and stays (see [Ground trips](#ground-trips)) |
 | `tripmail` | | tripmail settings (see [tripmail settings](#settings)) |
 
@@ -569,7 +571,7 @@ The legend at the top right shows or hides each layer, with how many it holds in
 - **Airport page**: **Airport page →** in an airport's popup (or a code in the Flights list, or `#airport=AMS`): its flights in and out in the period shown, the airports it took you to and from (with how often and when last), the airlines, the distance, and a map of its routes.
 - **Country page**: **Country page →** in a country's popup, a name in the Stats tab's country table, a flag on a town or trip page (or `#country=UA`): its flag ([flagcdn.com](https://flagcdn.com)), days and visits, its towns (sortable, each opening its page), the trips that went there, flights in and out, trains, buses and ferries, stays, sports, photos, the famous climbs in it you rode, the music you played there, and a map of its outline with its towns, sports activities, trains, buses and ferries, stays and rental cars, airports, climbs and photos, each a layer to switch off (top right). All time.
 - **Town flags**: a town's page shows its own flag, or its coat of arms when it has none, from [Wikidata](https://www.wikidata.org) (found by the town's GeoNames id; the image from Wikimedia Commons), looked up once and kept in `data/town_flags.json`.
-- **Trips** (the tab): the runs of days you were away, by year. A day is away when anything (a flight, train, stay, activity, photo, Timeline) puts you outside your home countries (those of `home_airports`), or you slept in a stay; days in a row make a trip when it has a night in a stay, a flight, a train, bus or ferry, or lasts three days or more, so a ride over the border and back is none. Days between a flight out and a flight home count as away (up to 90 days). A trip's page (`#trip=<first day>`) has its map: flights, trains, buses and ferries, stays, activities, photos, and the **moves** between them as Polarsteps draws them: from photo to photo, activity to activity and stay to stay, when nothing of your own shows how you got there; moves of 10 km or more follow the likeliest road route (OSRM, looked up in the background, kept in `data/drives.json`), in yellow as a **drive** on days with a rental car. Then its numbers, **day by day** where you were (towns, linked to their pages), how you moved, what you did and where you slept, and its stays, flights, trains, activities and famous climbs. **🖨️ Journal** prints the trip (or saves it as a PDF from the print dialog): its map, numbers and day by day with the photos, on white, a day not split over two pages where it fits; printing the page any other way gives the same.
+- **Trips** (the tab): the runs of days you were away, by year. A day is away when anything (a flight, train, stay, activity, photo, Timeline) puts you outside your home countries (those of `home_airports`), or you slept in a stay; days in a row make a trip when it has a night in a stay, a flight, a train, bus or ferry, or lasts three days or more, so a ride over the border and back is none. Days between a flight out and a flight home count as away (up to 90 days). A trip's page (`#trip=<first day>`) has its map: flights, trains, buses and ferries, stays, activities, photos, and the **moves** between them as Polarsteps draws them: from photo to photo, activity to activity and stay to stay, when nothing of your own shows how you got there; moves of 10 km or more follow the likeliest road route (OSRM, looked up in the background, kept in `data/drives.json`), in yellow as a **drive** while you had a car: a rental car (or one you added by hand) from its first day, or from your landing near it when you flew in that day, until a flight, and again after a landing near it (a domestic flight while you kept it), never after a landing at a home airport; a move counts from when you were last seen at the place you left (an evening in town, then the car the next morning: a drive, on that morning). Then its numbers, **day by day** where you were (towns, linked to their pages), how you moved, what you did and where you slept, and its stays, flights, trains, activities and famous climbs. **🖨️ Journal** prints the trip (or saves it as a PDF from the print dialog): its map, numbers and day by day with the photos, on white, a day not split over two pages where it fits; printing the page any other way gives the same.
 
 The box at the top left sets the period:
 - **Years**: only what happened from one year to another.
@@ -692,7 +694,22 @@ The **Stats** tab's **Spending on stays**: what your stays cost, from the price 
 
 ### Year in review
 
-**Stats → Year in review** shows **the years side by side** first: a row a year with its days with a place, days away, trips, countries and towns (and how many new), the distance flown, overland (by train, 🔁 commute, bus, ferry, hitchhiking and 🚙 car: your car journeys and the drives on rental-car days) and on your own power (rides, runs, walks), the nights in stays (by kind of bed, on hovering), photos, climbs ridden for the first time and what stays cost, each with a bar against the biggest year; click a heading to sort. A year's own page (a year there, or on the Trips tab; `#year=2025`): the year's trips, the countries and towns you went to for the first time, where you spent it, how far by each means and the nights per kind of bed, the climbs you rode (🆕 the first time), the music you played most, your photos, sleep and resting heart rate, the weather's extremes on your rides and what your stays cost.
+**Stats → Year in review** shows **the years side by side** first: a row a year with its days with a place, days away, trips, countries and towns (and how many new), the distance flown, overland (by train, 🔁 commute, bus, ferry, hitchhiking and 🚙 car: your car journeys and the drives while you had a car) and on your own power (rides, runs, walks), the nights in stays (by kind of bed, on hovering), photos, climbs ridden for the first time and what stays cost, each with a bar against the biggest year; click a heading to sort. A year's own page (a year there, or on the Trips tab; `#year=2025`): the year's trips, the countries and towns you went to for the first time, where you spent it, how far by each means and the nights per kind of bed, the climbs you rode (🆕 the first time), the music you played most, your photos, sleep and resting heart rate, the weather's extremes on your rides and what your stays cost.
+
+### Report (PDF)
+
+**Settings → Report → Download PDF** makes one PDF of it all, to keep or print (A4):
+- **Cover:** a world map of every town you were in.
+- **At a glance:** trips, days away, countries, towns and flights; how far by each means and the nights by kind of bed, as bars; the records from the curiosities (farthest north, south, east and west, highest and lowest, longest stay, most countries in a day…); the climbs you rode.
+- **Countries:** each with its days, visits and years.
+- **Year by year,** then a page of contents with links.
+- **Every trip:** its countries and towns, a sketch of the way on the coast, how you got around (flights, trains, buses, ferries, drives), where you slept, your rides and runs, the music you played, the books you finished, what the stays cost and six of its photos.
+
+Choose the years and whether photos are included. Trips still ahead are listed at the end. The PDF is printed by the Chrome or Chromium of this computer (`config.chrome`, the `CHROME` variable, or where it usually is; a minute or two for a few hundred trips, about 30 MB with photos). It waits for the curiosities when Cairn has only just started. Without Chrome, **Open as a page** shows the same report (`/report`), to save as a PDF from the browser's Print dialog.
+
+```
+curl -o cairn.pdf "localhost:3000/api/report.pdf?from=2020&to=2025"
+```
 
 ### Wish list
 
@@ -907,7 +924,7 @@ Moving to MongoDB later only needs the data layer in `app.js` (the `flights` arr
 | `GET` | `/api/photos/auto` | how many Cairn can place by itself, `{near, day, between, total, placed}` (`?list=1`: each with its guess) |
 | `POST` | `/api/photos/auto` | places them (`{undo: true}`: takes all of Cairn's own places back) |
 | `POST` | `/api/photos/place` | `{ids, lat, lon, name}` places those photos there; `{ids, undo: true}` takes the places back |
-| `GET` | `/api/photos/:id/thumb`, `/api/photos/:id/full` | a photo as a JPEG at most 480 px, or whole (made with `sips`, kept in `data/photo_cache`); a video's first frame, or the video |
+| `GET` | `/api/photos/:id/thumb`, `/api/photos/:id/small`, `/api/photos/:id/full` | a photo as a JPEG at most 360 px, at most 220 px (for the report), or whole (made with `sips`, kept in `data/photo_cache`); a video's first frame, or the video |
 | `GET` | `/api/climbs/:id/photos` | the photos taken going up a climb: `id`, `t`, `lat`, `lon`, `video`, `ride`, `way` |
 | `GET` | `/api/climbs/:id/gpx?from=lat,lon&name=` | a GPX of a bike route from a place (a stay, within 150 km) to the climb's top and back |
 | `GET` | `/api/weather` | the weather on every ride looked up, by activity id |
@@ -925,6 +942,8 @@ Moving to MongoDB later only needs the data layer in `app.js` (the `flights` arr
 | `GET` | `/api/coming` | the coming trips with their `flights` (and `checkin`), `stays`, `cars`, `ground`, `missing` (`kind`, `key`, `text`, `when`, `todo`), `todos`, `weather`, `climbs`, `saved` |
 | `GET` | `/api/spending` | what the stays cost: `eur`, `nights`, `perNight`, `byYear`, `byCountry`, `byTown`, `byProvider`, `dearest`, `cheapest`, `priced` of `stays` |
 | `GET` | `/api/review/years`, `/api/review/:year` | the years with anything in them; a year in review |
+| `GET` | `/report?from=&to=&photos=0` | the report as a page to print (see [Report (PDF)](#report-pdf)): years from and to, without photos |
+| `GET` | `/api/report.pdf?from=&to=&photos=0` | the same as a PDF (`cairn-<date>.pdf`), made by Chrome; 501 without one, 409 while another is being made |
 | `GET` | `/api/review/by-year` | every year side by side: days, days away, trips, countries and towns (and new), distance by means, nights by kind of bed, photos, first climbs, € |
 | `GET` | `/api/suggestions/gaps` | trips abroad with no way there or back (`unreached`), and runs of 30 days or more with no place (`quiet`) |
 | `GET` | `/api/wishlist` | `saved` places, `climbs` to ride near where you go, `countries` still to go |
@@ -957,7 +976,7 @@ Moving to MongoDB later only needs the data layer in `app.js` (the `flights` arr
 ## Tests
 
 ```
-npm test                       # Cairn API (against a temporary copy with its own data) and ground.js, no network
+npm test                       # Cairn API (against a temporary copy with its own data) and its modules (trips, ground, books, uploads, report…), no network
 python mail/test_parse.py      # reading emails (the fixtures in mail/fixtures)
 python mail/test_ground.py     # trains, buses and ferries, station time zones
 python mail/test_sync.py       # the change, rebooking, cancellation and duplicate rules

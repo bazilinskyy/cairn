@@ -28,7 +28,7 @@ before(async () => {
   fs.copyFileSync(path.join(ROOT, 'activities.js'), path.join(dir, 'activities.js'));
   fs.copyFileSync(path.join(ROOT, 'regions.js'), path.join(dir, 'regions.js'));
   fs.copyFileSync(path.join(ROOT, 'country-lists.json'), path.join(dir, 'country-lists.json'));
-  ['climbs.js', 'ascents.js', 'efforts.js', 'climbs.json', 'photos.js', 'climb_records.json', 'trips.js', 'weather.js', 'stats.js', 'lastfm.js', 'suggestions.js', 'backup.js', 'albums.js', 'things.js', 'todotrips.js', 'prep.js', 'spending.js', 'review.js', 'bases.js', 'books.js', 'uploads.js'].forEach(f => fs.copyFileSync(path.join(ROOT, f), path.join(dir, f)));
+  ['climbs.js', 'ascents.js', 'efforts.js', 'climbs.json', 'photos.js', 'climb_records.json', 'trips.js', 'weather.js', 'stats.js', 'lastfm.js', 'suggestions.js', 'backup.js', 'albums.js', 'things.js', 'todotrips.js', 'prep.js', 'spending.js', 'review.js', 'bases.js', 'books.js', 'uploads.js', 'report.js'].forEach(f => fs.copyFileSync(path.join(ROOT, f), path.join(dir, f)));
   fs.copyFileSync(path.join(ROOT, 'default.config'), path.join(dir, 'default.config'));
   fs.cpSync(path.join(ROOT, 'public'), path.join(dir, 'public'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'data'));
@@ -468,4 +468,13 @@ test('the years side by side; gaps; a climb route needs a climb and a place near
   for (const q of ['from=abc', 'from=91,0', 'from=1,2,3', '']) {
     assert.strictEqual((await fetch(`${BASE}/api/climbs/nothing/gpx?${q}`)).status, 400, q);
   }
+});
+
+test('the report: a page to print, with a "Save as PDF" button', async () => {
+  const res = await fetch(`${BASE}/report?from=2020&photos=0`);
+  assert.strictEqual(res.status, 200);
+  assert.match(res.headers.get('content-type'), /text\/html/);
+  const html = await res.text();
+  assert.match(html, /<h1>Your travels<\/h1>/);
+  assert.match(html, /Save as PDF/);
 });

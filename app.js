@@ -652,8 +652,8 @@ app.get('/api/photos/points', (req, res) => {
   res.send(json);
 });
 // one photo: a thumbnail (/thumb) or the whole of it (/full), from the file on this Mac
-app.get('/api/photos/:id/:size(thumb|full)', async (req, res) => {
-  const made = await (req.params.size === 'thumb' ? photoIndex.thumb(req.params.id) : photoIndex.full(req.params.id));
+app.get('/api/photos/:id/:size(thumb|small|full)', async (req, res) => {
+  const made = await ({ thumb: photoIndex.thumb, small: photoIndex.small, full: photoIndex.full })[req.params.size](req.params.id);
   if (!made) return res.status(404).json({ error: 'no such photo here (or it could not be converted)' });
   res.set('Cache-Control', 'max-age=604800').type(made.type).sendFile(made.file);
 });
@@ -1067,14 +1067,16 @@ const regions = regionLists.create({ file: path.join(DATA_DIR, 'admin1.geojson')
 // source; and what happened there: nights in stays, flights in, trains, buses and ferries (from or to it), rental
 // cars, sports activities and their km, photos
 app.get('/api/countries', async (req, res) => {
-  loadTowns();
-  if (!towns) return res.json([]);
   // ?scheme=iso|un|tcc: countries as that list counts them (regions.js); otherwise the town's country code
   const scheme = regions.SCHEMES.includes(req.query.scheme) ? req.query.scheme : null;
   if (scheme) {
     try { await regions.ready(); } catch (e) { return res.status(502).json({ error: `Country map: ${e.message}` }); }
   }
-  const from = req.query.from || '', to = req.query.to || '';
+  res.json(countryStats({ scheme, from: req.query.from || '', to: req.query.to || '' }));
+});
+function countryStats({ scheme = null, from = '', to = '' } = {}) {
+  loadTowns();
+  if (!towns) return [];
   const inPeriod = d => d && (!from || d >= from) && (!to || d <= to);
   const townOf = townOfAt;
   const all = {};
@@ -1116,12 +1118,12 @@ app.get('/api/countries', async (req, res) => {
     const v = (c.days || []).some(inPeriod) && of([c.lat, c.lon]);
     if (v) v.photos += c.count || 0;
   });
-  res.json(Object.values(all).filter(v => v.days.size).map(v => {
+  return Object.values(all).filter(v => v.days.size).map(v => {
     const days = [...v.days].sort();
     const visits = days.filter((d, i) => !i || (Date.parse(d) - Date.parse(days[i - 1])) / 864e5 > 1).length;
     return { ...v, days: days.length, visits, towns: v.towns.size, km: Math.round(v.km), first: days[0], last: days[days.length - 1] };
-  }).sort((a, b) => b.days - a.days));
-});
+  }).sort((a, b) => b.days - a.days);
+}
 
 app.get('/api/regions', async (req, res) => {
   const scheme = regions.SCHEMES.includes(req.query.scheme) ? req.query.scheme : 'iso';
@@ -1611,6 +1613,38 @@ app.get('/api/review/by-year', (_req, res) => res.json(yearReview.byYear()));  /
 app.get('/api/review/:year', (req, res) => {
   if (!/^\d{4}$/.test(req.params.year)) return res.status(400).json({ error: 'a year, like 2025' });
   res.json(yearReview.review(+req.params.year));
+});
+
+// --- A report of everything, to print or keep as a PDF (report.js) ---
+// /report: the page itself (the browser's Save as PDF makes it one); /api/report.pdf: the same printed by the Chrome or
+// Chromium of this computer (config.chrome, else where it usually is), one at a time. ?from=&to= years, ?photos=0
+const report = require('./report');
+const reportBook = report.create({
+  trips: () => tripStore.list(), flights: () => flights, airports: () => airports, groundTrips: () => trips, drives: () => derivedDrives(),
+  stays: () => stays, activities: () => activities.list(), photos: datedPhotos, curiosities: () => curiosities.get(), years: () => yearReview.byYear(),
+  countries: () => countryStats(), climbs: () => climbs.list(), music: range => music.top(range), spending: (from, to) => spending.forTrip(from, to),
+  books: booksRead, nearTown: (lat, lon) => (loadTowns() && towns ? cities.nearest(towns, lat, lon, 150) : null),
+  coastFile: path.join(DATA_DIR, 'coastline.geojson')
+});
+const reportOpts = q => ({ from: /^\d{4}$/.test(q.from || '') ? +q.from : 0, to: /^\d{4}$/.test(q.to || '') ? +q.to : 0, photos: q.photos !== '0' });
+app.get('/report', (req, res) => res.type('html').send(reportBook.html(reportOpts(req.query))));
+let printing = false;
+app.get('/api/report.pdf', async (req, res) => {
+  const browser = report.findBrowser(config.chrome);
+  if (!browser) return res.status(501).json({ error: 'No Chrome or Chromium on this computer to make the PDF: open the report and save it as a PDF from the browser', page: '/report' });
+  if (printing) return res.status(409).json({ error: 'A report is being made already' });
+  printing = true;
+  const o = reportOpts(req.query), q = new URLSearchParams({ ...(o.from && { from: o.from }), ...(o.to && { to: o.to }), ...(!o.photos && { photos: '0' }) });
+  const local = ['0.0.0.0', '::', '', undefined].includes(config.host) ? '127.0.0.1' : config.host;
+  try {
+    // the records worked out first (a few minutes after a start), else the report leaves them out
+    await Promise.race([curiosities.ready(), new Promise(r => setTimeout(r, 5 * 60e3).unref())]);
+    const { file, dir } = await report.pdf(`http://${local.includes(':') ? `[${local}]` : local}:${config.port}/report?${q}`, { browser });
+    res.download(file, `cairn-${new Date().toISOString().slice(0, 10)}.pdf`, () => fs.rmSync(dir, { recursive: true, force: true }));
+  } catch (e) {
+    console.warn('[report]', e.message);
+    res.status(e.status || 500).json({ error: `The PDF could not be made: ${e.message}` });
+  } finally { printing = false; }
 });
 
 // --- Data health: what looks wrong, to fix with a click ---

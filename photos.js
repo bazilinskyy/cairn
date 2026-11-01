@@ -17,7 +17,7 @@ const crypto = require('crypto');
 const { execFile } = require('child_process');
 
 const VIDEO = /\.(mov|mp4|m4v|3gp|avi|mkv)$/i;
-const THUMB = 360, OLD_THUMB = 480, CONVERTING = 3;
+const THUMB = 360, OLD_THUMB = 480, SMALL = 220, CONVERTING = 3;
 const LIBRARY = /^(.*\.photoslibrary)\/originals\/([0-9A-F])\/([0-9A-F-]+)\.[^/]+$/i;
 const TYPES = { '.mp4': 'video/mp4', '.m4v': 'video/mp4', '.mov': 'video/quicktime', '.3gp': 'video/3gpp' };
 
@@ -122,11 +122,22 @@ function create({ file, cache, readImport, extra = () => [] }) {
       warming = false;
     }
   }
+  // a smaller one, made from the thumbnail (a printed report has hundreds of them: a fifth of its bytes)
+  async function small(id) {
+    const have = made(id, SMALL);
+    if (have) return have;
+    const thumb = await jpeg(id, THUMB);
+    if (!thumb || thumb.type !== 'image/jpeg') return thumb;
+    const out = path.join(cache, `${id}-${SMALL}.jpg`);
+    const err = await convert('sips', ['-s', 'format', 'jpeg', '-s', 'formatOptions', '60', '-Z', String(SMALL), thumb.file, '--out', out]);
+    return err || !fs.existsSync(out) ? thumb : { file: out, type: 'image/jpeg' };
+  }
   return {
     payload: () => index(),
     get: id => index().byId.get(id),
     list: () => index().list,
     thumb: id => jpeg(id, THUMB),
+    small,
     warm,
     full: id => jpeg(id, 0),
     // a thumbnail of a file not in the index (an album's cover): the caller decides which files may be shown

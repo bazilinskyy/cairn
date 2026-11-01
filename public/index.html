@@ -977,6 +977,18 @@
       <div id="imports-list"></div>
     </fieldset>
     <fieldset class="settings-group">
+      <legend>Report</legend>
+      <p class="sp-note" style="margin:0 0 8px">Everything as one PDF, to keep or print: what it all adds up to, your countries, year by year, then every trip with a map, how you got around, where you slept, your rides and runs and a few photos.</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <label style="padding:0">From <select id="report-from"></select></label>
+        <label style="padding:0">to <select id="report-to"></select></label>
+        <label style="padding:0"><input type="checkbox" id="report-photos" checked> with photos</label>
+        <button class="btn btn-ghost" id="report-pdf" type="button">Download PDF</button>
+        <a class="btn btn-ghost" id="report-page" href="/report" target="_blank" rel="noopener">Open as a page</a>
+        <span class="sp-note" id="report-status"></span>
+      </div>
+    </fieldset>
+    <fieldset class="settings-group">
       <legend>Backup</legend>
       <p class="sp-note" style="margin:0 0 8px">Everything you imported or added (flights, trains, stays, sports activities and their tracks, sleep, photo places, Timeline, weather, music) as one file. Not the photos themselves, nor keys and sign-ins. <span id="backup-summary"></span></p>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
@@ -1139,6 +1151,7 @@ function openSettings() {
   document.querySelector(`input[name="set-photos"][value="${prefs.photos || 'clusters'}"]`).checked = true;
   fillPlaces();
   renderImports();
+  fillReportYears();
   document.getElementById('settings-modal').classList.add('open');
   fetch('/api/backup/summary').then(r => r.json()).then(b => {
     const mb = b.files.reduce((n, f) => n + f.bytes, 0) / 1e6;
@@ -1147,6 +1160,46 @@ function openSettings() {
 }
 document.getElementById('backup-activities').addEventListener('change', e => {
   document.getElementById('backup-download').href = e.target.checked ? '/api/backup' : '/api/backup?activities=0';
+});
+// The report: the years to choose from (all of them at first), made into a PDF on the server (a minute or two), else
+// opened as a page to save as a PDF from the browser
+function reportQuery() {
+  const from = document.getElementById('report-from'), to = document.getElementById('report-to');
+  const q = new URLSearchParams();
+  if (from.value && from.value !== from.options[0]?.value) q.set('from', from.value);
+  if (to.value && to.value !== to.options[to.options.length - 1]?.value) q.set('to', to.value);
+  if (!document.getElementById('report-photos').checked) q.set('photos', '0');
+  return q.toString() ? `?${q}` : '';
+}
+async function fillReportYears() {
+  const from = document.getElementById('report-from'), to = document.getElementById('report-to');
+  if (from.options.length) return;
+  const now = String(new Date().getFullYear()), years = (await fetch('/api/review/years').then(r => (r.ok ? r.json() : [])).catch(() => [])).filter(y => y <= now);
+  const opts = years.map(y => `<option>${escapeHTML(y)}</option>`).join('');
+  from.innerHTML = to.innerHTML = opts;
+  to.value = years[years.length - 1] || '';
+  document.getElementById('report-page').href = '/report' + reportQuery();
+}
+['report-from', 'report-to', 'report-photos'].forEach(id => document.getElementById(id).addEventListener('change', () => {
+  document.getElementById('report-page').href = '/report' + reportQuery();
+}));
+document.getElementById('report-pdf').addEventListener('click', async e => {
+  const button = e.currentTarget, status = document.getElementById('report-status');
+  button.disabled = true;
+  status.textContent = 'Making the PDF: a minute or two…';
+  try {
+    const r = await fetch('/api/report.pdf' + reportQuery());
+    if (r.status === 501) { status.textContent = 'No Chrome here to make it: the report opens as a page, save it as a PDF from there.'; window.open('/report' + reportQuery(), '_blank', 'noopener'); return; }
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
+    const url = URL.createObjectURL(await r.blob()), a = document.createElement('a');
+    a.href = url;
+    a.download = (r.headers.get('Content-Disposition') || '').match(/filename="?([^";]+)/)?.[1] || 'cairn.pdf';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 60e3);
+    status.textContent = '';
+  } catch (err) {
+    status.textContent = `Could not make it: ${err.message}`;
+  } finally { button.disabled = false; }
 });
 // Imports: a row per source with its last import; its files are uploaded one by one, then read on the server in the
 // background (a Garmin export takes minutes), the row showing how far it got

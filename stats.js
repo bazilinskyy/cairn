@@ -114,6 +114,12 @@ function create({ days, towns, cities, activities, stays, flights, airports, gro
     }
     return memo.value;
   }
+  // the numbers once worked out (for a report that must have them)
+  async function ready() {
+    get();
+    if (working) await working;
+    return memo.value;
+  }
 
   async function compute() {
     const today = new Date().toISOString().slice(0, 10), past = d => (d || '').slice(0, 10) <= today;  // not the trips still ahead
@@ -282,7 +288,7 @@ function create({ days, towns, cities, activities, stays, flights, airports, gro
     };
   }
 
-  return { get };
+  return { get, ready };
 }
 
 // The kind of bed a stay was, for counting nights: at a friend's place (a trip doc's "with a friend", the form's
