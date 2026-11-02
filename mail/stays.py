@@ -206,12 +206,14 @@ def _vipcars(subject, lines, html, received):
 
 # Other rental car brokers and companies: (name, confirmation subject, cancellation subject); their confirmations are
 # read by one rule (_rental) that looks for the labelled pick-up and drop-off details most of them have
+# CarTrawler's brands: a cancellation, or "Reservation XX123456789 / 1234... - eDreams Cars", the refund after one
+CARTRAWLER_CANCEL = r"annulering|annuleringsverzoek|cancell?|^reservation [A-Z]{2}\d{6,} /"
 RENTALS = {
     "rentalcars.com": ("Rentalcars.com", r"^(?:uw|your) rentalcars\.com (?:boeking|booking)\b|car is confirmed|auto is bevestigd",
                        r"annulering|cancell?ation"),
-    "holidayautos": ("Holiday Autos", r"boekingsbevestiging|booking confirmation", r"annulering|annuleringsverzoek|cancell?"),
-    "carrental.edreams": ("eDreams Cars", r"boekingsbevestiging|booking confirmation", r"annulering|annuleringsverzoek|cancell?"),
-    "arguscarhire": ("Argus Car Hire", r"boekingsbevestiging|booking confirmation", r"annulering|annuleringsverzoek|cancell?"),
+    "holidayautos": ("Holiday Autos", r"boekingsbevestiging|booking confirmation", CARTRAWLER_CANCEL),
+    "carrental.edreams": ("eDreams Cars", r"boekingsbevestiging|booking confirmation", CARTRAWLER_CANCEL),
+    "arguscarhire": ("Argus Car Hire", r"boekingsbevestiging|booking confirmation", CARTRAWLER_CANCEL),
     "stressfreecarrental": ("Stressfree Car Rental", r"reservation confirmation", r"reservation cancell?ation"),
     "bsp-auto": ("BSP Auto", r"voucher", r"annulering|cancell?"),
     "bookinggroup.com": ("EconomyBookings", r"is confirmed|confirmation of your car rental", r"cancell?"),
@@ -228,6 +230,19 @@ DROP_OFF = (r"dropping off your car|drop[- ]?off(?: details| location| date)?|re
 NOT_A_PLACE = (r"(?i)instructions|instructies|time|tijd|hora|date|datum|fecha|hours|uren|policy|voorwaarden|cancel|annul|deposit|borg|"
                r"company|bedrijf|supplied|leverancier|phone|telefoon|^[/|]|:\s*$|^\W*$|@|https?:|\d{1,2}:\d{2}|"
                r"^(?:mon|tue|wed|thu|fri|sat|sun|ma|di|wo|do|vr|za|zo)\w*\b.*\d")  # opening hours
+
+
+def _day_month_blocks(lines, received):
+    """[(date, place)] of the lines '12', 'May', then the place: pick-up and drop-off in CarTrawler's older mails (no
+    year: the first such day from the email on)."""
+    out = []
+    for i in range(len(lines) - 2):
+        if re.fullmatch(r"\d{1,2}", lines[i]) and re.fullmatch(rf"(?i){MONTH}", lines[i + 1]):
+            day = _date(f"{lines[i + 1]} {lines[i]}", received)
+            if day:
+                desk = lines[i + 2]
+                out.append((day, desk.split(",")[0] if desk.count(",") >= 2 else desk))  # an address: its first part
+    return out
 
 
 def _block(lines, label, received):
@@ -273,6 +288,8 @@ def _rental(provider, confirm, cancel):
             return Stay("booking", "car", place=airport.group(1), start=received.date(), end=received.date(), **common) if airport else None
         place, start = _block(lines, PICK_UP, received)
         _, end = _block(lines, DROP_OFF, received)
+        if not start:  # CarTrawler's older layout: the day, the month and the desk on lines of their own, no labels
+            (start, place), (end, _) = (_day_month_blocks(lines, received) + [(None, ""), (None, "")])[:2]
         if not start:
             return None
         where, _, country = place.rpartition(", ")

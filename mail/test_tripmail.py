@@ -138,12 +138,15 @@ def test_been_before_near_where_the_flights_land():
                          {"id": 1, "name": "Lisbon", "lat": 38.72, "lon": -9.14, "days": 9, "visits": 3, "first": "2019-05-01", "last": "2024-02-02"},
                          {"id": 2, "name": "Porto", "lat": 41.15, "lon": -8.61, "days": 4, "visits": 1, "first": "2020-01-01", "last": "2020-01-04"}],
                      ("GET", "/api/climbs"): [{"name": "Serra Pass", "lat": 38.79, "lon": -9.39, "times": 2, "first": "2021-03-03"},
-                                              {"name": "Not yet", "lat": 38.79, "lon": -9.39, "times": 0}],
+                                              {"name": "Not yet", "lat": 38.79, "lon": -9.39, "times": 0, "ele": 1200},
+                                              {"name": "Far away", "lat": 45.0, "lon": 6.0, "times": 0, "ele": 2600}],
+                     ("GET", "/api/wishlist"): {"saved": [{"name": "Test Palace", "lat": 38.79, "lon": -9.39}]},
                      ("GET", "/api/city/1?to=2026-11-15"): {"activities": [{"sport": "Hike"}, {"sport": "Hike"}, {"sport": "Run"},
                                                                           {"sport": "VirtualRide"}]}})
     text = con.been_before(["Sintra (old town)", "Eindhoven", "Lisbon"], d(2026, 11, 16).date(), d(2026, 11, 20).date(), ["EIN"])
     assert text == ("- Around Sintra (within 50 km): Lisbon (9 days on 3 visits, 2019–2024: 2 hikes, 1 run). "
-                    "Climbs ridden: Serra Pass (2021)."), text  # the Sintra near Lisbon; not home; Lisbon too near to ask twice
+                    "Climbs ridden: Serra Pass (2021). Famous climbs I have not ridden: Not yet (1,200 m). "
+                    "Places I saved to go to: Test Palace."), text  # the Sintra near Lisbon; not home; Lisbon too near to ask twice
 
 def test_cairn_ground_ids_and_payload():
     con = StubCairn({("POST", "/api/ground"): {"id": 12}, ("PUT", "/api/ground/12"): {}, ("DELETE", "/api/ground/12"): {},
@@ -259,6 +262,23 @@ def test_rescan_reads_again_without_moving_back(home):
     assert json.loads((home / "state.json").read_text())["last_uid"] == 500
 
 
+@with_home
+def test_an_alert_is_posted_once(home):  # the same mail read again (a rescan) posts nothing new
+    (home / "state.json").write_text(json.dumps({"last_uid": 5, "legs": []}))
+    sent, saved = [], tripmail.sync.apply
+    tripmail.sync.apply = lambda *a, **k: ["Could not read flight: X | Y | 2026-10-01"]
+    undo = patch(fetch_new=lambda cfg, sec, state, since_days=None: [(6, test_parse.fixture("edreams_nl_overnight"))],
+                 load_reference=lambda cfg: (test_parse.airports(), test_parse.airlines(), {}),
+                 open_stores=lambda cfg, airports, airlines: (Recorder(), Recorder()), send_discord=lambda text, sec: sent.append(text))
+    try:
+        tripmail.main([])
+        tripmail.main(["--rescan-days", "3"])
+    finally:
+        undo()
+        tripmail.sync.apply = saved
+    assert len(sent) == 1 and "Could not read flight: X | Y" in sent[0], sent
+    assert json.loads((home / "state.json").read_text())["alerted"] == {"Could not read flight: X | Y | 2026-10-01": "2026-10-21"}
+
 class Store:
     """Stand-in for Things, the work calendar or the banners: records calls, hands out refs."""
     def __init__(self, skip=False):
@@ -341,10 +361,10 @@ def test_things_script_arguments():
 
 
 def test_title_matches_any_airline_prefix():
-    for title in ("EJU7883: Amsterdam - Tenerife South", "✈️ U27883: Amsterdam - Tenerife", "Flight: U2 7883 from AMS to TFS", "U27883: Amsterdam - Tenerife"):
-        assert tripmail.title_has_flight(title, "U27883"), title
-    assert not tripmail.title_has_flight("EJU78830: somewhere", "U27883")
-    assert not tripmail.title_has_flight("Tenerife", "U27883")
+    for title in ("EJU1234: Amsterdam - Tenerife South", "✈️ U21234: Amsterdam - Tenerife", "Flight: U2 1234 from AMS to TFS", "U21234: Amsterdam - Tenerife"):
+        assert tripmail.title_has_flight(title, "U21234"), title
+    assert not tripmail.title_has_flight("EJU12340: somewhere", "U21234")
+    assert not tripmail.title_has_flight("Tenerife", "U21234")
 
 
 

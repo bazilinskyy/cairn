@@ -168,6 +168,8 @@ def test_unreadable_booking_alerts():
     assert alerts == ["Could not read flight: eDreams | Je reservering is bevestigd | 2026-10-21"]
     assert run(Parsed("booking", [], [], True, [], date(2026, 12, 1)), state, cal, con, sender="X", subject="Y") == [
         "Could not read flight: X | Y | 2026-10-21"]
+    info = Parsed("booking", [Leg("XX543", "", "", None, None, ())], [], True, [], date(2026, 12, 1))
+    assert run(info, state, cal, con, sender="Test Air", subject="Useful information for flight XX543/03NOV") == []  # no booking to read
 
 
 def test_no_alerts_for_emails_about_the_past():

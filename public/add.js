@@ -433,7 +433,18 @@ async function renderHealth() {
       `<div class="album-fields"><input data-f="number" value="${escapeHTML(f.flight_number)}" placeholder="e.g. KL1234" aria-label="Flight number"></div></div>` +
       `<div class="acts"><button class="btn btn-primary" data-flight>Save</button>${fine(`health|flight|${f.id}`)}</div></div>`).join('')}` +
       (d.flights.length > HEALTH_PAGE ? `<small class="sp-note">… and ${d.flights.length - HEALTH_PAGE} more after these.</small>` : '') + '</div>';
-  if (!d.copies && !d.twice.length && !bases.length && !d.unplaced.length && !d.straight.length && !d.flights.length && !d.photoJobs?.length) html += '<p class="subtitle">Nothing looks wrong. 🎉</p>';
+  const clashes = d.clashes || [];
+  const why = x => x.why === 'twice' ? 'The same flight twice: a copy, or booked twice' : x.why === 'order' ?
+    `They follow on only the other way round (${x.km.toLocaleString()} km apart): one of the days is likely wrong` :
+    `The second leaves from ${x.km.toLocaleString()} km away from where the first landed, with nothing in between: a rebooking, or one not flown`;
+  if (clashes.length) html += `<h3 class="sugg-title">Flights that do not follow on (${clashes.length})</h3><p class="subtitle">✕ deletes a flight you did not take; ✎ in the Flights list changes a wrong day. "Fine" when both are right.</p>` +
+    `<div class="sugg-group">${clashes.slice(0, HEALTH_PAGE).map(x => `<div class="sugg" data-key="${escapeHTML(x.key)}"><div class="pics"><span class="pic-icon">✈️</span></div>` +
+      `<div><small>${escapeHTML(why(x))}</small>${x.flights.map(f => `<div class="health-flight" data-flight-id="${f.id}"><b>${escapeHTML(f.flight_number || '')} ${escapeHTML(f.from)} → ${escapeHTML(f.to)}</b> ` +
+        `<small>${fmtDate(f.date.slice(0, 10))}${f.date.length > 10 ? ' ' + escapeHTML(f.date.slice(11, 16)) : ''} · ${escapeHTML(f.airline || '')}</small> ` +
+        `<button class="btn btn-ghost" data-drop-flight="${f.id}" title="Delete this flight">✕</button></div>`).join('')}</div>` +
+      `<div class="acts">${fine(x.key)}</div></div>`).join('')}` +
+      (clashes.length > HEALTH_PAGE ? `<small class="sp-note">… and ${clashes.length - HEALTH_PAGE} more after these.</small>` : '') + '</div>';
+  if (!d.copies && !d.twice.length && !bases.length && !d.unplaced.length && !d.straight.length && !d.flights.length && !clashes.length && !d.photoJobs?.length) html += '<p class="subtitle">Nothing looks wrong. 🎉</p>';
   box.innerHTML = html;
   const gone = el => { el.remove(); };
   const put = (url, body, method = 'PUT') => fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }).then(r => r.json());
@@ -473,6 +484,13 @@ async function renderHealth() {
     await post(`/api/ground/${row.dataset.id}/retry`, {});
     toast('Looking it up again: on the map in a minute');
     gone(row);
+  }));
+  box.querySelectorAll('[data-drop-flight]').forEach(b => b.addEventListener('click', async () => {
+    const f = clashes.flatMap(x => x.flights).find(x => String(x.id) === b.dataset.dropFlight);
+    if (!confirm(`Delete ${f.flight_number || 'the flight'} ${f.from} → ${f.to} of ${fmtDate(f.date.slice(0, 10))}?`)) return;
+    await put(`/api/flights/${f.id}`, null, 'DELETE');
+    allFlights = allFlights.filter(x => x.id !== f.id);
+    gone(b.closest('[data-key]'));
   }));
   box.querySelectorAll('[data-flight]').forEach(b => b.addEventListener('click', async () => {
     const row = b.closest('[data-id]'), n = row.querySelector('[data-f="number"]').value.trim().toUpperCase().replace(/\s+/g, '');

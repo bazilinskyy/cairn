@@ -1,0 +1,11 @@
+[
+ {"id": "Q141302318", "name": "Peñas Blancas", "country": "ES", "lat": 36.50459, "lon": -5.18882, "ele": 975, "wiki": "", "links": 1},
+ {"id": "Q7258845", "name": "Puerto del Boyar", "country": "ES", "lat": 36.75583, "lon": -5.395, "ele": 1103, "wiki": "https://en.wikipedia.org/wiki/Puerto_del_Boyar", "links": 3},
+ {"id": "Q7258844", "name": "Puerto de las Palomas", "country": "ES", "lat": 36.79752, "lon": -5.38259, "ele": 1357, "wiki": "https://en.wikipedia.org/wiki/Puerto_de_las_Palomas", "links": 4},
+ {"id": "Q23984620", "name": "Puerto del León", "country": "ES", "lat": 36.81161, "lon": -4.36903, "ele": 900, "wiki": "https://es.wikipedia.org/wiki/Puerto_del_Le%C3%B3n", "links": 2},
+ {"id": "Q2882096", "name": "Coll de Sóller", "country": "ES", "lat": 39.731, "lon": 2.68625, "ele": 497, "wiki": "https://es.wikipedia.org/wiki/Coll_de_S%C3%B3ller", "links": 6},
+ {"id": "Q17301077", "name": "Coll de sa Batalla", "country": "ES", "lat": 39.81247, "lon": 2.88969, "ele": 576, "wiki": "https://ca.wikipedia.org/wiki/Coll_de_la_Batalla_(Escorca)", "links": 1},
+ {"id": "Q111708909", "name": "Sa Calobra", "country": "ES", "lat": 39.82754, "lon": 2.81799, "ele": 682, "wiki": "", "links": 1},
+ {"id": "Q587189", "name": "Puig Major", "country": "ES", "lat": 39.78828, "lon": 2.77843, "ele": 875, "wiki": "https://en.wikipedia.org/wiki/Puig_Major", "links": 24},
+ {"id": "Q38954", "name": "Teide", "country": "ES", "lat": 28.26352, "lon": -16.58801, "ele": 2330, "wiki": "https://en.wikipedia.org/wiki/Teide", "links": 105}
+]

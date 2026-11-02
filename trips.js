@@ -325,9 +325,10 @@ function create({ towns, cities, days, flights, airports, groundTrips, stays, ac
   }
 
   // Every drive of every trip with a rental car (its moves along the roads on the car's days), for the distance by car
-  // and the map. Working them out takes a minute: done in the background, a trip at a time (the server answers
-  // meanwhile), again when the data changed or ten minutes passed (the road routes come in meanwhile); until then
-  // the last ones
+  // and the map: a day's drives that follow on (a stop at a viewpoint, a short walk between) are one, its road
+  // joined and the places it stopped at kept (via), as a day's road trip is one. Working them out takes a minute:
+  // done in the background, a trip at a time (the server answers meanwhile), again when the data changed or ten
+  // minutes passed (the road routes come in meanwhile); until then the last ones
   let driveMemo = { at: 0, key: null, list: [] }, driving = null;
   const driveKey_ = () => `${memo.key}|${stays().filter(s => s.what === 'car').length}`;
   function refreshDrives() {
@@ -339,7 +340,17 @@ function create({ towns, cities, days, flights, airports, groundTrips, stays, ac
         for (const t of list()) {
           if (!cars.some(c => c.start <= t.end && (c.end || c.start) >= t.start)) continue;
           await new Promise(r => setImmediate(r));
-          for (const m of get(t.id)?.moves || []) if (m.kind === 'drive') out.push({ day: dayOf(m.t0), from: m.from, to: m.to, km: m.km, path: m.path || null });
+          const mine = [];
+          for (const m of get(t.id)?.moves || []) {
+            if (m.kind !== 'drive') continue;
+            const day = dayOf(m.t0 + Math.round(m.from[1] / 15) * 3600), road = m.path ? ground.decode(m.path) : [m.from, m.to], last = mine[mine.length - 1];
+            if (last && last.day === day && ground.km(last.to, m.from) <= AT_CAR_KM) {
+              Object.assign(last, { to: m.to, km: last.km + m.km, roads: last.roads || !!m.path });
+              last.pts.push(...road);
+              last.via.push(m.from);
+            } else mine.push({ day, from: m.from, to: m.to, km: m.km, pts: road, roads: !!m.path, via: [] });
+          }
+          out.push(...mine.map(({ pts, roads, km, ...d }) => ({ ...d, km: Math.round(km * 10) / 10, path: roads ? ground.encode(pts) : null })));
         }
         driveMemo = { at: Date.now(), key, list: out };
       } catch (e) {

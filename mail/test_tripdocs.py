@@ -417,7 +417,7 @@ def test_reply_and_markdown_helpers():
     md = "# **Plan**\n\n| Faro |\n\n# **Suggestions**\n\n*By flightmail on 01.11.26*\n\n## **Itinerary**\n\n# **Notes**\n\nmine"
     assert tripdocs.without_suggestions(md) == "# **Plan**\n\n| Faro |\n\n# **Notes**\n\nmine"
     assert tripdocs._plain("[Hostel](https://x.example/?a=1) 20€") == "Hostel 20€"
-    assert tripdocs._plain("| ✈️ U27883 | 03.02.27 07:00 |  | Booking code: ABC123, 26002 |") == "| ✈️ U27883 | 03.02.27 07:00 |  | |"
+    assert tripdocs._plain("| ✈️ U21234 | 03.05.31 07:00 |  | Booking code: ABC123, 26002 |") == "| ✈️ U21234 | 03.05.31 07:00 |  | |"
 
 
 if __name__ == "__main__":

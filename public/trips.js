@@ -317,7 +317,7 @@ window.addEventListener('afterprint', refitTripMap);
 // The books you finished (Goodreads), for a trip's or a town's page: when, the book, where
 function booksSection(books, title, what) {
   return `<div class="chart-section"><h3>${title} · ${books.length}</h3><div class="sp-scroll"><table class="sp-table"><thead><tr><th>Finished</th><th>Book</th><th>Where</th></tr></thead><tbody>` +
-    books.map(b => `<tr><th>${fmtDate(b.finished)}</th><td><b>${escapeHTML(b.title)}</b><small>${escapeHTML(b.author || '')}${b.rating ? ' · ' + '★'.repeat(b.rating) : ''}</small></td>` +
+    books.map(b => `<tr><th>${fmtDate(b.finished)}${b.started && b.started < b.finished ? `<small>started ${fmtDate(b.started)}</small>` : ''}</th><td><b>${escapeHTML(b.title)}</b><small>${escapeHTML(b.author || '')}${b.rating ? ' · ' + '★'.repeat(b.rating) : ''}</small></td>` +
       `<td>${b.town ? `${flagOf(b.town.country)}${escapeHTML(b.town.name)}` : ''}${b.stay ? `<small>${escapeHTML(b.stay)}</small>` : ''}</td></tr>`).join('') +
     `</tbody></table></div><p class="sp-note">${what}</p></div>`;
 }

@@ -216,6 +216,15 @@ def test_edreams_cars():  # CarTrawler for eDreams: the code after "ref.:", not 
                                                                      date(2027, 3, 1), date(2027, 3, 5)), s
     s = mail("CarHire@carrental.edreams.com", "Uw annuleringsverzoek is gelukt – ES000000001", "Geannuleerd.")
     assert (s.kind, s.what, s.code) == ("cancel", "car", "ES000000001"), s
+    s = mail("CarHire@carrental.edreams.com", "Reservation ES000000003 / 99aa77bb - eDreams Cars", "Uw restitutie is verwerkt.")
+    assert (s.kind, s.what, s.code) == ("cancel", "car", "ES000000003"), s  # the refund: it was cancelled
+
+
+def test_cartrawler_older_layout():  # the day, month and desk on lines of their own, without a year
+    s = mail("noreply@holidayautos.com", "Your car rental booking confirmation – Ref: ES000000002",
+             "Booking Reference Number: ES000000002\nConfirmation no. 12AB34\n12\nMay\nTest Airport, Arrivals, Of. 6, Testtown, 35000\n"
+             "08:00\nDesk telephone no.\n17\nMay\nTest Airport, Arrivals, Of. 6, Testtown, 35000\n08:00\nMini car\n")
+    assert (s.code, s.place, s.start, s.end) == ("ES000000002", "Test Airport", date(2025, 5, 12), date(2025, 5, 17)), s  # after the mail of 2024
 
 if __name__ == "__main__":
     tests = [f for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]

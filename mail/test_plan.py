@@ -43,9 +43,9 @@ def test_block_two_hours_before_one_after():
 
 
 def test_trip_single_place():
-    rows = [row("U27883", "AMS", "TFS", D(2027, 2, 3, 7, 0), D(2027, 2, 3, 11, 50)),
-            row("U27884", "TFS", "AMS", D(2027, 2, 11, 16, 30), D(2027, 2, 11, 22, 10))]
-    assert plan.trips(rows, HOME, AP) == [{"id": "U27883@2027-02-03", "name": "Tenerife", "start": "2027-02-03", "end": "2027-02-11"}]
+    rows = [row("U21234", "AMS", "TFS", D(2031, 5, 3, 7, 0), D(2031, 5, 3, 11, 50)),
+            row("U21235", "TFS", "AMS", D(2031, 5, 11, 16, 30), D(2031, 5, 11, 22, 10))]
+    assert plan.trips(rows, HOME, AP) == [{"id": "U21234@2031-05-03", "name": "Tenerife", "start": "2031-05-03", "end": "2031-05-11"}]
 
 
 def test_trip_several_stops_same_country_and_connections():

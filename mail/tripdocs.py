@@ -611,6 +611,9 @@ Reply with JSON only, no other text:
   outside the towns listed: its national park, best known peaks, villages, gorges and walks. Suggest what I
   have not done: less known places, villages, nature, hikes and rides off the usual list, food. A town seen for
   a day long ago may still get its one main sight.
+- What I still want to do there, when the list has it: a place I saved goes in when it fits the trip; one or
+  two of the famous climbs I have not ridden make a ride (by car to its foot when it is far), with a bike to
+  rent or bring.
 - itinerary: one entry per day from {first} to the trip's last day, following the stays' dates and the transport
   times (the arrival day, travel between places, the departure day), with that day's transport in it. Each day
   starts and ends where we sleep; with a car, days out by car from there. One or two sentences a day.

@@ -4,6 +4,7 @@ The calendar and Cairn are passed in as objects with has_flight / create|add / u
 can be tested without EventKit or a server. state["legs"] remembers the legs tripmail created. Trains, buses and
 ferries go to Cairn too (for the lines on its map), with the id of their calendar event.
 """
+import re
 from dataclasses import replace
 from datetime import datetime
 
@@ -45,6 +46,11 @@ def enrich(parsed, lookup, cache, now, limit):
         legs.append(replace(leg, dep=hit["dep"], arr=hit["arr"], dep_local=datetime.fromisoformat(hit["dep_local"]),
                             arr_local=datetime.fromisoformat(hit["arr_local"])) if hit else leg)
     return replace(parsed, legs=legs)
+
+
+# what an airline sends before a flight already booked: information, reminders, check-in; never a booking to read
+INFO = (r"(?i)useful information|important information|informa[cç][aã]o [uú]til|travel (?:information|reminder)|"
+        r"reisinformatie|reisherinnering|before you (?:go|fly)|check-?in (?:is )?(?:now )?open|online check-?in|inchecken")
 
 
 def apply(parsed, sender, subject, received, state, cal, con, names, now, airports):
@@ -128,7 +134,7 @@ def apply(parsed, sender, subject, received, state, cal, con, names, now, airpor
 
     complete = [l for l in parsed.legs if l.complete]
     if not complete:
-        if about_future and parsed.looks_like_flight and not any(owned(l) for l in parsed.legs):
+        if about_future and parsed.looks_like_flight and not any(owned(l) for l in parsed.legs) and not re.search(INFO, subject):
             alerts.append(f"Could not read flight: {where}")
         return alerts
 

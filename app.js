@@ -104,6 +104,9 @@ const NEWER_AIRPORTS = {
   YIA: { name: 'Yogyakarta International Airport', city: 'Yogyakarta', country: 'Indonesia', lat: -7.9047, lon: 110.0573, tz: 'Asia/Jakarta' }
 };
 
+// airports.dat has no time zone ("\\N") for these, so their times could not be read
+const MISSING_TZ = { IST: 'Europe/Istanbul', SAW: 'Europe/Istanbul', OGU: 'Europe/Istanbul', DOH: 'Asia/Qatar' };
+
 function parseAirports(dat) {
   const result = {};
   for (const line of dat.split('\n')) {
@@ -333,6 +336,7 @@ async function init() {
   if (fs.existsSync(AIRPORTS_FILE)) {
     airports = parseAirports(fs.readFileSync(AIRPORTS_FILE, 'utf8'));
     for (const [iata, a] of Object.entries(NEWER_AIRPORTS)) if (!airports[iata]) airports[iata] = a;
+    for (const [iata, tz] of Object.entries(MISSING_TZ)) if (airports[iata] && !/\//.test(airports[iata].tz)) airports[iata].tz = tz;
     console.log(`[init] Loaded ${Object.keys(airports).length} airports`);
   }
 
@@ -570,6 +574,17 @@ app.post('/api/stays', (req, res) => {
     saveStays();
     return res.json(exported);
   }
+  const car = !same && !exported && s.what === 'car' && sameCar(s);
+  if (car && car.contract) return res.json({ ignored: 'the counter contract of a car already there', car: car.contract });
+  if (car) {  // the booking of a car added by hand (or from a trip doc or the calendar): it takes the booking's details
+    const { id, ...changes } = s;
+    if (/^rental car$/i.test(changes.type || '') && car.type) delete changes.type;  // what you wrote of it stays
+    ground.forgetStay(car, changes, inCountry);
+    Object.assign(car, changes);
+    saveStays();
+    lookUpTrips();
+    return res.json(car);
+  }
   if (same) {
     const { id, ...changes } = s;
     if (same.source === 'booking') delete changes.place, delete changes.country;  // the hotel's place beats the mail's town
@@ -583,6 +598,21 @@ app.post('/api/stays', (req, res) => {
   lookUpTrips();
   res.json(same || s);
 });
+
+// a mailed rental car that is one Cairn has already: one added by hand, from a trip doc or the calendar for the same
+// days (a day either way), when it is the only one; or, for a contract signed at the counter (Goldcar's: one day, no
+// return date), any car that covers its day ({contract}: that car)
+const HANDMADE = /^(drive|calendar|manual)-|^$/;
+function sameCar(s) {
+  const day = d => Date.parse((d || '').slice(0, 10)), near = (a, b) => Math.abs(day(a) - day(b)) <= 864e5;
+  const cars = stays.filter(x => x.what === 'car');
+  if (s.provider === 'Goldcar') {
+    const has = cars.find(x => x.provider !== 'Goldcar' && day(x.start) <= day(s.start) + 864e5 && day(s.start) <= day(x.end || x.start) + 864e5);
+    return has && { contract: has.id };
+  }
+  const hand = cars.filter(x => HANDMADE.test(String(x.code || '')) && near(x.start, s.start) && near(x.end || x.start, s.end || s.start));
+  return hand.length === 1 ? hand[0] : null;
+}
 
 // whether a spot lies in a country (a code, or its English name): the country of the town nearest it
 let countryCodes = null;
@@ -1333,9 +1363,9 @@ function booksRead(from = '', to = '') {
 }
 app.get('/api/books', (req, res) => res.json(booksRead(req.query.from || '', req.query.to || '')));
 app.get('/api/books/status', (_req, res) => res.json(bookshelf.status()));
-app.post('/api/books/import', express.text({ type: () => true, limit: '20mb' }), (req, res) => {
+app.post('/api/books/import', express.raw({ type: () => true, limit: '50mb' }), (req, res) => {  // the CSV or the data download's zip
   try {
-    res.json(bookshelf.importExport(String(req.body || '')));
+    res.json(bookshelf.importExport(Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0)));
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
@@ -1364,9 +1394,9 @@ const imports = require('./uploads').create({
       note: 'Adds to the payments kept, each once.', run: files => py('bank.py', [...files, ...outTo('transactions.json')]) },
     ov: { label: '🚆 OV-chipkaart', accept: '.csv', what: 'ov-chipkaart.nl → Mijn OV-chip → card → Reishistorie, as CSV (18 months back at most, per card)',
       note: 'Updates the routes\' counts; adds nothing twice.', run: files => py('ovchipkaart.py', [...files, '--cairn', `http://127.0.0.1:${config.port}`]) },
-    goodreads: { file: path.join(DATA_DIR, 'books.json'), label: '📚 Goodreads', accept: '.csv', what: 'My Books → Import and export → Export library: goodreads_library_export.csv',
-      note: 'Replaces the books kept; each is placed where you were the day you finished it.',
-      run: async files => { const s = bookshelf.importExport(fs.readFileSync(files[files.length - 1], 'utf8')); return `${s.books} books read, ${s.dated} with the day finished`; } }
+    goodreads: { file: path.join(DATA_DIR, 'books.json'), label: '📚 Goodreads', accept: '.csv,.zip', what: 'My Books → Import and export → Export library: goodreads_library_export.csv; or Account settings → Download your data: the zip, as it came',
+      note: 'Replaces the books kept; each is placed where you were the day you finished it. The CSV has the authors and pages, the zip the days you started: give both to have all.',
+      run: async files => { const s = files.map(f => bookshelf.importExport(fs.readFileSync(f))).pop(); return `${s.books} books read, ${s.dated} with the day finished`; } }
   }
 });
 app.get('/api/imports', (_req, res) => res.json(imports.list()));
@@ -1399,8 +1429,10 @@ function derivedDrives(list = tripStore.drives()) {
   const timed = t => !t.approx && (t.arrival || /^\d{4}-\d\d-\d\d \d\d:\d\d/.test(t.date || '') && !/ 12:00(:00)?$/.test(t.date));
   const own = new Set(trips.filter(t => t.mode === 'drive' && !timed(t)).map(t => (t.date || '').slice(0, 10)));
   const name = at => (towns && cities.townAt(towns, at[0], at[1])?.name) || `${at[0].toFixed(2)}, ${at[1].toFixed(2)}`;
+  // the towns it stopped at on the way, each once, not its ends
+  const via = d => [...new Set((d.via || []).map(name))].filter(n => n !== name(d.from) && n !== name(d.to) && !/^-?\d/.test(n));
   return list.filter(d => !own.has(d.day)).map((d, i) => ({ id: `drive-${i}`, mode: 'drive', derived: true, date: `${d.day} 12:00:00`,
-    from: name(d.from), to: name(d.to), from_lat: d.from[0], from_lon: d.from[1], to_lat: d.to[0], to_lon: d.to[1],
+    from: name(d.from), to: name(d.to), from_lat: d.from[0], from_lon: d.from[1], to_lat: d.to[0], to_lon: d.to[1], via: via(d),
     path: d.path || '', distance: Math.round(d.km), path_source: d.path ? 'osrm' : 'straight' }));
 }
 app.get('/api/drives', async (_req, res) => res.json(derivedDrives(await tripStore.drivesReady())));
@@ -1676,6 +1708,39 @@ app.post('/api/health/dedupe', (_req, res) => {
 
 // a night with a host (Couchsurfing, BeWelcome, Trustroots): kept before a hotel or Airbnb booked for the same night
 const HOSTED = /^(couchsurfing|bewelcome|trustroots)$/i, hosted = s => HOSTED.test(s.provider || '') || /^(cs|bw|tr)-/.test(s.code || '');
+// Flights that cannot both have been flown: the same flight twice on a day (booked twice, or a copy), and a flight
+// leaving from far (CLASH_KM) from where the one before it landed, within CLASH_H, with no train, bus or drive in
+// between (a rebooking whose old flight stayed, or one not taken)
+const CLASH_KM = 300, CLASH_H = 36;
+function flightClashes(no) {
+  const card = f => ({ id: f.id, date: f.date, flight_number: f.flight_number || '', from: f.from, to: f.to, airline: f.airline || '' });
+  const same = new Map(), out = [];
+  for (const f of flights) {
+    const n = (f.flight_number || '').replace(/\s+/g, '').toUpperCase();
+    const k = `${n}|${(f.date || '').slice(0, 10)}|${f.from}|${f.to}`;  // one number for two legs (a stop on the way) is not twice
+    if (n && f.date) same.set(k, [...(same.get(k) || []), f]);
+  }
+  const twins = new Set();
+  for (const list of same.values()) {
+    if (list.length < 2) continue;
+    list.forEach(f => twins.add(f.id));
+    out.push({ key: `health|flighttwin|${list.map(f => f.id).sort((a, b) => a - b).join('|')}`, why: 'twice', flights: list.map(card) });
+  }
+  // the take-off in unix seconds (at noon when only the day is known), in order
+  const when = f => localTime(/\d\d:\d\d/.test(f.date) ? f.date : `${f.date.slice(0, 10)} 12:00`, airports[f.from].tz) ?? Date.parse(`${f.date.slice(0, 10)}T12:00:00Z`) / 1000;
+  const sorted = flights.filter(f => f.date && airports[f.from] && airports[f.to]).map(f => [when(f), f]).sort((a, b) => a[0] - b[0]);
+  for (let i = 1; i < sorted.length; i++) {
+    const [t0, a] = sorted[i - 1], [t1, b] = sorted[i];
+    if (a.to === b.from || twins.has(a.id) || twins.has(b.id) || t1 - t0 > CLASH_H * 3600) continue;
+    const timed = f => /\d\d:\d\d/.test(f.date);
+    if (b.to === a.from && !(timed(a) && timed(b))) continue;  // a day without times: they may have been the other way round
+    const km = haversine(airports[a.to].lat, airports[a.to].lon, airports[b.from].lat, airports[b.from].lon);
+    if (km < CLASH_KM || trips.some(t => t.date && t.date > a.date && t.date < b.date)) continue;
+    out.push({ key: `health|flightgap|${a.id}|${b.id}`, why: b.to === a.from ? 'order' : 'far', km, flights: [card(a), card(b)] });
+  }
+  return out.filter(x => !no.has(x.key)).sort((a, b) => b.flights[0].date.localeCompare(a.flights[0].date));
+}
+
 app.get('/api/health', (_req, res) => {
   const no = dismissedSet(), beds = stays.filter(s => s.what !== 'car' && s.start && s.end && s.end > s.start).sort((a, b) => a.start.localeCompare(b.start));
   const twice = [];
@@ -1699,7 +1764,7 @@ app.get('/api/health', (_req, res) => {
   const photoJobs = [index.ok === false && { key: `health|photos|index|${index.at}`, what: 'Updating the photo index (imports/photos.py)', at: index.at * 1000, error: index.error },
     placesStatus?.ok === false && { key: `health|photos|write|${placesStatus.at}`, what: 'Writing the places you gave photos into Photos', at: placesStatus.at, error: placesStatus.error, again: true }]
     .filter(x => x && !no.has(x.key));
-  res.json({ copies: stayCopies().reduce((n, g) => n + g.drop.length, 0), twice, unplaced, straight, flights: flightsBare, photoJobs,
+  res.json({ copies: stayCopies().reduce((n, g) => n + g.drop.length, 0), twice, unplaced, straight, flights: flightsBare, clashes: flightClashes(no), photoJobs,
     bases: bases.list().filter(x => !no.has(x.key)) });
 });
 // a train, bus or ferry looked up again from its names (its places and track)

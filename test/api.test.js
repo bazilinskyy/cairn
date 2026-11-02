@@ -28,7 +28,7 @@ before(async () => {
   fs.copyFileSync(path.join(ROOT, 'activities.js'), path.join(dir, 'activities.js'));
   fs.copyFileSync(path.join(ROOT, 'regions.js'), path.join(dir, 'regions.js'));
   fs.copyFileSync(path.join(ROOT, 'country-lists.json'), path.join(dir, 'country-lists.json'));
-  ['climbs.js', 'ascents.js', 'efforts.js', 'climbs.json', 'photos.js', 'climb_records.json', 'trips.js', 'weather.js', 'stats.js', 'lastfm.js', 'suggestions.js', 'backup.js', 'albums.js', 'things.js', 'todotrips.js', 'prep.js', 'spending.js', 'review.js', 'bases.js', 'books.js', 'uploads.js', 'report.js'].forEach(f => fs.copyFileSync(path.join(ROOT, f), path.join(dir, f)));
+  ['climbs.js', 'ascents.js', 'efforts.js', 'climbs.json', 'climbs_extra.json', 'photos.js', 'climb_records.json', 'trips.js', 'weather.js', 'stats.js', 'lastfm.js', 'suggestions.js', 'backup.js', 'albums.js', 'things.js', 'todotrips.js', 'prep.js', 'spending.js', 'review.js', 'bases.js', 'books.js', 'uploads.js', 'report.js'].forEach(f => fs.copyFileSync(path.join(ROOT, f), path.join(dir, f)));
   fs.copyFileSync(path.join(ROOT, 'default.config'), path.join(dir, 'default.config'));
   fs.cpSync(path.join(ROOT, 'public'), path.join(dir, 'public'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'data'));
@@ -200,6 +200,23 @@ test('stays: a mail for a stay from the Booking.com export takes it over and kee
   await call('DELETE', `/api/stays/${hotel.id}`);
 });
 
+test('stays: a mailed rental car takes over the one added by hand for its days; a counter contract joins it', async () => {
+  const mine = await (await call('POST', '/api/stays', { code: 'manual-car-1', what: 'car', place: 'Faro', country: 'PT', start: '2021-03-01',
+    end: '2021-03-05', type: 'a road trip along the coast', source: 'manual', lat: 37.02, lon: -7.93 })).json();
+  const s = await (await call('POST', '/api/stays', { code: 'XX123456', what: 'car', provider: 'Test Cars', place: 'Faro - Airport',
+    start: '2021-03-01', end: '2021-03-06', type: 'Rental car', price: '50€' })).json();
+  assert.deepStrictEqual([s.id, s.code, s.provider, s.place, s.end, s.type, s.price],
+    [mine.id, 'XX123456', 'Test Cars', 'Faro - Airport', '2021-03-06', 'a road trip along the coast', '50€']);
+  const desk = await (await call('POST', '/api/stays', { code: '99887766', what: 'car', provider: 'Goldcar', place: 'FAO', start: '2021-03-01', end: '2021-03-01' })).json();
+  assert.deepStrictEqual(desk, { ignored: 'the counter contract of a car already there', car: mine.id });
+  const other = await (await call('POST', '/api/stays', { code: 'XX654321', what: 'car', provider: 'Test Cars', place: 'Faro - Airport',
+    start: '2021-03-01', end: '2021-03-06' })).json();
+  assert.notStrictEqual(other.id, mine.id, 'a second booking for those days is a car of its own');
+  const all = await (await call('GET', '/api/stays')).json();
+  assert.deepStrictEqual(all.filter(x => x.start === '2021-03-01').map(x => x.code).sort(), ['XX123456', 'XX654321']);
+  for (const x of [mine, other]) await call('DELETE', `/api/stays/${x.id}`);
+});
+
 test('stays: one deleted stays deleted when its booking is sent again', async () => {
   const s = await (await call('POST', '/api/stays', { code: 'GONE1', what: 'stay', place: 'Split', start: '2020-04-03', end: '2020-04-05' })).json();
   await call('DELETE', `/api/stays/${s.id}`);
@@ -236,6 +253,17 @@ test('a book from the Goodreads export is where you slept the night you finished
   for (let i = 0; i < 50 && !(row = (await (await call('GET', '/api/imports')).json()).find(s => s.key === 'goodreads')).last; i++) await new Promise(r => setTimeout(r, 100));
   assert.deepStrictEqual([row.last.ok, row.last.message, row.last.files], [true, '2 books read, 1 with the day finished', ['export.csv']]);
   await call('DELETE', `/api/stays/${stay.id}`);
+});
+
+test('flights that do not follow on: the same flight twice, and one leaving from far from where the last landed', async () => {
+  const add = async f => (await (await call('POST', '/api/flights', f)).json()).id;
+  const one = await add({ date: '2031-03-01 08:00:00', from: 'AMS', to: 'MAD', flight_number: 'XX101' });
+  const far = await add({ date: '2031-03-01 18:00:00', from: 'LIS', to: 'MAD', flight_number: 'XX202' });
+  const on = await add({ date: '2031-03-05 08:00:00', from: 'AMS', to: 'LIS', flight_number: 'XX303' });
+  const leg = await add({ date: '2031-03-05 13:00:00', from: 'LIS', to: 'MAD', flight_number: 'XX303' });  // one number, two legs
+  const clashes = (await (await call('GET', '/api/health')).json()).clashes.filter(x => x.flights.some(f => [one, far, on, leg].includes(f.id)));
+  assert.deepStrictEqual(clashes.map(x => [x.why, x.flights.map(f => f.id)]), [['far', [one, far]]]);
+  for (const id of [one, far, on, leg]) await call('DELETE', `/api/flights/${id}`);
 });
 
 test('two stays for the same night: a host comes first, marked as the one kept before a booking', async () => {

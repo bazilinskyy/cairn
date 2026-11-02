@@ -186,7 +186,7 @@ def event_title(leg, airports):
 
 
 def title_has_flight(title, flight):
-    """True when the title holds this flight number with any airline prefix: EJU7883, U27883, U2 7883."""
+    """True when the title holds this flight number with any airline prefix: EJU1234, U21234, U2 1234."""
     return bool(re.search(rf"(?<![A-Za-z0-9])[A-Z0-9]{{2,3}}\s?{flight[2:]}(?!\d)", title or ""))
 
 
@@ -618,7 +618,8 @@ class CairnHTTP:
     def been_before(self, names, start, end, home=(), km=NEAR_KM):
         """Where the user was near the trip's places (names, as the doc has them) before it began, as text for the
         suggestions: per place the towns within km that Cairn has them in, with their days, visits, years and what
-        they did there (activities by kind, climbs ridden). A name is the town of that name nearest to where the
+        they did there (activities by kind, climbs ridden); and what they would still like to do there: the famous
+        climbs not ridden yet, the places saved in Cairn's wish list. A name is the town of that name nearest to where the
         trip's flights land (Cairn's flights of its days), else the biggest; none near a home airport."""
         q = urllib.parse.quote
         ports = self._call("GET", "/api/airports") or {}
@@ -644,13 +645,21 @@ class CairnHTTP:
             return ""
         before = f"{start - timedelta(days=1):%Y-%m-%d}"
         cities = self._call("GET", f"/api/cities?to={before}") or []
-        climbs = [c for c in self._call("GET", "/api/climbs") or [] if c.get("times") and (c.get("first") or "") <= before]
+        climbs = [c for c in self._call("GET", "/api/climbs") or [] if c.get("lat") is not None]
+        ridden = [c for c in climbs if c.get("times") and (c.get("first") or "") <= before]
+        saved = [p for p in (self._call("GET", "/api/wishlist") or {}).get("saved") or [] if p.get("lat") is not None]
         out = []
         for a in anchors:
             near = sorted((c for c in cities if _km(a, (c["lat"], c["lon"])) <= km), key=lambda c: (-c["days"], c["name"]))[:12]
-            rode = [c for c in climbs if c.get("lat") is not None and _km(a, (c["lat"], c["lon"])) <= km]
+            rode = [c for c in ridden if _km(a, (c["lat"], c["lon"])) <= km]
+            ahead = sorted((c for c in climbs if not c.get("times") and _km(a, (c["lat"], c["lon"])) <= km),
+                           key=lambda c: -(c.get("ele") or 0))[:5]
+            wish = [p for p in saved if _km(a, (p["lat"], p["lon"])) <= km][:8]
+            more = (f" Famous climbs I have not ridden: " + ", ".join(c["name"] + (f" ({c['ele']:,} m)" if c.get("ele") else "")
+                                                                     for c in ahead) + "." if ahead else "") + \
+                   (" Places I saved to go to: " + ", ".join(p.get("name") or "a saved place" for p in wish) + "." if wish else "")
             if not near and not rode:
-                out.append(f"- Around {a['name']}: never been.")
+                out.append(f"- Around {a['name']}: never been.{more}")
                 continue
             towns = []
             for c in near:
@@ -667,7 +676,7 @@ class CairnHTTP:
             line = f"- Around {a['name']} (within {km} km): " + ("; ".join(towns) if towns else "no town")
             if rode:
                 line += ". Climbs ridden: " + ", ".join(f"{c['name']} ({c['first'][:4]})" for c in rode)
-            out.append(line + ".")
+            out.append(line + "." + more)
         return "\n".join(out)
 
 
@@ -798,9 +807,16 @@ def run(args, cfg, sec):
     alerts = merge_alerts(alerts)
     for a in alerts:
         log("ALERT " + a)
-    if alerts and not args.dry_run:
+    told = work.setdefault("alerted", {})  # posted before (mail read again, a rescan): not posted twice
+    fresh = [a for a in alerts if a not in told]
+    if fresh and not args.dry_run:
         head = "tripmail first run: emails to check" if first_run else "tripmail: emails to check"
-        send_discord(head + "\n" + "\n".join(f"- {a}" for a in alerts), sec)
+        send_discord(head + "\n" + "\n".join(f"- {a}" for a in fresh), sec)
+        today = now().date().isoformat()
+        told.update({a: today for a in fresh})
+        for a in [a for a, day in told.items() if day < (now() - timedelta(days=365)).date().isoformat()]:
+            del told[a]  # a year on, the trip is long over
+        save_state(work)
     return alerts
 
 

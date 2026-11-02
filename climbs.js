@@ -1,6 +1,7 @@
 'use strict';
 // Famous cycling climbs (climbs.json: the climbs in the cycle-racing categories of six Wikipedias, towns and
-// buildings left out, each with its summit from Wikidata) and which of them your rides went up. A ride counts for a
+// buildings left out, each with its summit from Wikidata; climbs_extra.json: famous ones those categories miss, such
+// as the islands', each at the top of its road from OpenStreetMap) and which of them your rides went up. A ride counts for a
 // climb when it passes within REACH_M of the summit, and for one of its ascents (ascents.js: from Bédoin, from
 // Malaucène, ...) when it followed that ascent's last stretch up to the summit. A climb's ascents are worked out in
 // the background the first time a ride comes near it, kept in data/climb_ascents.json.
@@ -16,7 +17,9 @@ const PHOTO_M = 300, PHOTO_TOP_M = 1000, PHOTO_TOP_S = 20 * 60;  // photos near 
 const REACH_M = 150, NEAR_M = 1500;  // a ride within NEAR_M of a climb gets its ascents and true top worked out
 const RIDE = /Ride|Velomobile|Handcycle/;
 const LIST = (() => {
-  try { return JSON.parse(fs.readFileSync(path.join(__dirname, 'climbs.json'), 'utf8')); } catch (_) { return []; }
+  const read = name => { try { return JSON.parse(fs.readFileSync(path.join(__dirname, name), 'utf8')); } catch (_) { return []; } };
+  const list = read('climbs.json'), ids = new Set(list.map(c => c.id));
+  return [...list, ...read('climbs_extra.json').filter(c => !ids.has(c.id))];
 })();
 
 // The best known times up the climbs (climb_records.json: from race data, Wikipedia and watts2win.eu, each with its

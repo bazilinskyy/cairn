@@ -515,6 +515,9 @@
     .health-stay { background: var(--surface2); border-radius: 6px; padding: 6px 8px; display: flex; flex-direction: column; gap: 2px; }
     .health-stay small { color: var(--text2); }
     .health-stay .btn { align-self: flex-start; padding: 2px 8px; font-size: 11px; margin-top: 4px; }
+    .health-flight { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+    .health-flight small { color: var(--text2); }
+    .health-flight .btn { padding: 1px 7px; font-size: 11px; }
     .sugg-title { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--text2); margin: 18px 0 6px; }
     .sugg.album { grid-template-columns: 56px 1fr auto; }
     .pic-icon { display: flex; width: 56px; height: 40px; align-items: center; justify-content: center; font-size: 24px; background: var(--surface2); border-radius: 6px; }
@@ -1642,7 +1645,7 @@ function drawGround() {
     const when = t => (t.approx === 'year' ? t.date.slice(0, 4) : t.approx === 'month' ? t.date.slice(0, 7) : (t.date || '').slice(0, 10)) + (t.times > 1 ? ` (×${t.times})` : '');
     const count = trips.reduce((n, t) => n + (t.times || 1), 0);
     const popup = `<b>${groundModes[groundKind(best)].split(' ')[0]} ${escapeHTML(best.from)} → ${escapeHTML(best.to)}</b><br>` +
-      (best.stops?.length ? `<small>through ${best.stops.map(escapeHTML).join(', ')}</small><br>` : '') +
+      (best.stops?.length ? `<small>through ${best.stops.map(escapeHTML).join(', ')}</small><br>` : best.via?.length ? `<small>by ${best.via.map(escapeHTML).join(', ')}</small><br>` : '') +
       `<small>${count} trip${count !== 1 ? 's' : ''} · ${fmtDist(best.distance || 0)} · ` +
       `${(best.mode === 'ferry' && best.path_source === 'stops' ? 'by the ports you named, along the ferry lines' : how[best.path_source]) || 'looking up the track…'}</small><br>` +
       // each date; one of your own with ✕ to delete it (a drive worked out from your photos has none to delete)
