@@ -6,7 +6,7 @@
 // its day-by-day story and its moves, as Polarsteps draws them: where you were from photo to photo, activity to
 // activity and stay to stay, when no flight, ground trip or activity of your own already shows how you got there.
 // Moves of 10 km or more go along the roads (OSRM's car route, looked up in the background, kept in
-// data/drives.json); with a rental car (or moped) on that day they count as drives (rides).
+// data/drives.json); with a rental car (or scooter) on that day they count as drives (rides).
 
 const fs = require('fs');
 const ground = require('./ground');
@@ -216,7 +216,7 @@ function create({ towns, cities, days, flights, airports, groundTrips, stays, ac
     ev.filter(e => e.cover).forEach(e => { const x = spans[e.cover] = spans[e.cover] || [e.t, e.t]; x[0] = Math.min(x[0], e.t); x[1] = Math.max(x[1], e.t); });
     const during = e => !e.cover && Object.values(spans).some(([a, b]) => e.t >= a && e.t < b);
     ev.splice(0, ev.length, ...ev.filter(e => !during(e)).sort((a, b) => a.t - b.t));
-    const carOn = t => { const h = carHours.find(([a, b]) => t >= a && t <= b); return h ? h[2] || 'car' : null; };  // 'car' or 'moped'
+    const carOn = t => { const h = carHours.find(([a, b]) => t >= a && t <= b); return h ? h[2] || 'car' : null; };  // 'car' or 'scooter'
     const moves = [];
     let last = null, left = null;  // left: the last time you were seen at last's place (you left it after that)
     for (const e of ev) {
@@ -233,7 +233,7 @@ function create({ towns, cities, days, flights, airports, groundTrips, stays, ac
           const road = (km >= ROAD_KM && km <= ROAD_MAX_KM && (car || km / hours <= CAR_KMH))
             || (car && km >= HOP_KM && (km / hours >= WALK_KMH || km >= CAR_HOP_KM));
           moves.push({ from: last.at, to: e.at, t0: gone, t1: e.t, km: Math.round(km * 10) / 10, kind: road ? (car ? 'drive' : 'road') : 'move',
-            ...(road && car === 'moped' && { by: 'moped' }) });
+            ...(road && car === 'scooter' && { by: 'scooter' }) });
         } else if (!e.cover) { left = e.t; continue; }  // a few steps on: keep the earlier place as where you were
       }
       last = e;

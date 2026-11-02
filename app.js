@@ -425,7 +425,7 @@ const WHEN = /^\d{4}-\d\d-\d\d( \d\d:\d\d(:\d\d)?)?$/, DAY = /^\d{4}-\d\d-\d\d$/
 const RULES = {
   flight: { from: CODE, to: CODE, date: WHEN, arrival: WHEN },
   ground: { date: WHEN, arrival: WHEN, mode: /^(train|bus|ferry|hitch|drive)$/ },
-  stay: { start: DAY, end: DAY, what: /^(stay|car)$/, vehicle: /^(car|moped)$/ }  // a rental: a car, or a moped or scooter
+  stay: { start: DAY, end: DAY, what: /^(stay|car)$/, vehicle: /^(car|scooter)$/ }  // a rental: a car, or a scooter (or moped)
 };
 function badField(kind, body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return 'a JSON object is needed';

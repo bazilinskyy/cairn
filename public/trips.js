@@ -250,7 +250,7 @@ function tripStory(d) {
   d.activities.forEach(a => ev.push({ at: at(a.date), html: `${sportEmoji[sportOf(a.sport)] || '🏅'} ${linkTo(a)} <small>${[a.distance ? fmtDist(a.distance, 1) : '',
     a.elevation ? '↑' + fmtHeight(a.elevation) : '', a.moving_time ? hm(a.moving_time) : ''].filter(Boolean).join(' · ')}` +
     `${a.weather ? ` · ${weatherText(a.weather, true)}` : ''}</small>` }));
-  d.moves.filter(m => m.kind !== 'move').forEach(m => ev.push({ at: local(m.t0, m.from[1]), html: `${m.kind === 'drive' ? (m.by === 'moped' ? '🛵 Rode' : '🚗 Drove') : '🛣️ By road'} <small>${fmtDist(m.km)}</small>` }));
+  d.moves.filter(m => m.kind !== 'move').forEach(m => ev.push({ at: local(m.t0, m.from[1]), html: `${m.kind === 'drive' ? (m.by === 'scooter' ? '🛵 Rode' : '🚗 Drove') : '🛣️ By road'} <small>${fmtDist(m.km)}</small>` }));
   (d.photos || []).forEach(p => ev.push({ at: local(p[1], p[3]), photo: p }));
   const stays = d.stays.filter(s => s.what !== 'car');
   const days = {};
@@ -348,7 +348,7 @@ function drawTripMap(d, keepView = false) {
     const drive = m.kind === 'drive', roadway = !!m.path;
     L.polyline(pts, { color: drive ? col('car') : roadway ? col('timeline') : col('photo'), weight: (roadway ? 3 : 1.5) * st.w,
       opacity: roadway ? 0.85 : 0.6, dashArray: roadway ? null : '2 6' })
-      .bindPopup(`<b>${drive ? (m.by === 'moped' ? '🛵 Ride' : '🚗 Drive') : roadway ? '🛣️ By road' : '📍 Moved'}</b> · ${Math.round(dist(m.km) * 10) / 10} ${DU()}<br>` +
+      .bindPopup(`<b>${drive ? (m.by === 'scooter' ? '🛵 Ride' : '🚗 Drive') : roadway ? '🛣️ By road' : '📍 Moved'}</b> · ${Math.round(dist(m.km) * 10) / 10} ${DU()}<br>` +
         `<small>${fmtDate(new Date(m.t0 * 1000).toISOString().slice(0, 10))} ${new Date(m.t0 * 1000).toISOString().slice(11, 16)}–${new Date(m.t1 * 1000).toISOString().slice(11, 16)} UTC` +
         `${roadway ? ', the likeliest road route' : ''}</small>`).addTo(tripMap);
     pts.forEach(p => bounds.push(p));
