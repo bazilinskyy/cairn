@@ -81,7 +81,7 @@ const line = (latlons, props = {}) => ({ type: 'Feature', properties: props, geo
 
 const LAYERS3D = {  // key in the 2D legend -> what it is, and its 2D layer
   flight: () => routeLayer, train: () => groundLayer.train, commute: () => groundLayer.commute, bus: () => groundLayer.bus, ferry: () => groundLayer.ferry,
-  hitch: () => groundLayer.hitch, drive: () => groundLayer.drive, car: () => carLayer, photo: () => photoLayer, ride: () => kindLayer.ride, run: () => kindLayer.run,
+  hitch: () => groundLayer.hitch, drive: () => groundLayer.drive, car: () => carLayer, moped: () => mopedLayer, photo: () => photoLayer, ride: () => kindLayer.ride, run: () => kindLayer.run,
   walk: () => kindLayer.walk, sport: () => kindLayer.sport, climb: () => climbLayer, country: () => countryLayer, city: () => cityLayer
 };
 // stays: one switch here for the kinds of bed the 2D legend lists apart; on while any of its rows is
@@ -100,7 +100,7 @@ function data3d() {
   const ground = shownGround().filter(t => t.from_lat != null && t.to_lat != null)
     .map(t => line(t.path ? decodePath(t.path) : [[t.from_lat, t.from_lon], [t.to_lat, t.to_lon]], { mode: groundKind(t), name: `${t.from} → ${t.to}`, date: day(t.date) }));
   const stays = allStays.filter(s => s.lat != null && overlapsWin(s.start, s.end))
-    .map(s => pt(s.lat, s.lon, { what: s.what, kind: s.what === 'car' ? '' : stayKindOf(s), shade: s.what === 'car' ? 'car' : STAY_KINDS[stayKindOf(s)][2].slice(2),
+    .map(s => pt(s.lat, s.lon, { what: s.what, kind: s.what === 'car' ? (s.vehicle === 'moped' ? 'moped' : 'car') : stayKindOf(s), shade: s.what === 'car' ? 'car' : STAY_KINDS[stayKindOf(s)][2].slice(2),
       ring: s.what !== 'car' && !!STAY_KINDS[stayKindOf(s)][3], name: s.hotel || s.type || s.place, place: s.place, date: s.start }));
   const photos = (allPhotoPoints || []).filter(p => inWin(photoDay(p))).map(p => pt(p[2], p[3], { id: p[0], t: p[1] }));
   const climbs = allClimbs.map(c => pt(c.lat, c.lon, { id: c.id, name: c.name, ele: c.ele || 0, done: climbDone(c) ? 1 : 0, times: c.times }));
@@ -208,7 +208,7 @@ async function open3D() {
     `<br><a href="#" onclick="event.preventDefault(); close3D(); openClimb('${p.id}')">Open climb page →</a>`);
   on('acts', p => `<b>${escapeHTML(p.name)}</b><br><small>${fmtDate(p.date)}</small>`);
   on('ground', p => `<b>${escapeHTML(p.name)}</b><br><small>${escapeHTML(p.mode)} · ${fmtDate(p.date)}</small>`);
-  on('stays', p => `<b>${p.what === 'car' ? '🚗' : '🏨'} ${escapeHTML(p.name || '')}</b><br><small>${escapeHTML(p.place || '')} · ${fmtDate(p.date)}</small>`);
+  on('stays', p => `<b>${p.what === 'car' ? (p.kind === 'moped' ? '🛵' : '🚗') : '🏨'} ${escapeHTML(p.name || '')}</b><br><small>${escapeHTML(p.place || '')} · ${fmtDate(p.date)}</small>`);
   on('photo', p => photoPopup([p.id, p.t]));
   on('cities', p => `<b>🏙️ ${escapeHTML(p.name)}</b><br><small>${p.days} days</small>` +
     (p.id ? `<br><a href="#" onclick="event.preventDefault(); close3D(); openCityReport(${p.id})">Open report →</a>` : ''));
@@ -230,7 +230,7 @@ function refresh3D() {
   const kinds = Object.keys(ACT_KINDS).filter(shown);
   set('acts', d.acts.filter(f => kinds.includes(f.properties.kind)));
   set('ground', d.ground.filter(f => shown(f.properties.mode)));
-  set('stays', d.stays.filter(f => (f.properties.what === 'car' ? shown('car') : map.hasLayer(stayLayers[f.properties.kind]))));
+  set('stays', d.stays.filter(f => (f.properties.what === 'car' ? shown(f.properties.kind) : map.hasLayer(stayLayers[f.properties.kind]))));
   set('photos', d.photos);
   set('climbs', d.climbs);
   set('climbLines', d.climbLines);
@@ -260,7 +260,7 @@ function refresh3D() {
 function draw3dPanel() {
   const box = document.getElementById('map3d-panel');
   const trip = document.getElementById('p-trip');
-  const labels = { flight: '✈️ Flights', train: '🚆 Trains', commute: '🔁 Commutes', bus: '🚌 Buses', ferry: '⛴️ Ferries', hitch: '👍 Hitchhiking', drive: '🚙 By car', stay: '🏨 Stays', car: '🚗 Rental cars',
+  const labels = { flight: '✈️ Flights', train: '🚆 Trains', commute: '🔁 Commutes', bus: '🚌 Buses', ferry: '⛴️ Ferries', hitch: '👍 Hitchhiking', drive: '🚙 By car', stay: '🏨 Stays', car: '🚗 Rental cars', moped: '🛵 Rented mopeds',
     photo: '📷 Photos', ride: '🚴 Cycling', run: '🏃 Running', walk: '🥾 Walks & hikes', sport: '🏅 Other sports', climb: '⛰️ Climbs',
     country: '🌍 Countries', city: '🏙️ Cities' };
   box.innerHTML = `<button class="btn btn-primary map3d-back" onclick="close3D()" title="Back to the 2D map (Esc)">← 2D map</button>` +

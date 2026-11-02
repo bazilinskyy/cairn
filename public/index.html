@@ -1507,9 +1507,10 @@ function initMap() {
     // the tiles row stays while there are activities: hiding every type empties it, and the group must reach it again
     const rows = Object.entries(layers).filter(([k]) => k === 'flight' || n[k] || (k === 'tile' && allActivities.length));
     const lit = list => list.filter(([, [, layer]]) => map.hasLayer(layer)).length, on = lit(rows);
-    // rows under a heading that switches them all: activities by type (and their tiles), stays by kind of bed
+    // rows under a heading that switches them all: activities by type (and their tiles), stays by kind of bed, rentals
+    // (cars, mopeds and scooters)
     const groups = { act: ['Activities', k => k.startsWith('act-') || k === 'tile', allActivities.filter(a => inWin(a.date)).length],
-      stay: ['🏨 Stays', k => k.startsWith('stay-'), n.stays || 0] };
+      stay: ['🏨 Stays', k => k.startsWith('stay-'), n.stays || 0], rent: ['🚗 Rental cars and mopeds', k => k === 'car' || k === 'moped', n.rentals || 0] };
     const groupOf = k => Object.keys(groups).find(g => groups[g][1](k)) || '';
     const kids = g => rows.filter(([k]) => groupOf(k) === g);
     const swatch = (color, shape) => `<span class="swatch ${shape || ''}" style="${shape === 'dot' ? 'background' : 'border-color'}:${mapVar(color)}"></span>`;  // dot, ring, area or a line

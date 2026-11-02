@@ -119,7 +119,7 @@ const STAY_KINDS = { hotel: ['Hotel and other', '🏨 Hotels and other', '--stay
   bewelcome: ['BeWelcome', '🤝 BeWelcome', '--stay2', true], trustroots: ['Trustroots', '🌳 Trustroots', '--stay2', true], airbnb: ['Airbnb', '🏠 Airbnb', '--stay3'], camping: ['Camping', '🏕️ Camping', '--stay3', true] };
 const stayKindOf = s => Object.keys(STAY_KINDS).find(k => STAY_KINDS[k][0] === s.kind) || 'hotel';
 const stayLayers = Object.fromEntries(Object.keys(STAY_KINDS).map(k => [k, L.layerGroup()]));
-const carLayer = L.layerGroup(), photoLayer = L.layerGroup();
+const carLayer = L.layerGroup(), mopedLayer = L.layerGroup(), photoLayer = L.layerGroup();  // rentals: cars, and mopeds or scooters
 const timelineLayer = L.layerGroup(), countryLayer = L.layerGroup(), activityLayer = L.layerGroup(), tileLayer = L.layerGroup();
 const climbLayer = L.layerGroup();
 let allClimbs = [];  // famous cycling climbs and the rides over them (/api/climbs); none without rides
@@ -157,7 +157,7 @@ function fmtDate(d) {
 function extraLayers() {
   return {
     ...Object.fromEntries(Object.entries(STAY_KINDS).map(([k, [, label, color, ring]]) => ['stay-' + k, [label, stayLayers[k], color, ring ? 'ring' : 'dot']])),
-    car: ['🚗 Rental cars and mopeds', carLayer, '--car', 'dot'],
+    car: ['🚗 Cars', carLayer, '--car', 'dot'], moped: ['🛵 Mopeds and scooters', mopedLayer, '--car', 'ring'],
     photo: ['📷 Photos', photoLayer, '--photo', 'dot'], timeline: ['🧭 Timeline', timelineLayer, '--timeline', 'dot'],
     ...Object.fromEntries(Object.entries(ACT_KINDS).map(([k, label]) => ['act-' + k, [label, kindLayer[k], '--' + k]])),
     tile: ['🟩 Explored tiles', tileLayer, '--tile', 'area'], climb: ['⛰️ Climbs', climbLayer, '--climb', 'dot'],
@@ -169,7 +169,8 @@ function extraLayers() {
 function extraCounts() {
   const shown = allStays.filter(s => s.lat != null && overlapsWin(s.start, s.end));
   return {
-    stays: shown.filter(s => s.what !== 'car').length, car: shown.filter(s => s.what === 'car').length,
+    stays: shown.filter(s => s.what !== 'car').length, rentals: shown.filter(s => s.what === 'car').length,
+    car: shown.filter(s => s.what === 'car' && s.vehicle !== 'moped').length, moped: shown.filter(s => s.what === 'car' && s.vehicle === 'moped').length,
     ...Object.fromEntries(Object.keys(STAY_KINDS).map(k => ['stay-' + k, shown.filter(s => s.what !== 'car' && stayKindOf(s) === k).length])),
     photo: allPhotoPoints?.length && (prefs.photos || 'clusters') !== 'places' ? shownPhotoPoints().length : photoCells().reduce((n, c) => n + c.count, 0),
     timeline: allTimeline.visits.filter(v => overlapsWin(v.start, v.end)).length, country: visitedCount ? `${visitedCount} / ${countryTotal}` : 0,
@@ -307,9 +308,10 @@ function drawClimbs() {
 function drawStays() {
   Object.values(stayLayers).forEach(l => l.clearLayers());
   carLayer.clearLayers();
+  mopedLayer.clearLayers();
   const spots = new Map();
   allStays.filter(s => s.lat != null && overlapsWin(s.start, s.end)).forEach(s => {
-    const key = `${s.what === 'car' ? 'car' : stayKindOf(s)}|${s.lat.toFixed(4)},${s.lon.toFixed(4)}`;
+    const key = `${s.what === 'car' ? (s.vehicle === 'moped' ? 'moped' : 'car') : stayKindOf(s)}|${s.lat.toFixed(4)},${s.lon.toFixed(4)}`;
     if (!spots.has(key)) spots.set(key, []);
     spots.get(key).push(s);
   });
@@ -331,7 +333,7 @@ function drawStays() {
       // free bed's ring is drawn, a little bigger so it reads as one)
       radius: car ? Math.min(3 + (list.length - 1) * 0.5, 5) : Math.min(2.5 + Math.sqrt(total) * 0.8, 7) + (ring ? 1 : 0),
       color, opacity: ring ? 0.9 : 0, weight: ring ? 2 : 8, fillColor: color, fillOpacity: ring ? 0.08 : 0.55
-    }).bindPopup(`<b>${head}<br><small>${lines}</small>`, { maxWidth: 300 }).addTo(car ? carLayer : stayLayers[stayKindOf(s)]);
+    }).bindPopup(`<b>${head}<br><small>${lines}</small>`, { maxWidth: 300 }).addTo(car ? (s.vehicle === 'moped' ? mopedLayer : carLayer) : stayLayers[stayKindOf(s)]);
   });
 }
 
