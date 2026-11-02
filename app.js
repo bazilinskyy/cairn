@@ -425,7 +425,7 @@ const WHEN = /^\d{4}-\d\d-\d\d( \d\d:\d\d(:\d\d)?)?$/, DAY = /^\d{4}-\d\d-\d\d$/
 const RULES = {
   flight: { from: CODE, to: CODE, date: WHEN, arrival: WHEN },
   ground: { date: WHEN, arrival: WHEN, mode: /^(train|bus|ferry|hitch|drive)$/ },
-  stay: { start: DAY, end: DAY, what: /^(stay|car)$/ }
+  stay: { start: DAY, end: DAY, what: /^(stay|car)$/, vehicle: /^(car|moped)$/ }  // a rental: a car, or a moped or scooter
 };
 function badField(kind, body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return 'a JSON object is needed';
@@ -1432,7 +1432,7 @@ function derivedDrives(list = tripStore.drives()) {
   // the towns it stopped at on the way, each once, not its ends
   const via = d => [...new Set((d.via || []).map(name))].filter(n => n !== name(d.from) && n !== name(d.to) && !/^-?\d/.test(n));
   return list.filter(d => !own.has(d.day)).map((d, i) => ({ id: `drive-${i}`, mode: 'drive', derived: true, date: `${d.day} 12:00:00`,
-    from: name(d.from), to: name(d.to), from_lat: d.from[0], from_lon: d.from[1], to_lat: d.to[0], to_lon: d.to[1], via: via(d),
+    from: name(d.from), to: name(d.to), from_lat: d.from[0], from_lon: d.from[1], to_lat: d.to[0], to_lon: d.to[1], via: via(d), ...(d.by && { vehicle: d.by }),
     path: d.path || '', distance: Math.round(d.km), path_source: d.path ? 'osrm' : 'straight' }));
 }
 app.get('/api/drives', async (_req, res) => res.json(derivedDrives(await tripStore.drivesReady())));

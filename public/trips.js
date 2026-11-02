@@ -98,7 +98,7 @@ function prepBlock(t, withTitle) {
     ...t.flights.filter(f => ahead(f.date)).map(f => `<li>✈️ <b>${escapeHTML(f.flight_number || '')}</b> ${escapeHTML(f.from_city || f.from)} → ${escapeHTML(f.to_city || f.to)} <small>${escapeHTML(f.date.slice(0, 16).replace(' ', ' at '))}</small> ${badge(f)}</li>`),
     ...t.ground.filter(g => ahead(g.date)).map(g => `<li>${(groundModes[g.mode] || '🚌').split(' ')[0]} ${escapeHTML(g.from)} → ${escapeHTML(g.to)} <small>${escapeHTML(g.date.slice(0, 16).replace(' ', ' at '))}</small></li>`),
     ...t.stays.filter(x => ahead(x.end || x.start)).map(s => `<li>🏨 ${escapeHTML(s.hotel || s.type || s.place || '')} <small>${escapeHTML(s.place || '')} · ${tripRange(s.start, s.end)} · ${escapeHTML(s.provider || '')}</small></li>`),
-    ...t.cars.filter(c => ahead(c.end || c.start)).map(c => `<li>🚗 Rental car <small>${escapeHTML(c.place || '')} · ${tripRange(c.start, c.end)} · ${escapeHTML(c.provider || '')}</small></li>`)];
+    ...t.cars.filter(c => ahead(c.end || c.start)).map(c => `<li>${rentalIcon(c)} ${rentalName(c)} <small>${escapeHTML(c.place || '')} · ${tripRange(c.start, c.end)} · ${escapeHTML(c.provider || '')}</small></li>`)];
   const missing = t.missing.map(m => `<li class="prep-missing" data-key="${escapeHTML(m.key)}">⚠️ ${escapeHTML(m.text)} ` +
     (m.todo ? '<span class="prep-ok">already a to-do</span>' : `<a href="${thingsLink(m)}">Add to Things</a>`) +
     ` <button class="btn btn-ghost" data-prep-no title="Not needed (staying with friends, booked elsewhere)">Not needed</button></li>`).join('');
@@ -187,7 +187,7 @@ function renderTrip() {
     const moved = [
       ...x.flights.map(id => byId(d.flights, id)).map(f => `✈️ ${escapeHTML(f.from)} → ${escapeHTML(f.to)}`),
       ...x.ground.map(id => byId(d.ground, id)).map(g => `${(groundModes[g.mode] || '🚌').split(' ')[0]} ${escapeHTML(g.from)} → ${escapeHTML(g.to)}`),
-      x.road ? `${cars.some(c => x.day >= c.start && x.day <= (c.end || c.start)) ? '🚗' : '🛣️'} ${Math.round(dist(x.road))} ${DU()}` : ''
+      x.road ? `${(c => (c ? rentalIcon(c) : '🛣️'))(cars.find(c => x.day >= c.start && x.day <= (c.end || c.start)))} ${Math.round(dist(x.road))} ${DU()}` : ''
     ].filter(Boolean).join('<br>');
     const did = [...x.activities.map(id => byId(d.activities, id)).map(a => linkTo(a) + (a.weather ? `<small>${weatherText(a.weather, true)}</small>` : '')),
       x.photos ? `📷 ${x.photos}` : ''].filter(Boolean).join('<br>');
@@ -201,8 +201,8 @@ function renderTrip() {
   if (d.towns.length) html += section('Towns', `<p>${d.towns.map(c => `${flagOf(c.country)}${city(c)} <small>${plural(c.days, 'day')}</small>`).join(' · ')}</p>`);
   if (stays.length || cars.length) {
     html += section('Stays and rental cars', table(['When', 'Nights', 'Where', 'Booked'], d.stays.map(s =>
-      `<tr><th>${s.what === 'car' ? '🚗' : '🏨'} ${tripRange(s.start, s.end)}</th><td>${nights(s)}${awayNote(s)}</td>` +
-      `<td><b>${escapeHTML(s.hotel || s.type || (s.what === 'car' ? 'Rental car' : 'Stay'))}</b><small>${escapeHTML(s.place || '')}</small></td>` +
+      `<tr><th>${s.what === 'car' ? rentalIcon(s) : '🏨'} ${tripRange(s.start, s.end)}</th><td>${nights(s)}${awayNote(s)}</td>` +
+      `<td><b>${escapeHTML(s.hotel || s.type || (s.what === 'car' ? rentalName(s) : 'Stay'))}</b><small>${escapeHTML(s.place || '')}</small></td>` +
       `<td>${escapeHTML(s.provider || '')}</td></tr>`)));
   }
   if (d.flights.length) {
@@ -250,7 +250,7 @@ function tripStory(d) {
   d.activities.forEach(a => ev.push({ at: at(a.date), html: `${sportEmoji[sportOf(a.sport)] || '🏅'} ${linkTo(a)} <small>${[a.distance ? fmtDist(a.distance, 1) : '',
     a.elevation ? '↑' + fmtHeight(a.elevation) : '', a.moving_time ? hm(a.moving_time) : ''].filter(Boolean).join(' · ')}` +
     `${a.weather ? ` · ${weatherText(a.weather, true)}` : ''}</small>` }));
-  d.moves.filter(m => m.kind !== 'move').forEach(m => ev.push({ at: local(m.t0, m.from[1]), html: `${m.kind === 'drive' ? '🚗 Drove' : '🛣️ By road'} <small>${fmtDist(m.km)}</small>` }));
+  d.moves.filter(m => m.kind !== 'move').forEach(m => ev.push({ at: local(m.t0, m.from[1]), html: `${m.kind === 'drive' ? (m.by === 'moped' ? '🛵 Rode' : '🚗 Drove') : '🛣️ By road'} <small>${fmtDist(m.km)}</small>` }));
   (d.photos || []).forEach(p => ev.push({ at: local(p[1], p[3]), photo: p }));
   const stays = d.stays.filter(s => s.what !== 'car');
   const days = {};
@@ -348,7 +348,7 @@ function drawTripMap(d, keepView = false) {
     const drive = m.kind === 'drive', roadway = !!m.path;
     L.polyline(pts, { color: drive ? col('car') : roadway ? col('timeline') : col('photo'), weight: (roadway ? 3 : 1.5) * st.w,
       opacity: roadway ? 0.85 : 0.6, dashArray: roadway ? null : '2 6' })
-      .bindPopup(`<b>${drive ? '🚗 Drive' : roadway ? '🛣️ By road' : '📍 Moved'}</b> · ${Math.round(dist(m.km) * 10) / 10} ${DU()}<br>` +
+      .bindPopup(`<b>${drive ? (m.by === 'moped' ? '🛵 Ride' : '🚗 Drive') : roadway ? '🛣️ By road' : '📍 Moved'}</b> · ${Math.round(dist(m.km) * 10) / 10} ${DU()}<br>` +
         `<small>${fmtDate(new Date(m.t0 * 1000).toISOString().slice(0, 10))} ${new Date(m.t0 * 1000).toISOString().slice(11, 16)}–${new Date(m.t1 * 1000).toISOString().slice(11, 16)} UTC` +
         `${roadway ? ', the likeliest road route' : ''}</small>`).addTo(tripMap);
     pts.forEach(p => bounds.push(p));
@@ -379,7 +379,7 @@ function drawTripMap(d, keepView = false) {
   });
   d.stays.filter(s => s.lat != null).forEach(s => {
     L.circleMarker([s.lat, s.lon], { radius: 7 * st.r, color: '#fff', weight: 1.5, fillColor: col(s.what === 'car' ? 'car' : 'stay'), fillOpacity: 0.95 })
-      .bindPopup(`<b>${s.what === 'car' ? '🚗' : '🏨'} ${escapeHTML(s.hotel || s.type || s.place || '')}</b><br><small>${tripRange(s.start, s.end)} · ${escapeHTML(s.provider || '')}</small>`)
+      .bindPopup(`<b>${s.what === 'car' ? rentalIcon(s) : '🏨'} ${escapeHTML(s.hotel || s.type || s.place || '')}</b><br><small>${tripRange(s.start, s.end)} · ${escapeHTML(s.provider || '')}</small>`)
       .addTo(tripMap);
     bounds.push([s.lat, s.lon]); local.push([s.lat, s.lon]);
   });

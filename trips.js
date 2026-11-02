@@ -6,7 +6,7 @@
 // its day-by-day story and its moves, as Polarsteps draws them: where you were from photo to photo, activity to
 // activity and stay to stay, when no flight, ground trip or activity of your own already shows how you got there.
 // Moves of 10 km or more go along the roads (OSRM's car route, looked up in the background, kept in
-// data/drives.json); with a rental car on that day they count as drives.
+// data/drives.json); with a rental car (or moped) on that day they count as drives (rides).
 
 const fs = require('fs');
 const ground = require('./ground');
@@ -197,10 +197,10 @@ function create({ towns, cities, days, flights, airports, groundTrips, stays, ac
       const until = legs.find(e => e.off)?.t ?? to;
       let open = since;
       for (const e of legs) {
-        if (e.off && open != null) { carHours.push([open, e.t]); open = null; }
+        if (e.off && open != null) { carHours.push([open, e.t, c.vehicle]); open = null; }
         else if (e.on && open == null && c.lat != null && near(e)) open = e.t;
       }
-      if (open != null) carHours.push([open, to]);
+      if (open != null) carHours.push([open, to, c.vehicle]);
       if (c.lat != null) {  // the first place by land (not the next airport: on a small island nothing else is that far)
         const first = seen.filter(e => e.what !== 'flight' && e.t >= since && e.t <= until && ground.km(e.at, [c.lat, c.lon]) > PICKUP_KM).sort((a, b) => a.t - b.t)[0];
         // only a place you were near that day or the one before (a car placed in a whole country is not)
@@ -216,7 +216,7 @@ function create({ towns, cities, days, flights, airports, groundTrips, stays, ac
     ev.filter(e => e.cover).forEach(e => { const x = spans[e.cover] = spans[e.cover] || [e.t, e.t]; x[0] = Math.min(x[0], e.t); x[1] = Math.max(x[1], e.t); });
     const during = e => !e.cover && Object.values(spans).some(([a, b]) => e.t >= a && e.t < b);
     ev.splice(0, ev.length, ...ev.filter(e => !during(e)).sort((a, b) => a.t - b.t));
-    const carOn = t => carHours.some(([a, b]) => t >= a && t <= b);
+    const carOn = t => { const h = carHours.find(([a, b]) => t >= a && t <= b); return h ? h[2] || 'car' : null; };  // 'car' or 'moped'
     const moves = [];
     let last = null, left = null;  // left: the last time you were seen at last's place (you left it after that)
     for (const e of ev) {
@@ -232,7 +232,8 @@ function create({ towns, cities, days, flights, airports, groundTrips, stays, ac
           // walk that long is an activity of its own, which covers its time: the next village, an hour on)
           const road = (km >= ROAD_KM && km <= ROAD_MAX_KM && (car || km / hours <= CAR_KMH))
             || (car && km >= HOP_KM && (km / hours >= WALK_KMH || km >= CAR_HOP_KM));
-          moves.push({ from: last.at, to: e.at, t0: gone, t1: e.t, km: Math.round(km * 10) / 10, kind: road ? (car ? 'drive' : 'road') : 'move' });
+          moves.push({ from: last.at, to: e.at, t0: gone, t1: e.t, km: Math.round(km * 10) / 10, kind: road ? (car ? 'drive' : 'road') : 'move',
+            ...(road && car === 'moped' && { by: 'moped' }) });
         } else if (!e.cover) { left = e.t; continue; }  // a few steps on: keep the earlier place as where you were
       }
       last = e;
@@ -326,7 +327,7 @@ function create({ towns, cities, days, flights, airports, groundTrips, stays, ac
 
   // Every drive of every trip with a rental car (its moves along the roads on the car's days), for the distance by car
   // and the map: a day's drives that follow on (a stop at a viewpoint, a short walk between) are one, its road
-  // joined and the places it stopped at kept (via), as a day's road trip is one. Working them out takes a minute:
+  // joined and the places it stopped at kept (via), as a day's road trip is one; the next day's starts where it ended. Working them out takes a minute:
   // done in the background, a trip at a time (the server answers meanwhile), again when the data changed or ten
   // minutes passed (the road routes come in meanwhile); until then the last ones
   let driveMemo = { at: 0, key: null, list: [] }, driving = null;
@@ -344,11 +345,13 @@ function create({ towns, cities, days, flights, airports, groundTrips, stays, ac
           for (const m of get(t.id)?.moves || []) {
             if (m.kind !== 'drive') continue;
             const day = dayOf(m.t0 + Math.round(m.from[1] / 15) * 3600), road = m.path ? ground.decode(m.path) : [m.from, m.to], last = mine[mine.length - 1];
-            if (last && last.day === day && ground.km(last.to, m.from) <= AT_CAR_KM) {
+            if (last && last.day === day && last.by === m.by && ground.km(last.to, m.from) <= AT_CAR_KM) {
               Object.assign(last, { to: m.to, km: last.km + m.km, roads: last.roads || !!m.path });
               last.pts.push(...road);
               last.via.push(m.from);
-            } else mine.push({ day, from: m.from, to: m.to, km: m.km, pts: road, roads: !!m.path, via: [] });
+            } else if (last && last.by === m.by && ground.km(last.to, m.from) <= AT_CAR_KM) {  // on from where the day before's ended (the car slept there)
+              mine.push({ day, from: last.to, to: m.to, km: m.km, pts: [last.to, ...road], roads: !!m.path, via: [], by: m.by });
+            } else mine.push({ day, from: m.from, to: m.to, km: m.km, pts: road, roads: !!m.path, via: [], by: m.by });
           }
           out.push(...mine.map(({ pts, roads, km, ...d }) => ({ ...d, km: Math.round(km * 10) / 10, path: roads ? ground.encode(pts) : null })));
         }

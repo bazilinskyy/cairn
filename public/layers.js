@@ -157,7 +157,7 @@ function fmtDate(d) {
 function extraLayers() {
   return {
     ...Object.fromEntries(Object.entries(STAY_KINDS).map(([k, [, label, color, ring]]) => ['stay-' + k, [label, stayLayers[k], color, ring ? 'ring' : 'dot']])),
-    car: ['🚗 Rental cars', carLayer, '--car', 'dot'],
+    car: ['🚗 Rental cars and mopeds', carLayer, '--car', 'dot'],
     photo: ['📷 Photos', photoLayer, '--photo', 'dot'], timeline: ['🧭 Timeline', timelineLayer, '--timeline', 'dot'],
     ...Object.fromEntries(Object.entries(ACT_KINDS).map(([k, label]) => ['act-' + k, [label, kindLayer[k], '--' + k]])),
     tile: ['🟩 Explored tiles', tileLayer, '--tile', 'area'], climb: ['⛰️ Climbs', climbLayer, '--climb', 'dot'],
@@ -323,8 +323,8 @@ function drawStays() {
       `<button class="del-btn edit-btn" data-edit="stay" data-id="${x.id}" title="Edit this ${car ? 'rental car' : 'stay'}" aria-label="Edit this ${car ? 'rental car' : 'stay'}">✎</button>` +
       `<button class="del-btn" data-del="stay" data-id="${x.id}" title="Delete this ${car ? 'rental car' : 'stay'}" aria-label="Delete this ${car ? 'rental car' : 'stay'}">✕</button>`;
     const head = list.length > 1
-      ? `${car ? '🚗 Rental cars' : '🏨 Stays'}, ${escapeHTML(s.place)}</b><br><small>${list.length} ${car ? 'rentals' : 'stays'}, ${count(total)}</small>`
-      : `${car ? '🚗 Rental car' : '🏨 ' + escapeHTML(s.type || 'Stay')}, ${escapeHTML(s.place)}</b>`;
+      ? `${car ? `${rentalIcon(s)} Rentals` : '🏨 Stays'}, ${escapeHTML(s.place)}</b><br><small>${list.length} ${car ? 'rentals' : 'stays'}, ${count(total)}</small>`
+      : `${car ? `${rentalIcon(s)} ${rentalName(s)}` : '🏨 ' + escapeHTML(s.type || 'Stay')}, ${escapeHTML(s.place)}</b>`;
     const lines = list.slice(0, 20).map(line).join('<br>') + (list.length > 20 ? `<br>and ${list.length - 20} more` : '');
     L.circleMarker([s.lat, s.lon], {
       // small and half see-through, so routes and places show through; an invisible ring keeps them easy to click (a
@@ -1079,7 +1079,7 @@ function whereOn(d) {
   const sleeping = allStays.filter(s => s.what !== 'car' && day(s.start) <= d && d < day(s.end || s.start))
     .sort((a, b) => (new Date(a.end) - new Date(a.start)) - (new Date(b.end) - new Date(b.start)));  // a side trip before its base
   allStays.filter(s => s.what === 'car' && day(s.start) <= d && d <= day(s.end || s.start))
-    .forEach(s => lines.push(`🚗 rental car from ${escapeHTML(s.place)}`));
+    .forEach(s => lines.push(`${rentalIcon(s)} ${rentalName(s).toLowerCase()} from ${escapeHTML(s.place)}`));
   sleeping.forEach(s => lines.push(`🏨 ${escapeHTML(s.type || 'stay')} in ${escapeHTML(s.place)}`));
   allTimeline.visits.filter(v => day(v.start) <= d && d <= day(v.end)).slice(0, 6).forEach(v => {
     lines.push(`🧭 ${escapeHTML(v.name || 'a place')} ${escapeHTML(v.start.slice(11))}`);

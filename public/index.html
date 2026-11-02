@@ -1071,6 +1071,9 @@ let allFlights  = [];
 let allAirports = {};
 let allTrips    = []; // trains, buses, ferries and car journeys
 let allDrives   = []; // the drives with a rental car Cairn worked out (/api/drives), drawn as car journeys
+// a rental is a car, or a moped or scooter (vehicle: 'moped'); a drive worked out on its days says which (vehicle, by)
+const rentalIcon = x => (x?.vehicle === 'moped' || x?.by === 'moped' ? '🛵' : '🚗');
+const rentalName = x => (x?.vehicle === 'moped' ? 'Rented moped' : 'Rental car');
 let map, chartYear;
 let sortCol = 'date', sortDir = -1; // -1 = desc
 
@@ -1342,7 +1345,7 @@ function toast(msg, type = 'success') {
 const DELETABLE = {
   flight: ['/api/flights', () => allFlights, f => `the flight ${f.flight_number ? f.flight_number + ', ' : ''}${f.from} → ${f.to} on ${(f.date || '').slice(0, 10)}`],
   ground: ['/api/ground', () => allTrips, t => `the ${t.mode === 'drive' ? 'drive' : t.mode} ${t.from} → ${t.to} on ${(t.date || '').slice(0, 10)}`],
-  stay: ['/api/stays', () => allStays, s => `the ${s.what === 'car' ? 'rental car' : 'stay'} in ${s.place}, ${s.start} – ${s.end || s.start}`]
+  stay: ['/api/stays', () => allStays, s => `the ${s.what === 'car' ? rentalName(s).toLowerCase() : 'stay'} in ${s.place}, ${s.start} – ${s.end || s.start}`]
 };
 async function deleteItem(kind, id) {
   const [url, list, label] = DELETABLE[kind] || [], all = list?.(), i = all ? all.findIndex(x => String(x.id) === String(id)) : -1;
@@ -1644,7 +1647,7 @@ function drawGround() {
     // a trip added by hand may know only its year or month, and stand for several
     const when = t => (t.approx === 'year' ? t.date.slice(0, 4) : t.approx === 'month' ? t.date.slice(0, 7) : (t.date || '').slice(0, 10)) + (t.times > 1 ? ` (×${t.times})` : '');
     const count = trips.reduce((n, t) => n + (t.times || 1), 0);
-    const popup = `<b>${groundModes[groundKind(best)].split(' ')[0]} ${escapeHTML(best.from)} → ${escapeHTML(best.to)}</b><br>` +
+    const popup = `<b>${best.vehicle === 'moped' ? '🛵' : groundModes[groundKind(best)].split(' ')[0]} ${escapeHTML(best.from)} → ${escapeHTML(best.to)}</b><br>` +
       (best.stops?.length ? `<small>through ${best.stops.map(escapeHTML).join(', ')}</small><br>` : best.via?.length ? `<small>by ${best.via.map(escapeHTML).join(', ')}</small><br>` : '') +
       `<small>${count} trip${count !== 1 ? 's' : ''} · ${fmtDist(best.distance || 0)} · ` +
       `${(best.mode === 'ferry' && best.path_source === 'stops' ? 'by the ports you named, along the ferry lines' : how[best.path_source]) || 'looking up the track…'}</small><br>` +
@@ -1863,7 +1866,7 @@ async function renderCountryStats(fetchAgain = true) {
   if (fetchAgain) countryStats = await fetch(`/api/countries?scheme=${prefs.countries}`).then(r => r.ok ? r.json() : []).catch(() => []);
   const names = new Intl.DisplayNames(['en'], { type: 'region' }), name = c => { try { return c.name || names.of(c.country) || c.country; } catch (_) { return c.country; } };
   const cols = [['country', 'Country'], ['days', 'Days'], ['visits', 'Visits'], ['nights', 'Nights in stays'], ['flights', 'Flights in'],
-    ['train', 'Trains'], ['bus', 'Buses'], ['ferry', 'Ferries'], ['hitch', 'Hitchhiked'], ['drive', 'By car'], ['cars', 'Rental cars'], ['activities', 'Activities'], ['km', DU()],
+    ['train', 'Trains'], ['bus', 'Buses'], ['ferry', 'Ferries'], ['hitch', 'Hitchhiked'], ['drive', 'By car'], ['cars', 'Rental cars and mopeds'], ['activities', 'Activities'], ['km', DU()],
     ['photos', 'Photos'], ['towns', 'Towns'], ['first', 'First'], ['last', 'Last']];
   const [key, dir] = countrySort;
   const rows = [...countryStats].sort((a, b) => key === 'country' ? dir * name(a).localeCompare(name(b))
