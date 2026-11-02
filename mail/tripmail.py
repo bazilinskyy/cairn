@@ -26,6 +26,7 @@ import subprocess
 import sys
 import threading
 import traceback
+import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta
 from email import policy
@@ -153,6 +154,21 @@ def fetch_new(cfg, sec, state, since_days=None, query=None):
             imap.logout()
         except Exception:
             pass
+
+
+NEAR_KM = 50
+ACTIVITY = {"Ride": "ride", "GravelRide": "ride", "MountainBikeRide": "ride", "EBikeRide": "ride", "Run": "run",
+            "TrailRun": "run", "Hike": "hike", "Walk": "walk", "Swim": "swim", "Kayaking": "paddle", "Canoeing": "paddle",
+            "StandUpPaddling": "paddle", "Surfing": "surf", "AlpineSki": "ski day", "BackcountrySki": "ski day",
+            "NordicSki": "ski day", "RockClimbing": "climb"}
+
+
+def _km(town, at):
+    """Kilometres between a {lat, lon} and a (lat, lon)."""
+    from math import asin, cos, radians, sin, sqrt
+    (a, b), (c, d) = (town["lat"], town["lon"]), at
+    h = sin(radians(c - a) / 2) ** 2 + cos(radians(a)) * cos(radians(c)) * sin(radians(d - b) / 2) ** 2
+    return 12742 * asin(sqrt(h))
 
 
 # --- Travel calendar (EventKit) ---
@@ -599,6 +615,61 @@ class CairnHTTP:
         """Cairn adds the stay, or updates the one with the same booking code."""
         return self._call("POST", "/api/stays", stay)
 
+    def been_before(self, names, start, end, home=(), km=NEAR_KM):
+        """Where the user was near the trip's places (names, as the doc has them) before it began, as text for the
+        suggestions: per place the towns within km that Cairn has them in, with their days, visits, years and what
+        they did there (activities by kind, climbs ridden). A name is the town of that name nearest to where the
+        trip's flights land (Cairn's flights of its days), else the biggest; none near a home airport."""
+        q = urllib.parse.quote
+        ports = self._call("GET", "/api/airports") or {}
+        days = (start.isoformat(), end.isoformat())
+        arrivals = [f["to"] for f in self._call("GET", "/api/flights") or [] if days[0] <= (f.get("date") or "")[:10] <= days[1]
+                    and f.get("to") not in home]
+        land = [(a["lat"], a["lon"]) for a in (ports.get(c) for c in arrivals) if a and a.get("lat") is not None]
+        homes = [(a["lat"], a["lon"]) for a in (ports.get(c) for c in home) if a and a.get("lat") is not None]
+        anchors = []
+        for name in names:
+            found = self._call("GET", "/api/towns?q=" + q(re.split(r"\s[-–—(]", name)[0].strip())) or []
+            town = min(found, key=lambda t: min(_km(t, p) for p in land)) if land and found else (found or [None])[0]
+            if not town or land and min(_km(town, p) for p in land) > 300 or any(_km(town, h) < km for h in homes):
+                continue
+            if not any(_km(town, (a["lat"], a["lon"])) < km / 2 for a in anchors):
+                anchors.append(town)
+        for code in arrivals:  # and where the flights land, for an island or a region named after one of its towns
+            port = ports.get(code) or {}
+            town = {"name": port.get("city") or code, "lat": port.get("lat"), "lon": port.get("lon")}
+            if town["lat"] is not None and not any(_km(town, (a["lat"], a["lon"])) < km / 2 for a in anchors):
+                anchors.append(town)
+        if not anchors:
+            return ""
+        before = f"{start - timedelta(days=1):%Y-%m-%d}"
+        cities = self._call("GET", f"/api/cities?to={before}") or []
+        climbs = [c for c in self._call("GET", "/api/climbs") or [] if c.get("times") and (c.get("first") or "") <= before]
+        out = []
+        for a in anchors:
+            near = sorted((c for c in cities if _km(a, (c["lat"], c["lon"])) <= km), key=lambda c: (-c["days"], c["name"]))[:12]
+            rode = [c for c in climbs if c.get("lat") is not None and _km(a, (c["lat"], c["lon"])) <= km]
+            if not near and not rode:
+                out.append(f"- Around {a['name']}: never been.")
+                continue
+            towns = []
+            for c in near:
+                did = self._call("GET", f"/api/city/{c['id']}?to={before}").get("activities") or []
+                kinds = {}
+                for x in did:
+                    k = ACTIVITY.get(x.get("sport"), "")
+                    if k and not re.search(r"Virtual", x.get("sport") or ""):
+                        kinds[k] = kinds.get(k, 0) + 1
+                years = c["first"][:4] if c["first"][:4] == c["last"][:4] else f"{c['first'][:4]}–{c['last'][:4]}"
+                what = ", ".join(f"{n} {k}{'s' if n > 1 else ''}" for k, n in sorted(kinds.items(), key=lambda kv: -kv[1]))
+                towns.append(f"{c['name']} ({c['days']} day{'s' if c['days'] > 1 else ''} on {c['visits']} visit"
+                             f"{'s' if c['visits'] > 1 else ''}, {years}{': ' + what if what else ''})")
+            line = f"- Around {a['name']} (within {km} km): " + ("; ".join(towns) if towns else "no town")
+            if rode:
+                line += ". Climbs ridden: " + ", ".join(f"{c['name']} ({c['first'][:4]})" for c in rode)
+            out.append(line + ".")
+        return "\n".join(out)
+
 
 def open_stores(cfg, airports, airlines):
     return (EventKitCalendar(cfg.get("calendar_account", "Google"), cfg.get("calendar_title", "Travel"), airports),
@@ -622,6 +693,9 @@ class Logged:
 
     def busy_all_day(self, *a):  # a question, also asked in a dry run
         return self.store.busy_all_day(*a)
+
+    def been_before(self, *a):  # a question too
+        return self.store.been_before(*a)
 
     def __getattr__(self, action):
         def call(*a):
@@ -709,7 +783,15 @@ def run(args, cfg, sec):
             if cfg.get("trip_suggestions", True):
                 claude = cfg.get("claude_path") or shutil.which("claude") or str(Path.home() / ".local/bin/claude")
                 model = cfg.get("suggestions_model", "sonnet")
-                docs.suggest(work, now(), lambda prompt: tripdocs.ask_claude(prompt, claude, model))
+                ours = cfg.get("home_airports", ["AMS", "EIN", "RTM"])
+
+                def history(names, start, end):  # where the user was near the trip's places before, from Cairn
+                    try:
+                        return con.been_before(names, start, end, ours)
+                    except Exception as e:  # Cairn down: suggestions without it
+                        log(f"no history for suggestions: {e!r}")
+                        return ""
+                docs.suggest(work, now(), lambda prompt: tripdocs.ask_claude(prompt, claude, model), history)
         finally:
             if not args.dry_run:
                 save_state(work)

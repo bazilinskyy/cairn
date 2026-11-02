@@ -84,7 +84,7 @@ def test_dry_run_writes_nothing(home):
     writes = [c for c in cal.calls + con.calls if c[0] != "lookup"]  # lookups only read
     assert writes == [], writes
     assert json.loads((home / "state.json").read_text()) == {"last_uid": 5, "legs": []}
-    assert sent == []
+    assert sent == [], sent
 
 
 @with_home
@@ -102,7 +102,7 @@ def test_run_applies_and_saves_state(home):
     state = json.loads((home / "state.json").read_text())
     assert state["last_uid"] == 7 and [e["flight"] for e in state["legs"]] == ["KL1702"]
     assert [c[0] for c in cal.calls] == ["create"] and [c[0] for c in con.calls if c[0] != "lookup"] == ["add"]
-    assert sent == []
+    assert sent == [], sent
 
 
 class StubCairn(tripmail.CairnHTTP):
@@ -124,6 +124,26 @@ def test_cairn_duplicate_by_route_or_number():
     assert con.has_flight("KL1234", "AMS", "LIS", d(2026, 11, 16).date())   # same day and number, other route
     assert not con.has_flight("KL1234", "AMS", "LIS", d(2026, 11, 17).date())
 
+
+def test_been_before_near_where_the_flights_land():
+    d = tripmail.datetime
+    con = StubCairn({("GET", "/api/airports"): {"LIS": {"lat": 38.77, "lon": -9.13}, "EIN": {"lat": 51.45, "lon": 5.39}},
+                     ("GET", "/api/flights"): [{"date": "2026-11-16 08:00:00", "from": "EIN", "to": "LIS"},
+                                               {"date": "2026-11-20 18:00:00", "from": "LIS", "to": "EIN"},
+                                               {"date": "2025-01-01 08:00:00", "from": "EIN", "to": "XXX"}],
+                     ("GET", "/api/towns?q=Sintra"): [{"name": "Sintra", "lat": 41.0, "lon": -80.0}, {"name": "Sintra", "lat": 38.8, "lon": -9.38}],
+                     ("GET", "/api/towns?q=Eindhoven"): [{"name": "Eindhoven", "lat": 51.44, "lon": 5.48}],
+                     ("GET", "/api/towns?q=Lisbon"): [{"name": "Lisbon", "lat": 38.72, "lon": -9.14}],
+                     ("GET", "/api/cities?to=2026-11-15"): [
+                         {"id": 1, "name": "Lisbon", "lat": 38.72, "lon": -9.14, "days": 9, "visits": 3, "first": "2019-05-01", "last": "2024-02-02"},
+                         {"id": 2, "name": "Porto", "lat": 41.15, "lon": -8.61, "days": 4, "visits": 1, "first": "2020-01-01", "last": "2020-01-04"}],
+                     ("GET", "/api/climbs"): [{"name": "Serra Pass", "lat": 38.79, "lon": -9.39, "times": 2, "first": "2021-03-03"},
+                                              {"name": "Not yet", "lat": 38.79, "lon": -9.39, "times": 0}],
+                     ("GET", "/api/city/1?to=2026-11-15"): {"activities": [{"sport": "Hike"}, {"sport": "Hike"}, {"sport": "Run"},
+                                                                          {"sport": "VirtualRide"}]}})
+    text = con.been_before(["Sintra (old town)", "Eindhoven", "Lisbon"], d(2026, 11, 16).date(), d(2026, 11, 20).date(), ["EIN"])
+    assert text == ("- Around Sintra (within 50 km): Lisbon (9 days on 3 visits, 2019–2024: 2 hikes, 1 run). "
+                    "Climbs ridden: Serra Pass (2021)."), text  # the Sintra near Lisbon; not home; Lisbon too near to ask twice
 
 def test_cairn_ground_ids_and_payload():
     con = StubCairn({("POST", "/api/ground"): {"id": 12}, ("PUT", "/api/ground/12"): {}, ("DELETE", "/api/ground/12"): {},

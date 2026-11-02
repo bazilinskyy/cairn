@@ -198,6 +198,25 @@ def test_expedia_cars():
     assert mail("Expedia@nl.expediamail.com", "Autoreservering van Expedia geannuleerd", "Je autoreservering is geannuleerd.") is None
 
 
+
+def test_booking_apartment():  # "Your apartment in ... is confirmed", not "Your booking in ..."
+    s = mail("noreply@booking.com", "Thanks! Your booking is confirmed at Test Studio Apartment",
+             "Confirmation number: 5000000009\nYour apartment in Testtown is confirmed.\nTest Studio Apartment\n"
+             "Test Street, 2, Testtown, 29000, Spain\nCheck-in\nMonday 1 March 2027\nCheck-out\nFriday 5 March 2027\n"
+             "Booking number\n5000000009\nTotal price\n€ 200.00\n")
+    assert (s.what, s.code, s.place, s.country, s.start, s.end) == ("stay", "5000000009", "Testtown", "Spain",
+                                                                    date(2027, 3, 1), date(2027, 3, 5)), s
+
+
+def test_edreams_cars():  # CarTrawler for eDreams: the code after "ref.:", not a piece of "boekingsbevestiging"
+    s = mail("CarHire@carrental.edreams.com", "Uw boekingsbevestiging voor autohuur – ref.: ES000000001",
+             "Boekingsnummer: ES000000001\nVerhuurgegevens\nOphaallocatie: Testtown - Airport\n"
+             "Ophaaldatum: 2027-03-01 17:30:00\nInleverlocatie: Testtown - Airport\nInleverdatum: 2027-03-05 17:30:00\n")
+    assert (s.what, s.provider, s.code, s.place, s.start, s.end) == ("car", "eDreams Cars", "ES000000001", "Testtown - Airport",
+                                                                     date(2027, 3, 1), date(2027, 3, 5)), s
+    s = mail("CarHire@carrental.edreams.com", "Uw annuleringsverzoek is gelukt – ES000000001", "Geannuleerd.")
+    assert (s.kind, s.what, s.code) == ("cancel", "car", "ES000000001"), s
+
 if __name__ == "__main__":
     tests = [f for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
     for t in tests:

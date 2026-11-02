@@ -179,6 +179,16 @@ def test_rental_car_in_comments():
     assert (cell["text"], cell["linked"], cell["link"]) == ("beach Rental car 12–16.11", "Rental car", "https://example.com/car"), cell
 
 
+def test_rental_car_and_its_stay_of_the_same_day():  # booked together: the stay's new row first, the car in it
+    g = FakeGoogle({"d1": {"name": "Portugal 2026", "tables": [rows(PLAN), rows(TRANSPORT, ["✈️ X1: Eindhoven - Faro", "10.12.26 13:45", "", ""])]}})
+    car = {"what": "car", "code": "C1", "place": "Faro - Airport", "country": "", "start": "2026-12-10", "end": "2026-12-14",
+           "type": "Rental car", "price": "", "link": "https://example.com/car"}
+    flat = stay("S1", "Lagos", "2026-12-10", "2026-12-14")
+    tripdocs.TripDocs(g, "folder", lambda m: None).run({"stays": {"C1": car, "S1": flat}}, AIRPORTS, NOW, ["AMS"])
+    plan, transport = g.docs["d1"]["tables"]
+    assert [c["text"] for c in plan[1]][:2] == ["Lagos", "10–14.12.26"] and "Rental car" in plan[1][4]["text"], plan
+    assert len(transport) == 2, transport
+
 def test_lone_flight_home_names_the_doc_after_where_it_left():
     g = FakeGoogle({})
     seen = {"FR9@2026-12-07": {"flight": "FR9", "dep": "FAO", "arr": "AMS", "dep_local": "2026-12-07T16:00:00",
@@ -306,8 +316,8 @@ class ParaGoogle(FakeGoogle):
             elif kind in ("createParagraphBullets", "deleteParagraphBullets"):
                 for p in range(self._para(a), self._para(b - 1) + 1):
                     self.bullets[p] = kind == "createParagraphBullets"
-            elif kind == "updateTextStyle" and body["textStyle"].get("bold"):
-                self.bold.append(self.text[a:b])
+            elif kind == "updateTextStyle" and (body["textStyle"].get("bold") or body["textStyle"].get("italic")):
+                self.bold.append(self.text[a:b])  # any direct style on top of the doc's own
             elif kind == "updateTextStyle" and body["textStyle"].get("link"):
                 self.links.append((self.text[a:b], body["textStyle"]["link"]["url"]))
 
@@ -321,10 +331,10 @@ REPLY = """```json
 FARO = rows(PLAN, ["Faro", "12–13.11.26", "Hostel", "", ""])
 
 
-def suggest(g, now=NOW, dry=False, state=None):
+def suggest(g, now=NOW, dry=False, state=None, history=None):
     asked, log = [], []
     state = {} if state is None else state
-    tripdocs.TripDocs(g, "folder", log.append, dry=dry).suggest(state, now, lambda p: asked.append(p) or REPLY)
+    tripdocs.TripDocs(g, "folder", log.append, dry=dry).suggest(state, now, lambda p: asked.append(p) or REPLY, history)
     return state, asked, log
 
 
@@ -336,12 +346,13 @@ def test_suggestions_are_written_then_replaced_when_the_doc_changes():
     got = [(t, s, b) for t, s, b in g.paras()]
     assert got[:2] == [("Information", "HEADING_1", False), ("Bring a towel", "NORMAL_TEXT", False)], got
     assert got[2] == ("Suggestions", "HEADING_1", False) and got[3][0].startswith("By tripmail on 01.11.26"), got
-    assert got[4:] == [("Things to do", "HEADING_2", False), ("Faro", "NORMAL_TEXT", False),
+    assert got[4:] == [("Things to do", "HEADING_2", False), ("Faro", "HEADING_3", False),
                        ("Vila Adentro: walk the old town walls.", "NORMAL_TEXT", True),
                        ("Ilha Deserta: take the boat from the harbour.", "NORMAL_TEXT", True),
                        ("Itinerary", "HEADING_2", False), ("Thu 12.11, Faro: Arrive, walk the old town.", "NORMAL_TEXT", True),
                        ("Fri 13.11, Faro: Fly home at 16:10.", "NORMAL_TEXT", True)], got
-    assert "Thu 12.11, Faro:" in g.bold and "Faro" in g.bold
+    assert g.bold == [], g.bold  # the doc's own styles: headings and bullets, no bold or italics on top
+    assert "Nothing near these places." in asked[0]
     maps = "https://www.google.com/maps/search/?api=1&query="
     assert g.links == [("Faro", maps + "Faro"), ("Vila Adentro", maps + "Vila%20Adentro%2C%20Faro"),
                        ("Ilha Deserta", maps + "Ilha%20Deserta%2C%20Faro")], g.links
@@ -356,6 +367,24 @@ def test_suggestions_are_written_then_replaced_when_the_doc_changes():
     assert len(asked) == 1 and "surfboard" in asked[0] and "Ilha Deserta" not in asked[0]
     assert [t for t, _, _ in g.paras()].count("Suggestions") == 1
     assert g.paras()[1][0] == "Bring a towel and a surfboard" and g.paras()[-1][0].startswith("Fri 13.11")
+
+
+def test_suggestions_know_where_you_have_been():
+    plan = rows(PLAN, ["Faro", "12–13.11.26", "Hostel", "", ""], ["Tavira", "13.11.26", "", "", ""])
+    g = ParaGoogle(plan, [("", "NORMAL_TEXT")])
+    seen = []
+    _, asked, _ = suggest(g, history=lambda names, a, b: seen.append((names, a, b)) or "Faro: 9 days on 3 visits, 2019–2024.")
+    assert seen == [(["Faro", "Tavira"], date(2026, 11, 12), date(2026, 11, 13))], seen
+    assert "Faro: 9 days on 3 visits, 2019–2024." in asked[0] and "Things new to me" in asked[0]
+
+
+def test_places_of_a_doc():
+    doc = FakeGoogle({"d": {"name": "x", "tables": [rows(PLAN, ["Lagos", "10–14.03.27", "", "", ""]),
+                                                    rows(["Transport", "Date", "Price", "Comments"],
+                                                         ["✈️ XX100: Eindhoven - Faro", "10.03.27 13:45", "", ""],
+                                                         ["Rental car", "10–14.03", "", "Faro - Airport"],
+                                                         ["✈️ XX101: Faro - Amsterdam", "14.03.27 16:10", "", ""])]}}).get("d")
+    assert tripdocs.places(doc) == ["Lagos", "Faro", "Amsterdam"], tripdocs.places(doc)
 
 
 def test_suggestions_before_a_later_heading_keep_it():

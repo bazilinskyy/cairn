@@ -7,8 +7,9 @@ flight into a Transport row. A cancelled stay empties the Accommodation and Pric
 a new one, named like "Portugal 2026". Text the user wrote is never changed.
 
 Suggestions: when the doc of a trip that is not over yet changes (the user's edits or tripmail's), Claude (`claude
--p`) is asked for things to do in each place and a day-by-day itinerary, written into a "Suggestions" section that is
-tripmail's own and replaced every time.
+-p`) is asked for things to do around where the user sleeps and a day-by-day itinerary, new to them: it is told where
+they have been near the trip's places before (Cairn's towns and what they did there). Written into a "Suggestions"
+section that is tripmail's own and replaced every time, in the docs' own styles (headings, bullets, no bold).
 
 Google access: OAuth "Desktop app" client (google_client.json) and a refresh token (google_token.json) in
 ~/.tripmail, made once with `python mail/tripdocs.py auth`. Standard library only.
@@ -28,13 +29,27 @@ from pathlib import Path
 SCOPE = "https://www.googleapis.com/auth/drive"
 DOCS = "https://docs.googleapis.com/v1/documents/"
 DRIVE = "https://www.googleapis.com/drive/v3/files"
-TEMPLATE = """<html><body>
-<h1><b>Information</b></h1><p></p>
-<h1><b>Plan</b></h1>
+# The styles of the user's own docs, which Drive makes the doc's named styles (Normal text, Heading 1 to 3) from the
+# CSS: its headings are those styles alone, with no bold or size of their own on top
+STYLE = """<style>
+body { font-family: Arial; font-size: 11pt; }
+h1 { font-size: 18pt; font-weight: bold; margin-top: 24pt; margin-bottom: 6pt; }
+h2 { font-size: 14pt; font-weight: bold; margin-top: 18pt; margin-bottom: 4pt; }
+h3 { font-size: 12pt; font-weight: bold; color: #666666; margin-top: 14pt; margin-bottom: 4pt; }
+</style>"""
+TEMPLATE = f"""<html><head>{STYLE}</head><body>
+<h1>Information</h1><p></p>
+<h1>Plan</h1>
 <table><tr><td><b>Place</b></td><td><b>Dates</b></td><td><b>Accommodation</b></td><td><b>Price</b></td><td><b>Comments</b></td></tr></table>
-<h1><b>Transport</b></h1>
+<h1>Transport</h1>
 <table><tr><td><b>Transport</b></td><td><b>Date</b></td><td><b>Price</b></td><td><b>Comments</b></td></tr></table>
 </body></html>"""
+# and their page: A4 with 1 cm margins, pageless
+CM = {"magnitude": 28.346456692913385, "unit": "PT"}
+PAGE = {"updateDocumentStyle": {"documentStyle": {
+    "pageSize": {"width": {"magnitude": 595.2755905511812, "unit": "PT"}, "height": {"magnitude": 841.8897637795277, "unit": "PT"}},
+    "marginTop": CM, "marginBottom": CM, "marginLeft": CM, "marginRight": CM, "documentFormat": {"documentMode": "PAGELESS"}},
+    "fields": "pageSize,marginTop,marginBottom,marginLeft,marginRight,documentFormat"}}
 
 
 # --- Google (OAuth refresh token + JSON calls) ---
@@ -84,13 +99,23 @@ class Google:
             self.call("POST", DOCS + doc_id + ":batchUpdate", {"requests": requests})
 
     def create(self, folder, name, html=TEMPLATE):
-        """A new Google Doc in the folder, converted from html by Drive."""
+        """A new Google Doc in the folder, converted from html by Drive, on the page of the user's docs."""
         boundary = "tripmail-boundary"
         meta = {"name": name, "mimeType": "application/vnd.google-apps.document", "parents": [folder]}
         data = (f"--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n{json.dumps(meta)}\r\n"
                 f"--{boundary}\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n{html}\r\n--{boundary}--").encode()
-        return self.call("POST", "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart", data=data,
-                         ctype=f"multipart/related; boundary={boundary}")["id"]
+        doc_id = self.call("POST", "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart", data=data,
+                           ctype=f"multipart/related; boundary={boundary}")["id"]
+        self.batch(doc_id, [PAGE])
+        return doc_id
+
+    def replace(self, doc_id, html=TEMPLATE):
+        """The doc's whole content and named styles made anew from html (same doc, same link), on that page."""
+        req = urllib.request.Request(f"https://www.googleapis.com/upload/drive/v3/files/{doc_id}?uploadType=media",
+                                     html.encode(), method="PATCH",
+                                     headers={"Authorization": "Bearer " + self._token(), "Content-Type": "text/html"})
+        urllib.request.urlopen(req, timeout=60).close()
+        self.batch(doc_id, [PAGE])
 
 
 def _post_form(url, fields):
@@ -504,7 +529,8 @@ class TripDocs:
             if done[i]["spec"]["end"] >= today and done[i]["doc"] in files:
                 self.remove(done[i]["doc"], done[i]["spec"])
             del done[i]
-        for i in sorted(steps["create"] + steps["update"] + waiting, key=lambda i: (desired[i]["start"], desired[i].get("dep_local", ""))):
+        order = lambda i: (desired[i]["start"], desired[i].get("dep_local", ""), desired[i].get("what") == "car")  # noqa: E731
+        for i in sorted(steps["create"] + steps["update"] + waiting, key=order):  # a car after its stay of that day: in its row
             spec = desired[i]
             s, e = date.fromisoformat(spec["start"]), date.fromisoformat(spec["end"])
             doc_id = pick_doc(files, s, e)
@@ -519,10 +545,11 @@ class TripDocs:
             self.add(doc_id, spec)
             done[i] = {"doc": doc_id, "spec": spec}
 
-    def suggest(self, state, now, ask, limit=3):
+    def suggest(self, state, now, ask, history=None, limit=3):
         """Suggestions in the docs of trips not over yet that changed since the last look, but not in the last half
         hour (the user may still be typing; tripmail's own edits of this run wait an hour too). At most limit
-        questions to Claude per run; the rest wait for the next."""
+        questions to Claude per run; the rest wait for the next. history(places, start, end): where the user has been
+        near those places before the trip, as text for Claude ("" when nothing)."""
         reg = state.setdefault("docs", {}).setdefault("suggested", {})
         today, asked = now.date(), 0
         for f in self.g.docs_in(self.folder):
@@ -547,8 +574,9 @@ class TripDocs:
                 self.log(f"would ask Claude for suggestions for doc {f['name']!r}")
                 continue
             try:
+                been = history(places(doc), *days) if history else ""
                 data = parse_reply(ask(PROMPT.format(today=f"{today:%d.%m.%y}", first=f"{max(today, days[0]):%d.%m.%y}",
-                                                     doc=_plain(text))))
+                                                     doc=_plain(text), history=been or "Nothing near these places.")))
                 self.g.batch(f["id"], suggestion_requests(self.g.get(f["id"]), suggestion_lines(data, today)))
             except Exception as e:  # tried again next run
                 self.log(f"no suggestions for doc {f['name']!r}: {e!r}")
@@ -570,16 +598,28 @@ Reply with JSON only, no other text:
 {{"things_to_do": [{{"place": "...", "items": [{{"name": "...", "why": "..."}}]}}],
  "itinerary": [{{"date": "YYYY-MM-DD", "place": "...", "plan": "..."}}]}}
 
-- things_to_do: for each place in the Plan (when the Plan is empty, where the flights go), 3 to 6 specific things
-  worth doing there or nearby: named sights, walks and hikes, viewpoints, beaches, food to try. "name": what it is
-  called, as you would search for it on a map ("Ponte Vecchio", "Sentiero degli Dei"; for food the dish);
-  "why": one short sentence that says why. Follow what the notes and comments ask for, and leave out what they
-  already plan.
+- things_to_do: for each place where we sleep (the Plan's places; when the Plan is empty, where the flights go), 3
+  to 6 specific things worth doing there or nearby: named sights, walks and hikes, viewpoints, beaches, villages,
+  food to try. With a rental car, the places within about an hour's drive count as nearby. A town we only land in
+  or pass through (the airport's city when we sleep elsewhere) gets no entry of its own. "name": what it is called,
+  as you would search for it on a map ("Ponte Vecchio", "Sentiero degli Dei"; for food the dish); "why": one short
+  sentence that says why. Follow what the notes and comments ask for, and leave out what they already plan.
+- Things new to me: under "Where I have been before" is what my travel records know of my earlier visits near
+  these places. Leave out what a first visit there is about (the famous sights, the old town, the best known
+  beaches and walks of a town I spent days in) and whatever the list says I did. Where the list shows I know the
+  area well (many days on several visits around it), its famous sights are not new to me either, even those
+  outside the towns listed: its national park, best known peaks, villages, gorges and walks. Suggest what I
+  have not done: less known places, villages, nature, hikes and rides off the usual list, food. A town seen for
+  a day long ago may still get its one main sight.
 - itinerary: one entry per day from {first} to the trip's last day, following the stays' dates and the transport
-  times (the arrival day, travel between places, the departure day), with that day's transport in it. One or two
-  sentences a day.
+  times (the arrival day, travel between places, the departure day), with that day's transport in it. Each day
+  starts and ends where we sleep; with a car, days out by car from there. One or two sentences a day.
 - Plain text in the strings: no Markdown, no links.
 
+Where I have been before:
+{history}
+
+The document:
 {doc}"""
 
 
@@ -623,6 +663,20 @@ def without_suggestions(md):
     return md.strip()
 
 
+def places(doc):
+    """The trip's places as the doc names them: the Plan's places, then where the Transport rows go ("✈️ KL1234:
+    Amsterdam - Lisbon": Lisbon), each once."""
+    t, out = tables(doc), []
+    plan, transport = t.get("plan"), t.get("transport")
+    for row in (plan["rows"][1:] if plan and "place" in plan["cols"] else []):
+        out.append(row[plan["cols"]["place"]]["text"])
+    for row in (transport["rows"][1:] if transport and "transport" in transport["cols"] else []):
+        ends = re.split(r"\s[-–—]\s|→", row[transport["cols"]["transport"]]["text"])
+        out += ends[-1:] if len(ends) > 1 else []  # not "Rental car"
+    out = [" ".join(x.split()) for x in out]
+    return [x for i, x in enumerate(out) if x and x not in out[:i]]
+
+
 def _plain(md):
     """Markdown with links reduced to their text and without booking codes: long, private, and nothing about the trip."""
     return re.sub(r"Booking code: [^|\n]*", "", re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", md))
@@ -659,9 +713,9 @@ def maps_link(*words):
 
 
 def suggestion_lines(data, today):
-    """[(text, kind, link)], kind one of h1, note, h2, place, item (a bullet) or day (a bullet led by its date and
-    place); link None or (how many characters at the start it covers, url): a place and a thing to do link to Google
-    Maps."""
+    """[(text, kind, link)], kind one of h1, note, h2, place (a Heading 3), item (a bullet) or day (a bullet led by
+    its date and place); link None or (how many characters at the start it covers, url): a place and a thing to do
+    link to Google Maps."""
     out = [(SUGGESTIONS, "h1"), (f"{MARK} on {today:%d.%m.%y}, from the plan above, and written again whenever the doc "
                                  "changes: move what you want to keep above this heading.", "note")]
     if data["things_to_do"]:
@@ -695,20 +749,15 @@ def suggestion_requests(doc, lines):
     stop = base + _len("\n".join(t for t, _, _ in lines))
     out.append({"updateTextStyle": {"range": {"startIndex": base, "endIndex": stop}, "textStyle": {}, "fields": "bold,italic,link"}})
     out.append({"deleteParagraphBullets": {"range": {"startIndex": base, "endIndex": stop + 1}}})
-    named = {"h1": "HEADING_1", "h2": "HEADING_2"}
+    named = {"h1": "HEADING_1", "h2": "HEADING_2", "place": "HEADING_3"}  # the doc's own styles, nothing on top
     i, bullets = base, []
     for t, kind, link in lines:
         end = i + _len(t)
         out.append({"updateParagraphStyle": {"range": {"startIndex": i, "endIndex": end + 1},
                                              "paragraphStyle": {"namedStyleType": named.get(kind, "NORMAL_TEXT")}, "fields": "namedStyleType"}})
-        bold = end if kind in ("h1", "h2", "place") else i + _len(t.split(": ", 1)[0] + ":") if kind == "day" else i
-        if bold > i:
-            out.append({"updateTextStyle": {"range": {"startIndex": i, "endIndex": bold}, "textStyle": {"bold": True}, "fields": "bold"}})
         if link:
             out.append({"updateTextStyle": {"range": {"startIndex": i, "endIndex": i + _len(t[:link[0]])},
                                             "textStyle": {"link": {"url": link[1]}}, "fields": "link"}})
-        if kind == "note":
-            out.append({"updateTextStyle": {"range": {"startIndex": i, "endIndex": end}, "textStyle": {"italic": True}, "fields": "italic"}})
         if kind in ("item", "day"):
             if bullets and bullets[-1][1] == i:
                 bullets[-1][1] = end + 1

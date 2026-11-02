@@ -114,7 +114,7 @@ def _link(html, text_rx, url_rx):
 
 def _booking(subject, lines, html, received):
     text = "\n".join(lines)
-    confirmed = re.search(r"Your booking in (.+?) is confirmed", text)
+    confirmed = re.search(r"Your (?:booking|[a-z]+) in (.+?) is confirmed", text)  # "Your apartment in Lagos is confirmed"
     cancelled = re.search(r"reservation at (.+?) has been cancell?ed", text) or re.match(r"Booking cancell?ed for", subject)
     if not (confirmed or cancelled):
         return None
@@ -210,6 +210,7 @@ RENTALS = {
     "rentalcars.com": ("Rentalcars.com", r"^(?:uw|your) rentalcars\.com (?:boeking|booking)\b|car is confirmed|auto is bevestigd",
                        r"annulering|cancell?ation"),
     "holidayautos": ("Holiday Autos", r"boekingsbevestiging|booking confirmation", r"annulering|annuleringsverzoek|cancell?"),
+    "carrental.edreams": ("eDreams Cars", r"boekingsbevestiging|booking confirmation", r"annulering|annuleringsverzoek|cancell?"),
     "arguscarhire": ("Argus Car Hire", r"boekingsbevestiging|booking confirmation", r"annulering|annuleringsverzoek|cancell?"),
     "stressfreecarrental": ("Stressfree Car Rental", r"reservation confirmation", r"reservation cancell?ation"),
     "bsp-auto": ("BSP Auto", r"voucher", r"annulering|cancell?"),
@@ -222,7 +223,7 @@ RENTALS = {
 }
 PICK_UP = (r"picking up your car|pick[- ]?up(?: details| location| date)?|pickup(?: details)?|ophalen|afhalen|ophaallocatie|vertrek|"
            r"recogida|levantamento|prise en charge|abholung|ritiro")
-DROP_OFF = (r"dropping off your car|drop[- ]?off(?: details| location| date)?|return(?: details| location| date)?|inleveren|afzetten|"
+DROP_OFF = (r"dropping off your car|drop[- ]?off(?: details| location| date)?|return(?: details| location| date)?|inleveren|inlever\w+|afzetten|"
             r"terugkeer|terugbrengen|devoluci[oó]n|devolu[cç][aã]o|restitution|r[uü]ckgabe|riconsegna")
 NOT_A_PLACE = (r"(?i)instructions|instructies|time|tijd|hora|date|datum|fecha|hours|uren|policy|voorwaarden|cancel|annul|deposit|borg|"
                r"company|bedrijf|supplied|leverancier|phone|telefoon|^[/|]|:\s*$|^\W*$|@|https?:|\d{1,2}:\d{2}|"
@@ -252,7 +253,7 @@ def _block(lines, label, received):
 def _rental(provider, confirm, cancel):
     def rule(subject, lines, html, received):
         code = re.search(r"(?i)(?:ref\.?:?|reference|referentie|verwijzing|voucher|reservation|reservering|contrat[oa]|contratto|"
-                         r"booking|boeking|RA#)\s*#?\s*([A-Z0-9][A-Z0-9-]{4,})|#\s*([A-Z0-9]{5,})|\b([A-Z]{0,3}\d{6,})\b", subject)
+                         r"booking|boeking|RA#)(?![a-z])\s*#?\s*(?=[A-Z-]*\d)([A-Z0-9][A-Z0-9-]{4,})|#\s*([A-Z0-9]{5,})|\b([A-Z]{0,3}\d{6,})\b", subject)
         code = code and next(g for g in code.groups() if g)
         if not code:
             return None
