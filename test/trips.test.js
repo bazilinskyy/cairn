@@ -17,9 +17,9 @@ fs.writeFileSync(path.join(dir, 'towns.txt'), [town(1, 'Eindhoven', 'NL', 51.44,
 const grid = cities.load(path.join(dir, 'towns.txt'));
 const airports = { EIN: { lat: 51.45, lon: 5.39, city: 'Eindhoven' }, LIS: { lat: 38.77, lon: -9.13, city: 'Lisbon' } };
 
-function store({ flights = [], stays = [], points = [], photos = [], towns = grid }) {
+function store({ flights = [], stays = [], points = [], photos = [], ground = [], towns = grid }) {
   return trips.create({
-    towns: () => towns, cities, days: () => points, flights: () => flights, airports: () => airports, groundTrips: () => [],
+    towns: () => towns, cities, days: () => points, flights: () => flights, airports: () => airports, groundTrips: () => ground,
     stays: () => stays, activities: () => [], photos: () => photos, homeAirports: () => ['EIN'], file: path.join(dir, 'drives.json'), log: () => {}
   });
 }
@@ -92,6 +92,22 @@ test('a car from the morning after an evening in town: the way out that morning 
   const out = s.get(s.list()[0].id).moves.find(m => Math.abs(m.to[1] + 9.38) < 0.01);
   assert.equal(out.kind, 'drive');
   assert.ok(new Date(out.t0 * 1000).toISOString().startsWith('2026-03-02'), 'on the day of the car');
+});
+
+test('island to island: a ferry with its times ends one car and starts the next, waiting at the port; a slow hop by car', () => {
+  const carA = { id: 1, what: 'car', start: '2026-03-01', end: '2026-03-03', lat: 38.72, lon: -9.14 };   // the first island's car
+  const carB = { id: 2, what: 'car', start: '2026-03-03', end: '2026-03-05', lat: 38.53, lon: -8.89 };   // the next one's, at its port
+  const at = (iso, lat, lon, id) => [id, Date.parse(iso) / 1000, lat, lon];
+  const s = store({ stays: [carA, carB],
+    flights: [{ id: 1, date: '2026-03-01 08:00', from: 'EIN', to: 'LIS', duration: '02:50' }],
+    ground: [{ id: 1, mode: 'ferry', date: '2026-03-03 12:00', arrival: '2026-03-03 13:30', from: 'A', to: 'B', from_lat: 38.70, from_lon: -9.15, to_lat: 38.53, to_lon: -8.89, distance: 30 }],
+    photos: [at('2026-03-03T08:00:00Z', 38.72, -9.14, 1), at('2026-03-03T09:00:00Z', 38.76, -9.30, 2),   // a drive on the first island
+      at('2026-03-03T15:00:00Z', 38.53, -8.90, 3), at('2026-03-03T17:00:00Z', 38.49, -8.81, 4)] });     // off the ferry, then 8 km in two hours
+  const moves = s.get(s.list()[0].id).moves.filter(m => m.km >= 2 && new Date(m.t0 * 1000).toISOString().startsWith('2026-03-03'));
+  assert.ok(!moves.some(m => (m.from[1] < -9 && m.to[1] > -8.95) || (m.from[1] > -8.95 && m.to[1] < -9)), 'no drive across the water');
+  assert.ok(moves.some(m => m.kind === 'drive' && Math.abs(m.to[1] + 9.30) < 0.01), 'the first island by car');
+  assert.ok(moves.some(m => m.kind === 'drive' && Math.abs(m.to[1] + 8.81) < 0.01), 'the slow hop on the next one by car too');
+  assert.ok(!moves.some(m => m.t0 > Date.parse('2026-03-03T15:00:00Z') / 1000 && Math.abs(m.to[1] + 8.89) < 0.005), 'no way back to the car at the port');
 });
 
 test('a room kept in town while sleeping elsewhere: its check-out that day is not where you were', () => {

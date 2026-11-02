@@ -102,7 +102,7 @@ function create({ days, towns, cities, activities, stays, flights, airports, gro
 
   function key() {
     return [new Date().toISOString().slice(0, 10), activities().length, stays().length, flights().length, groundTrips().length, Object.keys(weather()).length,
-      Object.keys(wellness()).length, commutes()].join('|');
+      Object.keys(wellness()).length, commutes(), drives().length].join('|');  // the drives worked out after a start too
   }
 
   // the numbers; null until worked out the first time (then the last ones while new ones are made); made again when

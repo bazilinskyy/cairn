@@ -42,9 +42,19 @@ test('every trip with its travel, beds, outings and photos; the ones ahead liste
 
 test('the years asked for only, and without photos when so asked', () => {
   const html = book().html({ from: 2025, to: 2025, photos: false });
+  assert.match(html, /<title>Cairn · your travels 2025<\/title>/, 'one year, not 2025–2025');
   assert.doesNotMatch(html, /id="trip-2024-05-01"/);
   assert.match(html, /id="trip-2025-02-01"/);
   assert.doesNotMatch(html, /\/api\/photos\//);
+});
+
+test('every climb ridden, the highest first, with how often and since when; not the ones never ridden', () => {
+  const html = book({ climbs: () => [{ name: 'Col Made-up', country: 'FR', ele: 2000, times: 3, first: '2019-07-01', last: '2023-07-02' },
+    { name: 'Never Ridden', country: 'IT', ele: 2500, times: 0 }, { name: 'Pass Example', country: 'CH', ele: 2400, times: 1, first: '2021-06-01', last: '2021-06-01' }] }).html();
+  assert.match(html, /<h2>2 climbs ridden<\/h2>/);
+  assert.match(html, /Col Made-up<\/span><span class="n">2,000 m<\/span>[\s\S]*?<small>3 times · 2019–2023<\/small>/);
+  assert.doesNotMatch(html, /Never Ridden/);
+  assert.ok(html.indexOf('Pass Example') < html.indexOf('Col Made-up'));
 });
 
 test('a place with no town of its own is near the nearest one', () => {

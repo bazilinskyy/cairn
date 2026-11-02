@@ -14,7 +14,7 @@ const { awayNights } = require('./stats');
 
 const OSRM = 'https://router.project-osrm.org/route/v1/driving/';
 const WORK = /conferen|congress|symposi|workshop|summit|seminar|colloqui|summer school|winter school|meeting|kick-?off|defen[cs]e|viva|keynote|invited talk|panel|committee|review|project|hackathon|expo\b|trade fair|training|course\b|lecture|visit to|site visit|retreat|plenary/i;
-const MIN_DAYS = 3, MAX_FLOWN_DAYS = 90, MOVE_KM = 1, ROAD_KM = 10, HOP_KM = 2, WALK_KMH = 7, PICKUP_KM = 30, ROAD_MAX_KM = 900, CAR_KMH = 140, FERRY_KM = 20, ROAD_V = 2;
+const MIN_DAYS = 3, MAX_FLOWN_DAYS = 90, MOVE_KM = 1, ROAD_KM = 10, HOP_KM = 2, CAR_HOP_KM = 5, WALK_KMH = 7, PICKUP_KM = 30, AT_CAR_KM = 5, ROAD_MAX_KM = 900, CAR_KMH = 140, FERRY_KM = 20, ROAD_V = 2;
 const regionName = (() => {
   try { const n = new Intl.DisplayNames(['en'], { type: 'region' }); return cc => { try { return n.of(cc); } catch (_) { return cc; } }; } catch (_) { return cc => cc; }
 })();
@@ -142,11 +142,15 @@ function create({ towns, cities, days, flights, airports, groundTrips, stays, ac
       ev.push({ t: a.start, at: path[0], what: 'activity', cover: 'a' + a.id });
       ev.push({ t: a.start + (a.elapsed_time || a.moving_time || 0), at: path[path.length - 1], what: 'activity', cover: 'a' + a.id });
     }
+    // a ferry with its times is to a rental car what a flight is (an island's car left at the port, the next island's
+    // picked up there); one known only by its day (at noon) is not
+    const timed = t => !t.approx && (t.arrival || (/^\d{4}-\d\d-\d\d \d\d:\d\d/.test(t.date || '') && !/ 12:00(:00)?$/.test(t.date)));
     for (const t of gt) {
       if (t.from_lat == null || t.to_lat == null) continue;
       const t0 = unix(t.date, t.from_lat, t.from_lon), t1 = t.arrival ? unix(t.arrival, t.to_lat, t.to_lon) : t0 + Math.max(1800, (t.distance || 50) / 60 * 3600);
-      ev.push({ t: t0, at: [t.from_lat, t.from_lon], what: 'ground', cover: 'g' + t.id });
-      ev.push({ t: t1, at: [t.to_lat, t.to_lon], what: 'ground', cover: 'g' + t.id });
+      const ferry = t.mode === 'ferry' && timed(t);
+      ev.push({ t: t0, at: [t.from_lat, t.from_lon], what: 'ground', cover: 'g' + t.id, ...(ferry && { off: true }) });
+      ev.push({ t: t1, at: [t.to_lat, t.to_lon], what: 'ground', cover: 'g' + t.id, ...(ferry && { on: true, from: [t.from_lat, t.from_lon] }) });
     }
     const homeAp = new Set(homeAirports());
     for (const f of fl) {
@@ -178,7 +182,7 @@ function create({ towns, cities, days, flights, airports, groundTrips, stays, ac
     }
     // a rental car: where it was picked up, just before the first place on its days more than PICKUP_KM from there
     // (the drive starts at the airport, not at the first photo on the way). You had it from its first day (from your
-    // landing near it, when you flew in that day) until a flight, and again after one landing near it (within
+    // landing near it, when you flew in or came off a ferry that day) until a flight or a ferry, and again after one landing near it (within
     // ROAD_MAX_KM, or nearer than where it left: a domestic flight while you kept it, or a second car there); not
     // after one home (it was returned before: the moves at home that evening were not by car)
     const carHours = [];
@@ -201,7 +205,9 @@ function create({ towns, cities, days, flights, airports, groundTrips, stays, ac
         const first = seen.filter(e => e.what !== 'flight' && e.t >= since && e.t <= until && ground.km(e.at, [c.lat, c.lon]) > PICKUP_KM).sort((a, b) => a.t - b.t)[0];
         // only a place you were near that day or the one before (a car placed in a whole country is not)
         const there = ev.some(e => e.t >= from - 86400 && e.t < (first?.t ?? to) && ground.km(e.at, [c.lat, c.lon]) <= PICKUP_KM);
-        if (first && there) ev.push({ t: first.t - 60, at: [c.lat, c.lon], what: 'car' });
+        // and not when you were seen at it already, once you could have it (off the ferry it waited at)
+        const at = ev.some(e => e.t >= since && e.t < (first?.t ?? to) && ground.km(e.at, [c.lat, c.lon]) <= AT_CAR_KM);
+        if (first && there && !at) ev.push({ t: first.t - 60, at: [c.lat, c.lon], what: 'car' });
       }
     }
     // a photo or a stay's check-in during a flight, train or activity is on the way (or its clock is off): left out,
@@ -222,8 +228,10 @@ function create({ towns, cities, days, flights, airports, groundTrips, stays, ac
           // morning's photos at a hotel, then a short drive on; an evening there, then a car the next morning)
           const gone = Math.max(last.t, left ?? last.t), hours = Math.max((e.t - gone) / 3600, 0.01), car = carOn(gone);
           // on a car day a shorter hop faster than a walk was driven too (a photo by the road between two drives),
-          // so the drive goes on through it instead of breaking there
-          const road = (km >= ROAD_KM && km <= ROAD_MAX_KM && (car || km / hours <= CAR_KMH)) || (car && km >= HOP_KM && km / hours >= WALK_KMH);
+          // so the drive goes on through it instead of breaking there; and one of CAR_HOP_KM or more however slow (a
+          // walk that long is an activity of its own, which covers its time: the next village, an hour on)
+          const road = (km >= ROAD_KM && km <= ROAD_MAX_KM && (car || km / hours <= CAR_KMH))
+            || (car && km >= HOP_KM && (km / hours >= WALK_KMH || km >= CAR_HOP_KM));
           moves.push({ from: last.at, to: e.at, t0: gone, t1: e.t, km: Math.round(km * 10) / 10, kind: road ? (car ? 'drive' : 'road') : 'move' });
         } else if (!e.cover) { left = e.t; continue; }  // a few steps on: keep the earlier place as where you were
       }

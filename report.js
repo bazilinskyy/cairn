@@ -242,6 +242,16 @@ ${shown.length ? `<div class="photos">${shown.map(p => `<img src="/api/photos/${
 </article>`;
   }
 
+  // the famous climbs you rode, the highest first
+  const riddenClimbs = () => (climbs() || []).filter(x => x.times > 0).sort((a, b) => (b.ele || 0) - (a.ele || 0));
+  // all of them: where, how high, how often and since when
+  function climbsHtml(ridden) {
+    const most = ridden[0]?.ele || 0;
+    return `<section class="part" id="climbs"><p class="eyebrow">Up</p><h2>${plural(ridden.length, 'climb')} ridden</h2><div class="countries climbs">${ridden.map(x =>
+      `<div><span>${flag(x.country)} ${esc(x.name)}</span><span class="n">${num(x.ele)} m</span>${bar(x.ele || 0, most)}` +
+      `<small>${x.times > 1 ? `${num(x.times)} times · ` : ''}${esc((x.first || '').slice(0, 4))}${x.last && x.last.slice(0, 4) !== (x.first || '').slice(0, 4) ? `–${esc(x.last.slice(0, 4))}` : ''}</small></div>`).join('')}</div></section>`;
+  }
+
   // what it all adds up to (curiosities.js)
   function glance(c, cs) {
     const out = [];
@@ -285,9 +295,9 @@ ${shown.length ? `<div class="photos">${shown.map(p => `<img src="/api/photos/${
       ].filter(Boolean);
       out.push(`<h3>Records</h3><div class="cards">${cards.map(([i, k, v]) => `<div><span class="i">${i}</span><span class="k">${k}</span><b>${v}</b></div>`).join('')}</div>`);
     } else out.push('<p class="note">The records are still being worked out: make the report again in a few minutes for them.</p>');
-    const ridden = (climbs() || []).filter(x => x.times > 0).sort((a, b) => (b.ele || 0) - (a.ele || 0));
+    const ridden = riddenClimbs();
     if (ridden.length) {
-      out.push(`<h3>Climbs ridden <small>${num(ridden.length)}</small></h3><p class="chips">${ridden.slice(0, 8).map(x =>
+      out.push(`<h3>Climbs ridden <small>${num(ridden.length)} · <a href="#climbs">all of them →</a></small></h3><p class="chips">${ridden.slice(0, 8).map(x =>
         `<span>${flag(x.country)} ${esc(x.name)} <small>${num(x.ele)} m</small></span>`).join('')}</p>`);
     }
     return out.join('\n');
@@ -304,7 +314,7 @@ ${shown.length ? `<div class="photos">${shown.map(p => `<img src="/api/photos/${
     const byYear = new Map(ys.map(y => [String(y.year), y]));
     const groups = new Map();
     done.forEach(t => { const y = t.start.slice(0, 4); if (!groups.has(y)) groups.set(y, []); groups.get(y).push(t); });
-    const span = done.length ? `${done[0].start.slice(0, 4)}–${done[done.length - 1].start.slice(0, 4)}` : '';
+    const y0 = done[0]?.start.slice(0, 4), y1 = done[done.length - 1]?.start.slice(0, 4), span = !done.length ? '' : y0 === y1 ? y0 : `${y0}–${y1}`;
     const yearHead = y => {
       const r = byYear.get(y);
       const bits = r ? [[num(r.trips), r.trips === 1 ? 'trip' : 'trips'], [num(r.away), 'days away'],
@@ -449,6 +459,7 @@ ${worldMap(done.flatMap(t => t.towns || []), coastNow())}
 ${cs.length ? `<section class="part"><p class="eyebrow">Where</p><h2>${plural(cs.length, 'country', 'countries')}</h2><div class="countries">${cs.map(x =>
   `<div><span>${flag(x.cc)} ${esc(x.name || countryName(x.cc || x.country))}</span><span class="n">${num(x.days)} d</span>${bar(x.days, mostDays)}` +
   `<small>${x.visits > 1 ? `${x.visits} visits · ` : ''}${esc((x.first || '').slice(0, 4))}${x.last && x.last.slice(0, 4) !== (x.first || '').slice(0, 4) ? `–${esc(x.last.slice(0, 4))}` : ''}</small></div>`).join('')}</div></section>` : ''}
+${(rc => (rc.length ? climbsHtml(rc) : ''))(riddenClimbs())}
 ${ys.length ? `<section class="part"><p class="eyebrow">When</p><h2>Year by year</h2><table class="years"><tr><th>Year</th><th>Days away</th><th></th><th>Trips</th><th>Countries</th><th>Towns</th><th>Flown</th><th>Photos</th></tr>${ys.map(y =>
   `<tr><td><a href="#year-${y.year}">${y.year}</a></td><td>${num(y.away)}</td><td class="b">${bar(y.away, mostAway)}</td><td>${num(y.trips)}</td>` +
   `<td>${num(y.countries)}${y.newCountries ? `<small> +${y.newCountries}</small>` : ''}</td><td>${num(y.towns)}${y.newTowns ? `<small> +${y.newTowns}</small>` : ''}</td>` +

@@ -1637,8 +1637,8 @@ app.get('/api/report.pdf', async (req, res) => {
   const o = reportOpts(req.query), q = new URLSearchParams({ ...(o.from && { from: o.from }), ...(o.to && { to: o.to }), ...(!o.photos && { photos: '0' }) });
   const local = ['0.0.0.0', '::', '', undefined].includes(config.host) ? '127.0.0.1' : config.host;
   try {
-    // the records worked out first (a few minutes after a start), else the report leaves them out
-    await Promise.race([curiosities.ready(), new Promise(r => setTimeout(r, 5 * 60e3).unref())]);
+    // the drives and the records worked out first (a few minutes after a start), else the report leaves them out
+    await Promise.race([tripStore.drivesReady().then(() => curiosities.ready()), new Promise(r => setTimeout(r, 5 * 60e3).unref())]);
     const { file, dir } = await report.pdf(`http://${local.includes(':') ? `[${local}]` : local}:${config.port}/report?${q}`, { browser });
     res.download(file, `cairn-${new Date().toISOString().slice(0, 10)}.pdf`, () => fs.rmSync(dir, { recursive: true, force: true }));
   } catch (e) {
