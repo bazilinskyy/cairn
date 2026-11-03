@@ -394,6 +394,68 @@ def test_ovchipkaart_routes_per_year():
         ("bus", "Haarlem, Station", "Haarlem, Zijlweg", 1, "year", "2024"), ("train", "Leiden", "Haarlem", 2, "year", "2024")], got
 
 
+def test_spotify_plays_and_countries():
+    import spotify
+    rows = [
+        {"ts": "2019-03-01T10:22:33Z", "ms_played": 200000, "conn_country": "PT", "master_metadata_track_name": "Song A",
+         "master_metadata_album_artist_name": "Band", "master_metadata_album_album_name": "LP", "spotify_track_uri": "u:a", "offline": False},
+        {"ts": "2019-03-01T11:00:00Z", "ms_played": 5000, "conn_country": "PT", "master_metadata_track_name": "Skipped",
+         "master_metadata_album_artist_name": "Band", "spotify_track_uri": "u:b", "offline": False},
+        # played offline on 2 March in Spain, written when back online in the Netherlands
+        {"ts": "2019-03-05T08:00:00Z", "ms_played": 180000, "conn_country": "NL", "master_metadata_track_name": "Song B",
+         "master_metadata_album_artist_name": "Band", "spotify_track_uri": "u:c", "offline": True, "offline_timestamp": 1551520800000},
+        {"ts": "2019-03-06T08:00:00Z", "ms_played": 0, "conn_country": "ZZ", "episode_name": "A podcast", "spotify_episode_uri": "e:1"},
+    ]
+    with tempfile.TemporaryDirectory() as d:
+        z = Path(d, "my_spotify_data.zip")
+        import zipfile
+        with zipfile.ZipFile(z, "w") as f:
+            f.writestr("Spotify Extended Streaming History/Streaming_History_Audio_2019_0.json", json.dumps(rows))
+            f.writestr("Spotify Extended Streaming History/Streaming_History_Audio_2019_1.json", json.dumps(rows[:1]))  # the same play again
+            f.writestr("Spotify Extended Streaming History/ReadMeFirst.pdf", "x")
+        got = spotify.load([z])
+    assert got["plays"] == [[1551435753, "Band", "Song A", "LP"], [1551520800, "Band", "Song B", ""]], got["plays"]
+    assert got["countries"] == {"2019-03-01": {"PT": 2}}, got["countries"]
+
+
+def test_health_workouts_routes_and_steps():
+    import health
+    xml = """<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE HealthData [<!ELEMENT HealthData (Record*)>]>
+<HealthData locale="en_NL">
+ <Record type="HKQuantityTypeIdentifierStepCount" sourceName="Phone" unit="count" startDate="2016-06-01 08:00:00 +0200" endDate="2016-06-01 08:10:00 +0200" value="1000"/>
+ <Record type="HKQuantityTypeIdentifierStepCount" sourceName="Phone" unit="count" startDate="2016-06-01 18:00:00 +0200" endDate="2016-06-01 18:10:00 +0200" value="500"/>
+ <Record type="HKQuantityTypeIdentifierStepCount" sourceName="Watch" unit="count" startDate="2016-06-01 18:00:00 +0200" endDate="2016-06-01 18:10:00 +0200" value="1200"/>
+ <Record type="HKQuantityTypeIdentifierFlightsClimbed" sourceName="Phone" unit="count" startDate="2016-06-01 18:00:00 +0200" endDate="2016-06-01 18:10:00 +0200" value="4"/>
+ <Record type="HKQuantityTypeIdentifierHeartRate" sourceName="Watch" unit="count/min" startDate="2016-06-01 18:00:00 +0200" endDate="2016-06-01 18:00:00 +0200" value="60"/>
+ <Workout workoutActivityType="HKWorkoutActivityTypeRunning" duration="30" durationUnit="min" totalDistance="3.1" totalDistanceUnit="mi" sourceName="Watch" startDate="2016-06-01 07:00:00 +0200" endDate="2016-06-01 07:31:00 +0200">
+  <MetadataEntry key="HKElevationAscended" value="4500 cm"/>
+  <WorkoutStatistics type="HKQuantityTypeIdentifierHeartRate" average="151.4" unit="count/min"/>
+  <WorkoutRoute sourceName="Watch"><FileReference path="/workout-routes/route_2016-06-01_7.00am.gpx"/></WorkoutRoute>
+ </Workout>
+ <Workout workoutActivityType="HKWorkoutActivityTypeCycling" duration="60" durationUnit="min" sourceName="Phone" startDate="2016-06-02 07:00:00 +0200" endDate="2016-06-02 08:00:00 +0200">
+  <MetadataEntry key="HKIndoorWorkout" value="1"/>
+  <WorkoutStatistics type="HKQuantityTypeIdentifierDistanceCycling" sum="20000" unit="m"/>
+ </Workout>
+</HealthData>"""
+    gpx = ('<gpx><trk><trkseg><trkpt lat="52.0" lon="4.0"><time>x</time></trkpt><trkpt lat="52.01" lon="4.01"/>'
+           '<trkpt lat="52.02" lon="4.0"/></trkseg></trk></gpx>')
+    with tempfile.TemporaryDirectory() as d:
+        z = Path(d, "export.zip")
+        import zipfile
+        with zipfile.ZipFile(z, "w") as f:
+            f.writestr("apple_health_export/export.xml", xml)
+            f.writestr("apple_health_export/workout-routes/route_2016-06-01_7.00am.gpx", gpx)
+        got = health.load(z)
+    assert got["days"] == {"2016-06-01": {"steps": 1500, "floors": 4}}, got["days"]
+    ride, run = got["activities"]
+    assert (run["sport"], run["date"], run["distance"], run["elevation"], run["heartrate"], run["trainer"], run["at"]) == (
+        "Run", "2016-06-01 07:00:00", 5.0, 45, 151, False, [52.0, 4.0]), run
+    assert run["app"] == "Watch"
+    assert run["id"] == health.ID_BASE + run["start"] and run["start"] == 1464757200 and decode(run["path"])[0] == (52.0, 4.0) and run["tiles"]
+    assert (ride["sport"], ride["distance"], ride["trainer"], ride["path"]) == ("Ride", 20.0, True, ""), ride
+
+
 if __name__ == "__main__":
     tests = [f for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
     for t in tests:

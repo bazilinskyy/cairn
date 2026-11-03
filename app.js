@@ -890,10 +890,11 @@ app.get('/api/checkins', (_req, res) => { placesAndDays('', ''); res.json(readIm
 
 // --- Strava ---
 
-// --- Sports activities: Garmin and Strava (activities.js) ---
+// --- Sports activities: Garmin, Strava and Apple Health (activities.js) ---
 
 const NO_GARMIN = { activities: [] };
-const activities = activitySources.create({ garmin: () => readImport(GARMIN_FILE, NO_GARMIN), strava });
+const HEALTH_FILE = path.join(DATA_DIR, 'health.json');  // Apple Health's workouts and steps (imports/health.py)
+const activities = activitySources.create({ garmin: () => readImport(GARMIN_FILE, NO_GARMIN), strava, health: () => readImport(HEALTH_FILE, {}) });
 
 // Thousands of activities: gzipped, and nothing at all when the browser already has this version
 app.get('/api/activities', (req, res) => {
@@ -1303,27 +1304,35 @@ app.get('/api/weather', (_req, res) => res.json(weather.all()));
 const WELLNESS_FILE = path.join(DATA_DIR, 'wellness.json');
 // Every day's sleep, resting heart rate and more (imports/garmin.py). A night whose sleep was not measured is left
 // out of it: older watches give no sleep stages and call the whole time the watch lay still "deep" (12-13 hours,
-// also when it lay on a table), as garmin.py now leaves them out too
+// also when it lay on a table), as garmin.py now leaves them out too. Apple Health's steps and floors (imports/health.py)
+// fill the days Garmin has no steps for
 const measuredSleep = d => d.sleep && !(!d.rem && (d.deep || 0) >= 0.9 * d.sleep);
 const SLEEP_KEYS = ['sleep', 'deep', 'light', 'rem', 'awake', 'bed', 'wake', 'score'];
 const wellnessSeen = new WeakMap();
 const wellnessDays = () => {
-  const raw = readImport(WELLNESS_FILE, { days: {} }).days || {};
-  if (!wellnessSeen.has(raw)) {
-    wellnessSeen.set(raw, Object.fromEntries(Object.entries(raw).map(([d, x]) => [d, !x.sleep || measuredSleep(x) ? x
-      : Object.fromEntries(Object.entries(x).filter(([k]) => !SLEEP_KEYS.includes(k)))])));
+  const raw = readImport(WELLNESS_FILE, { days: {} }).days || {}, health = readImport(HEALTH_FILE, { days: {} }).days || {};
+  const seen = wellnessSeen.get(raw);
+  if (!seen || seen.health !== health) {
+    const days = Object.fromEntries(Object.entries(raw).map(([d, x]) => [d, !x.sleep || measuredSleep(x) ? x
+      : Object.fromEntries(Object.entries(x).filter(([k]) => !SLEEP_KEYS.includes(k)))]));
+    Object.entries(health).forEach(([d, h]) => {
+      if (h.steps && !days[d]?.steps) days[d] = { ...days[d], steps: h.steps, ...(h.floors && { floors: h.floors }) };
+    });
+    wellnessSeen.set(raw, { health, days });
   }
-  return wellnessSeen.get(raw);
+  return wellnessSeen.get(raw).days;
 };
 app.get('/api/wellness', (req, res) => {
   const from = req.query.from || '', to = req.query.to || '';
   res.json(Object.fromEntries(Object.entries(wellnessDays()).filter(([d]) => (!from || d >= from) && (!to || d <= to))));
 });
 
-// --- Music (lastfm.js): your Last.fm scrobbles, for the towns' and trips' pages ---
+// --- Music (lastfm.js): your Last.fm scrobbles, and Spotify's streaming history (imports/spotify.py) on the days
+// Last.fm has none, for the towns' and trips' pages ---
 
+const SPOTIFY_FILE = path.join(DATA_DIR, 'spotify.json');
 const music = require('./lastfm').create({
-  file: path.join(DATA_DIR, 'lastfm.json'), log: m => console.log(m),
+  file: path.join(DATA_DIR, 'lastfm.json'), log: m => console.log(m), more: () => readImport(SPOTIFY_FILE, { plays: [] }).plays || [],
   keys: () => {  // read each time, so adding them needs no restart
     let s = secret;
     try { s = JSON.parse(fs.readFileSync(path.join(__dirname, 'secret'), 'utf8')); } catch (_) {}
@@ -1392,6 +1401,12 @@ const imports = require('./uploads').create({
       note: 'Replaces the events kept: give all your calendars at once.', run: files => py('calendar_events.py', [...files, ...outTo('calendar.json')]) },
     bank: { file: path.join(DATA_DIR, 'transactions.json'), label: '💳 Bank and card payments', accept: '.csv', what: 'CSV statements: Revolut, N26, ING, ABN AMRO, Rabobank, bunq, or any with a date, amount and description',
       note: 'Adds to the payments kept, each once.', run: files => py('bank.py', [...files, ...outTo('transactions.json')]) },
+    spotify: { file: path.join(DATA_DIR, 'spotify.json'), label: '🎧 Spotify', accept: '.zip,.json', what: 'Account → Privacy → Download your data → Extended streaming history (it comes within 30 days): my_spotify_data.zip, as it came',
+      note: 'Replaces the history kept. Each day\'s country lists the days abroad no trip explains; its songs fill the days Last.fm has none.',
+      run: files => py('spotify.py', [...files, ...outTo('spotify.json')]) },
+    health: { file: path.join(DATA_DIR, 'health.json'), label: '❤️ Apple Health', accept: '.zip', what: 'Health app → your picture → Export All Health Data: export.zip, as it came',
+      note: 'Replaces what was kept. Workouts Garmin or Strava do not have, with their routes; steps on the days Garmin has none.',
+      run: files => py('health.py', [files.find(f => /\.zip$/i.test(f)) || files[0], ...outTo('health.json')]) },
     ov: { label: '🚆 OV-chipkaart', accept: '.csv', what: 'ov-chipkaart.nl → Mijn OV-chip → card → Reishistorie, as CSV (18 months back at most, per card)',
       note: 'Updates the routes\' counts; adds nothing twice.', run: files => py('ovchipkaart.py', [...files, '--cairn', `http://127.0.0.1:${config.port}`]) },
     goodreads: { file: path.join(DATA_DIR, 'books.json'), label: '📚 Goodreads', accept: '.csv,.zip', what: 'My Books → Import and export → Export library: goodreads_library_export.csv; or Account settings → Download your data: the zip, as it came',
@@ -1418,7 +1433,39 @@ const tripStore = require('./trips').create({
   wellness: wellnessDays, weather: () => weather.all(), calendar: () => readImport(path.join(DATA_DIR, 'calendar.json'), []),
   log: m => console.log(m)
 });
-app.get('/api/trips', (_req, res) => res.json(tripStore.list()));
+// each trip with its cover photo (the one chosen on its page, else the middle one of its day with the most photos) and
+// its route (the town of each of its days, in order), for the cards of the Trips tab
+const COVERS_FILE = path.join(DATA_DIR, 'trip_covers.json');
+let tripsMemo = { key: null, list: [] };
+app.get('/api/trips', (_req, res) => {
+  const list = tripStore.list(), shots = datedPhotos(), chosen = readImport(COVERS_FILE, {}), towns_ = dayTownMap();
+  if (tripsMemo.key?.[0] !== list || tripsMemo.key[1] !== shots || tripsMemo.key[2] !== chosen || tripsMemo.key[3] !== towns_) {
+    const sorted = shots.filter(p => !p[4]).sort((a, b) => a[1] - b[1]);
+    const from = t => { let lo = 0, hi = sorted.length; while (lo < hi) { const m = (lo + hi) >> 1; if (sorted[m][1] < t) lo = m + 1; else hi = m; } return lo; };
+    tripsMemo = { key: [list, shots, chosen, towns_], list: list.map(t => {
+      const a = from(Date.parse(t.start) / 1000), b = from(Date.parse(t.end) / 1000 + 86400), days = new Map();
+      for (let i = a; i < b; i++) { const d = new Date(sorted[i][1] * 1000).toISOString().slice(0, 10); if (!days.has(d)) days.set(d, []); days.get(d).push(sorted[i][0]); }
+      const best = [...days.values()].sort((x, y) => y.length - x.length)[0];
+      const route = [];
+      for (let d = t.start; d <= t.end; d = new Date(Date.parse(d) + 864e5).toISOString().slice(0, 10)) {
+        const w = towns_.get(d);
+        if (w && !(route.length && route[route.length - 1][0] === +w.lat.toFixed(2) && route[route.length - 1][1] === +w.lon.toFixed(2))) route.push([+w.lat.toFixed(2), +w.lon.toFixed(2)]);
+      }
+      return { ...t, cover: chosen[t.id] ?? (best ? best[Math.floor(best.length / 2)] : null), route };
+    }) };
+  }
+  res.json(tripsMemo.list);
+});
+// { photo }: the trip's cover (a photo id), or null for Cairn's own choice again
+app.put('/api/trips/:id/cover', (req, res) => {
+  if (!tripStore.list().some(t => t.id === req.params.id)) return res.status(404).json({ error: 'no such trip' });
+  const photo = req.body?.photo, covers = { ...readImport(COVERS_FILE, {}) };
+  if (photo === null || photo === undefined) delete covers[req.params.id];
+  else if (/^[\w.-]{1,80}$/.test(String(photo))) covers[req.params.id] = photo;
+  else return res.status(400).json({ error: 'photo: a photo id, or null' });
+  fs.writeFileSync(COVERS_FILE, JSON.stringify(covers, null, 1));
+  res.json({ cover: covers[req.params.id] ?? null });
+});
 
 // The drives Cairn worked out (trips.js: along the roads, on the days of a rental car) as car journeys for the map,
 // from town to town; not on a day that has a car journey of your own
@@ -1498,6 +1545,7 @@ const backups = require('./backup').create({
     ['home.json', path.join(DATA_DIR, 'home.json')], ['album_places.json', path.join(DATA_DIR, 'album_places.json')],
     ['photo_places.json', PHOTO_PLACES],
     ['checkins.json', path.join(DATA_DIR, 'checkins.json')], ['calendar.json', path.join(DATA_DIR, 'calendar.json')],
+    ['spotify.json', SPOTIFY_FILE], ['health.json', HEALTH_FILE], ['trip_covers.json', path.join(DATA_DIR, 'trip_covers.json')],
     ['transactions.json', path.join(DATA_DIR, 'transactions.json')]
   ].map(([name, file]) => ({ name, file })),
   tracks: path.join(DATA_DIR, 'tracks'), backupsDir: path.join(DATA_DIR, 'backups'), log: m => console.log(m)
@@ -1585,6 +1633,19 @@ const prep = require('./prep').create({
   sentFile: path.join(DATA_DIR, 'prep_alerts.json'), dismissed: dismissedSet, discord, log: m => console.log(m)
 });
 app.get('/api/coming', async (_req, res) => res.json(await prep.coming()));
+
+// --- On this day (onthisday.js): where you were on today's date in the years before; to the alerts channel every
+// morning when turned on in the settings (off unless turned on) ---
+const onThisDay = require('./onthisday').create({
+  towns: loadTowns, cities, days: (from, to) => placesAndDays(from, to), trips: () => tripStore.list(), flights: () => flights,
+  airports: () => airports, groundTrips: () => trips, stays: () => stays, activities: () => activities.list(), photos: datedPhotos,
+  music: range => music.top(range), books: booksRead, enabled: () => readImport(HOME_FILE, {}).onthisday_discord === true,
+  discord, sentFile: path.join(DATA_DIR, 'onthisday_sent.json'), log: m => console.log(m)
+});
+app.get('/api/onthisday', (req, res) => {  // ?date=YYYY-MM-DD: that day instead of today (the browser's own date)
+  const d = /^\d{4}-\d\d-\d\d$/.test(req.query.date || '') ? req.query.date : new Date().toISOString().slice(0, 10);
+  res.json(onThisDay.get(d));
+});
 
 // --- Spending (spending.js): what the stays cost, in euros ---
 // the town of each day: of the places Cairn knows that day, the town most of them are in; worked out again only when
@@ -1820,6 +1881,84 @@ app.get('/api/suggestions/payments', (_req, res) => {
   res.json(paidCache.list);
 });
 
+// Days Spotify played abroad (imports/spotify.py: the country each play was connected from) when nothing in Cairn
+// puts you in that country: trips that may be missing, as for payments. Days with fewer than SPOTIFY_MIN_PLAYS plays
+// there are left out (a VPN, a song on someone else's account)
+let spotifyCache = { key: '', list: [] };
+const SPOTIFY_MIN_PLAYS = 3;
+app.get('/api/suggestions/spotify', (_req, res) => {
+  const byDay = readImport(SPOTIFY_FILE, { countries: {} }).countries || {}, no = dismissedSet();
+  if (!Object.keys(byDay).length) return res.json([]);
+  loadTowns();
+  if (!towns) return res.json([]);
+  const key = [Object.keys(byDay).length, dataVersion, flights.length, trips.length, stays.length, no.size].join('|');
+  if (spotifyCache.key !== key) {
+    const { home, there } = countryDays();
+    const near = (cc, d) => [-1, 0, 1].some(n => there.has(`${cc}|${new Date(Date.parse(d) + n * 864e5).toISOString().slice(0, 10)}`));
+    const runs = [];
+    Object.keys(byDay).sort().forEach(d => Object.entries(byDay[d]).forEach(([cc, n]) => {
+      if (home.has(cc) || n < SPOTIFY_MIN_PLAYS) return;
+      const r = runs.findLast(x => x.country === cc);
+      if (r && (Date.parse(d) - Date.parse(r.last)) / 864e5 <= 3) { r.last = d; r.days.push(d); r.plays += n; } else runs.push({ country: cc, first: d, last: d, days: [d], plays: n });
+    }));
+    spotifyCache = { key, list: runs.filter(r => !r.days.some(d => near(r.country, d)))
+      .map(r => ({ key: `spotify|${r.country}|${r.first}`, country: r.country, first: r.first, last: r.last, days: r.days.length, plays: r.plays }))
+      .filter(r => !no.has(r.key)).reverse() };
+  }
+  res.json(spotifyCache.list);
+});
+// Your home countries, and every 'cc|day' Cairn puts you in a country (from every place of every day)
+function countryDays() {
+  const memo = new Map(), ccAt = at => { const k = at[0].toFixed(2) + ',' + at[1].toFixed(2); if (!memo.has(k)) memo.set(k, cities.townAt(towns, at[0], at[1])?.cc || null); return memo.get(k); };
+  const home = new Set(homeAirports().map(c => airports[c]).filter(Boolean).map(a => ccAt([a.lat, a.lon])).filter(Boolean));
+  Object.values(homePlaces()).forEach(t => { if (t) home.add(t.cc); });
+  const there = new Set();
+  placesAndDays('', '').forEach(p => { const cc = p.at && ccAt(p.at); if (cc) there.add(`${cc}|${p.day}`); });
+  return { home, there };
+}
+
+// Days per country per year (a day in two countries counts in both), and the Schengen area's 90 days in any 180: the
+// days in its countries other than your home countries (where you live, which do not count), today and at the most
+// in the days booked ahead
+const SCHENGEN = new Set('AT BE BG CH CZ DE DK EE ES FI FR GR HR HU IS IT LI LT LU LV MT NL NO PL PT RO SE SI SK'.split(' '));
+const SCHENGEN_DAYS = 90, SCHENGEN_WINDOW = 180;
+let yearsCache = { key: '', value: null };
+app.get('/api/countries/years', (_req, res) => {
+  loadTowns();
+  if (!towns) return res.json({ years: [], rows: [], abroad: {}, schengen: null });
+  const today = new Date().toISOString().slice(0, 10);
+  const key = [dataVersion, flights.length, trips.length, stays.length, activities.list().length, today].join('|');
+  if (yearsCache.key !== key) yearsCache = { key, value: countryYears(today) };
+  res.json(yearsCache.value);
+});
+function countryYears(today) {
+  const { home, there } = countryDays();
+  const per = new Map(), abroad = {}, years = new Set(), out = new Map();  // out: day -> countries abroad
+  there.forEach(k => {
+    const [cc, d] = k.split('|');
+    if (d > today) return;
+    const y = d.slice(0, 4);
+    years.add(y);
+    if (!per.has(cc)) per.set(cc, {});
+    per.get(cc)[y] = (per.get(cc)[y] || 0) + 1;
+    if (!home.has(cc)) { if (!out.has(d)) out.set(d, new Set()); out.get(d).add(cc); }
+  });
+  out.forEach((_, d) => { abroad[d.slice(0, 4)] = (abroad[d.slice(0, 4)] || 0) + 1; });
+  const rows = [...per].map(([cc, byYear]) => ({ cc, home: home.has(cc), total: Object.values(byYear).reduce((a, b) => a + b, 0), byYear }))
+    .sort((a, b) => b.total - a.total);
+  // the Schengen days of each day, booked days ahead included
+  const inSchengen = new Set();
+  there.forEach(k => { const [cc, d] = k.split('|'); if (SCHENGEN.has(cc) && !home.has(cc)) inSchengen.add(d); });
+  const day = (d, n) => new Date(Date.parse(d) + n * 864e5).toISOString().slice(0, 10);
+  const used = d => { let n = 0; for (let i = 0; i < SCHENGEN_WINDOW; i++) if (inSchengen.has(day(d, -i))) n++; return n; };
+  const ahead = [...inSchengen].filter(d => d > today).sort();
+  let peak = { day: today, days: used(today) };
+  ahead.forEach(d => { const n = used(d); if (n > peak.days) peak = { day: d, days: n }; });
+  const schengen = { today: used(today), limit: SCHENGEN_DAYS, window: SCHENGEN_WINDOW, peak, home: [...home].filter(c => SCHENGEN.has(c)),
+    since: day(today, 1 - SCHENGEN_WINDOW), booked: ahead.length };
+  return { years: [...years].sort(), rows, abroad, schengen };
+}
+
 // Gaps (To check): trips abroad with no flight, train, bus or ferry around their first or last day (how did you get
 // there or back?), and long runs of days nothing in Cairn has a place for. Each can be dismissed
 let gapsCache = { key: '', value: null };
@@ -1897,6 +2036,18 @@ app.get('/api/trips/:id', (req, res) => {
     : res.status(404).json({ error: 'no such trip' });
 });
 
+// A trip as KML, GPX or a page to share (tripexport.js), downloaded as a file
+const tripExport = require('./tripexport');
+app.get('/api/trips/:id/export/:format(kml|gpx|html)', (req, res) => {
+  const t = tripStore.get(req.params.id);
+  if (!t) return res.status(404).json({ error: 'no such trip' });
+  const sh = tripExport.shapes(t, { groundTrips: trips, activities: activities.list(), airports });
+  const f = req.params.format, base = `${t.start} ${t.name}`.normalize('NFKD').replace(/[^\w -]+/g, '').trim().replace(/\s+/g, '-').slice(0, 80) || t.start;
+  const [body, type] = f === 'kml' ? [tripExport.kml(t, sh), 'application/vnd.google-earth.kml+xml'] : f === 'gpx' ? [tripExport.gpx(t, sh), 'application/gpx+xml']
+    : [tripExport.sharePage(t, sh), 'text/html; charset=utf-8'];
+  res.set({ 'Content-Type': type, 'Content-Disposition': `attachment; filename="${base}.${f}"` }).send(body);
+});
+
 app.get('/api/cities', (req, res) => {
   loadTowns();
   if (!towns) return res.json([]);
@@ -1920,7 +2071,7 @@ function homePlaces() {
 
 // What the map needs: the airports trips start from and return to (config), and your places
 app.get('/api/settings', (_req, res) => {
-  res.json({ home_airports: homeAirports(), home: homePlaces(), commutes: commutesCounted() });
+  res.json({ home_airports: homeAirports(), home: homePlaces(), commutes: commutesCounted(), onthisday_discord: readImport(HOME_FILE, {}).onthisday_discord === true });
 });
 
 // Towns by name, for picking your places: ?q=Chern
@@ -1931,11 +2082,12 @@ app.get('/api/towns', (req, res) => {
 });
 
 // { hometown, residence, work }: each a town id, or null to clear it; a role left out stays as it was; commutes: false
-// leaves the commutes out
+// leaves the commutes out; onthisday_discord: true sends On this day to the alerts channel every morning
 app.put('/api/home', (req, res) => {
   loadTowns();
   if (!towns) return res.status(503).json({ error: 'no town list (data/cities1000.txt)' });
   const home = homePlaces(), counted = 'commutes' in (req.body || {}) ? req.body.commutes !== false : commutesCounted();
+  const daily = 'onthisday_discord' in (req.body || {}) ? req.body.onthisday_discord === true : readImport(HOME_FILE, {}).onthisday_discord === true;
   for (const r of HOME_ROLES) {
     if (!(r in (req.body || {}))) continue;
     const id = req.body[r];
@@ -1944,7 +2096,7 @@ app.put('/api/home', (req, res) => {
     if (!t) return res.status(400).json({ error: `no town ${id}` });
     home[r] = { id: t.id, name: t.name, cc: t.cc, lat: t.lat, lon: t.lon };
   }
-  fs.writeFileSync(HOME_FILE, JSON.stringify(counted ? home : { ...home, commutes: false }, null, 1));
+  fs.writeFileSync(HOME_FILE, JSON.stringify({ ...home, ...(!counted && { commutes: false }), ...(daily && { onthisday_discord: true }) }, null, 1));
   res.json(home);
 });
 
@@ -2135,6 +2287,7 @@ init().then(() => {
     setTimeout(() => photoIndex.warm(m => console.log(m)), 5 * 60e3);
     setInterval(() => photoIndex.warm(m => console.log(m)), 6 * 3600e3).unref();
     setInterval(() => prep.morning().catch(e => console.warn('[prep]', e.message)), 10 * 60e3).unref();  // once a day, after 07:30
+    setInterval(() => onThisDay.morning().catch(e => console.warn('[onthisday]', e.message)), 10 * 60e3).unref();  // after 08:00, when turned on
     setTimeout(() => music.sync(), 120e3);
     setInterval(() => music.sync(), 6 * 3600e3).unref();
     setInterval(() => weather.fill(), 6 * 3600e3).unref();  // new rides, once the weather history has them

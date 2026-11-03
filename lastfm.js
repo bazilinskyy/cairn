@@ -2,6 +2,8 @@
 // What you listened to (Last.fm): every scrobble, fetched once and then the new ones every six hours, kept in
 // data/lastfm.json; for a town's or a trip's page, the artists and tracks you played on its days. Needs a Last.fm API
 // key and your user name in `secret` (lastfm_api_key, lastfm_user; read each time, so adding them needs no restart).
+// `more`: plays from elsewhere in the same shape (Spotify's streaming history), counted on the days Last.fm has none
+// (Spotify scrobbles to Last.fm: on a day both have, they are the same songs).
 
 const fs = require('fs');
 
@@ -16,7 +18,7 @@ const dayOf = t => {
   return d;
 };
 
-function create({ file, keys, log = console.log }) {
+function create({ file, keys, more = () => [], log = console.log }) {
   let data = null, running = false;
   const load = () => {
     if (!data) { try { data = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (_) { data = { scrobbles: [] }; } }
@@ -78,16 +80,22 @@ function create({ file, keys, log = console.log }) {
   // the scrobbles from one day to another (UTC days), only on the days in `days` when given: the top artists and
   // tracks, how many, and per day
   // the answer for a period, kept while the scrobbles are the same (a period of chosen days is worked out each time)
-  let memo = { list: null, answers: new Map() };
+  let memo = { own: null, extra: null, list: null, answers: new Map() };
   function top({ from = '', to = '', days = null } = {}) {
-    const list = load().scrobbles;
+    const own = load().scrobbles, extra = more();
+    if (memo.own !== own || memo.extra !== extra) memo = { own, extra, list: combined(own, extra), answers: new Map() };
+    const list = memo.list;
     if (!list.length) return null;
-    if (memo.list !== list) memo = { list, answers: new Map() };
     const key = `${from}|${to}`;
     if (!days && memo.answers.has(key)) return memo.answers.get(key);
     const out = topOf(list, from, to, days);
     if (!days) memo.answers.set(key, out);
     return out;
+  }
+  function combined(own, extra) {
+    if (!extra.length) return own;
+    const had = new Set(own.map(s => dayOf(s[0])));
+    return [...own, ...extra.filter(s => !had.has(dayOf(s[0])))].sort((a, b) => a[0] - b[0]);
   }
   function topOf(list, from, to, days) {
     const lo = from ? Date.parse(from + 'T00:00:00Z') / 1000 : 0, hi = to ? Date.parse(to + 'T23:59:59Z') / 1000 : Infinity;

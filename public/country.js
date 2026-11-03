@@ -101,8 +101,7 @@ function drawCountryMap(d) {
   box.dataset.basemap = BASEMAPS[prefs.basemap] ? prefs.basemap : 'auto';
   countryMap = L.map(box, { zoomControl: true, attributionControl: true, preferCanvas: true, worldCopyJump: true });  // canvas: a country's thousands of tracks
   toneMap(countryMap);
-  const b = BASEMAPS[prefs.basemap] || BASEMAPS.auto, [url, attribution, maxZoom = 19] = b.tiles;
-  L.tileLayer(url, { attribution, maxZoom }).addTo(countryMap);
+  addBasemap(countryMap);
   const st = lineStyle(), col = k => mapVar('--' + k);
   // the view first (shapes can only be clipped to a map that has one): the country's outline, else its towns
   const outline = d.shape ? L.geoJSON(d.shape, { style: { color: col('country'), weight: 1.5, fillColor: col('country'), fillOpacity: 0.12 }, interactive: false }) : null;

@@ -29,20 +29,106 @@ const BASEMAPS = {
   topo: { label: 'Topographic (OpenTopoMap)', tone: 'light', tiles: ['https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
     'Map data &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, SRTM; style &copy; <a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA)', 17] },
   satellite: { label: 'Satellite (Esri)', tone: 'sat', tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-    'Imagery &copy; Esri, Maxar, Earthstar Geographics, and the GIS User Community'] }
+    'Imagery &copy; Esri, Maxar, Earthstar Geographics, and the GIS User Community'] },
+  // vector maps (OpenFreeMap: OpenStreetMap drawn sharp at every zoom, with clear labels; no key). tiles: the raster
+  // map standing in for them where a vector map cannot be drawn (the 3D view, a browser without WebGL); like: the raster
+  // map whose toning they share there
+  'vector-auto': { label: 'Vector, follows the theme: dark, or light grey (OpenFreeMap)', vector: () => (document.documentElement.dataset.theme === 'light' ? 'positron' : 'dark'),
+    tiles: OSM, like: 'auto', vectorGroup: true },
+  'vector-dark': { label: 'Vector, dark', vector: 'dark', tone: 'dark', tiles: OSM, like: 'grey-dark', vectorGroup: true },
+  'vector-fiord': { label: 'Vector, dark blue-grey', vector: 'fiord', tone: 'dark', tiles: OSM, like: 'grey-dark', vectorGroup: true },
+  'vector-positron': { label: 'Vector, light grey', vector: 'positron', tone: 'light', tiles: OSM, like: 'grey', vectorGroup: true },
+  'vector-liberty': { label: 'Vector, in colour', vector: 'liberty', tone: 'light', tiles: OSM, like: 'colour', vectorGroup: true }
 };
+const OPENFREEMAP = 'https://tiles.openfreemap.org/styles/';
+const OPENFREEMAP_CREDIT = '<a href="https://openfreemap.org">OpenFreeMap</a> &copy; <a href="https://www.openmaptiles.org/">OpenMapTiles</a> Data from <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
+const MAPLIBRE_URL = 'https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/5.6.0/';
+const MAPLIBRE_LEAFLET = 'https://cdn.jsdelivr.net/npm/@maplibre/maplibre-gl-leaflet@0.1.3/leaflet-maplibre-gl.js';
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const js = document.createElement('script');
+    js.src = src;
+    js.onload = resolve;
+    js.onerror = () => reject(new Error('could not load ' + src));
+    document.head.appendChild(js);
+  });
+}
+// MapLibre GL (for the vector maps and the 3D view), loaded once, the first time it is needed
+let maplibreLoading = null;
+function loadMaplibre() {
+  if (!maplibreLoading) {
+    document.head.appendChild(Object.assign(document.createElement('link'), { rel: 'stylesheet', href: MAPLIBRE_URL + 'maplibre-gl.min.css' }));
+    maplibreLoading = loadScript(MAPLIBRE_URL + 'maplibre-gl.min.js').catch(e => { maplibreLoading = null; throw e; });
+  }
+  return maplibreLoading;
+}
+let vectorLoading = null;
+const loadVector = () => (vectorLoading ??= loadMaplibre().then(() => loadScript(MAPLIBRE_LEAFLET)).catch(e => { vectorLoading = null; throw e; }));
+const basemapKey = () => (BASEMAPS[prefs.basemap] ? prefs.basemap : 'auto');
+const vectorStyle = b => (typeof b.vector === 'function' ? b.vector() : b.vector);
+
+// The base map of a Leaflet map, as chosen in the settings: its raster tiles, or a vector map (drawn by MapLibre once
+// it has loaded; the raster map instead when it cannot load); el gets data-basemap, for the tiles' toning
+function addBasemap(m, el = m.getContainer()) {
+  const key = basemapKey(), b = BASEMAPS[key];
+  el.dataset.basemap = key;
+  delete el.dataset.vector;
+  const raster = () => { const [url, attribution, maxZoom = 19] = b.tiles; return L.tileLayer(url, { attribution, maxZoom }); };
+  if (!b.vector) return raster().addTo(m);
+  const style = vectorStyle(b), holder = L.layerGroup().addTo(m);
+  holder.cairnStyle = style;
+  el.dataset.vector = style;
+  loadVector().then(() => holder.addLayer(L.maplibreGL({ style: OPENFREEMAP + style, attribution: OPENFREEMAP_CREDIT, interactive: false })))
+    .catch(() => { el.dataset.basemap = b.like; delete el.dataset.vector; holder.addLayer(raster()); });
+  return holder;
+}
 // Lines and markers take the colours of the map's tone, not of the page's theme: dark on a light map, light on a dark
 // one, vivid with an outline on the satellite (data-theme on the map's panes; its popups and controls follow the page)
 const mapTone = () => (BASEMAPS[prefs.basemap] || BASEMAPS.auto).tone || document.documentElement.dataset.theme || 'dark';
 const toneProbes = {};
-function mapVar(name) {
-  const tone = mapTone();
+function toneVar(tone, name) {
   if (!toneProbes[tone]) {
     toneProbes[tone] = Object.assign(document.createElement('div'), { hidden: true });
     toneProbes[tone].dataset.theme = tone;
     document.body.append(toneProbes[tone]);
   }
   return getComputedStyle(toneProbes[tone]).getPropertyValue(name).trim() || getCSSVar(name);
+}
+const mapVar = name => toneVar(mapTone(), name);
+
+// The theme switched: the base map goes with it (a dark map for the dark theme, a light one for the light; the one
+// last used with that theme, else the other of its pair), and every line and marker takes the new tone's colours where
+// it is, each colour from the old tone's variable to the new one's. Not drawn again: with tens of thousands of photos
+// and places that takes seconds. The activities and tiles, painted on canvas, are painted again.
+const THEME_PAIRS = { grey: 'grey-dark', 'grey-dark': 'grey', 'vector-dark': 'vector-positron', 'vector-fiord': 'vector-positron', 'vector-positron': 'vector-dark' };
+const TONE_VARS = ['--accent', '--accent2', '--text', '--text2', '--surface', '--surface2', '--train', '--commute', '--bus', '--ferry', '--hitch', '--checkin', '--stay', '--stay2',
+  '--stay3', '--car', '--drive', '--photo', '--timeline', '--country', '--ride', '--run', '--walk', '--sport', '--tile', '--city', '--home', '--book', '--climb'];
+function themeBasemap(from, to) {
+  const k = basemapKey(), b = BASEMAPS[k], memo = { ...(prefs.basemapFor || {}), [from]: k };
+  let next = memo[to];
+  if (!BASEMAPS[next]) next = (b.tone === 'dark' || b.tone === 'light') && b.tone !== to ? THEME_PAIRS[k] || 'auto' : k;
+  savePrefs({ basemap: next, basemapFor: memo });
+}
+function retone(oldTone) {
+  const tone = mapTone();
+  toneMap(map);
+  if (oldTone && oldTone !== tone) {
+    const swap = new Map();
+    TONE_VARS.forEach(v => { const a = toneVar(oldTone, v).toLowerCase(); if (a && !swap.has(a)) swap.set(a, toneVar(tone, v)); });
+    const to = c => (typeof c === 'string' && swap.get(c.toLowerCase())) || c, seen = new Set();
+    const walk = l => {
+      if (!l || seen.has(l)) return;
+      seen.add(l);
+      const o = l.options;
+      if (l.setStyle && o && (swap.has(String(o.color).toLowerCase()) || swap.has(String(o.fillColor).toLowerCase()))) l.setStyle({ color: to(o.color), fillColor: to(o.fillColor) });
+      if (l.getLayers) l.getLayers().forEach(walk);
+    };
+    [routeLayer, airportLayer, ...Object.values(groundLayer), ...Object.values(extraLayers()).map(x => x[1])].forEach(walk);
+    map.eachLayer(walk);
+  }
+  drawActivities();
+  drawTiles();
+  drawLegend();
 }
 function toneMap(m) {
   if (!m) return;
@@ -52,14 +138,15 @@ function toneMap(m) {
   });
 }
 
-let baseLayer = null;
+// the main map's base map: made again when the choice changes (or, for a map that follows the theme, the theme)
+let baseLayer = null, baseShown = '';
 function setBasemap() {
-  const b = BASEMAPS[prefs.basemap] || BASEMAPS.auto, [url, attribution, maxZoom = 19] = b.tiles;
-  if (!baseLayer || baseLayer._url !== url) {
-    if (baseLayer) map.removeLayer(baseLayer);
-    baseLayer = L.tileLayer(url, { attribution, maxZoom }).addTo(map);
-  }
-  document.getElementById('map').dataset.basemap = BASEMAPS[prefs.basemap] ? prefs.basemap : 'auto';
+  const b = BASEMAPS[basemapKey()], shown = `${basemapKey()}|${b.vector ? vectorStyle(b) : b.tiles[0]}`;
+  if (baseLayer && baseShown === shown) return;
+  if (baseLayer) map.removeLayer(baseLayer);
+  baseLayer = addBasemap(map, document.getElementById('map'));
+  baseLayer.setZIndex?.(0);
+  baseShown = shown;
 }
 
 // Lines and markers: w scales line widths, o their opacity, r the size of markers. Applied to every line and marker

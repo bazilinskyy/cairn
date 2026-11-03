@@ -5,37 +5,23 @@
 // the settings.
 // Esc or "← 2D map" goes back to the same place. Uses layers.js's and the page's globals.
 
-const MAPLIBRE = 'https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/5.6.0/';
 const DECK = 'https://unpkg.com/deck.gl@9.1.14/dist.min.js';
 const DEM_TILES = 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png';
 let map3d = null, deckOverlay = null, libsLoading = null;
 let view3d = 'globe';  // 'globe': the earth as a ball; 'flat': a flat map you can tilt
 let flights3d = 'air';  // 'air': flights along their rough path through the air; 'ground': their line on the ground
 
-function loadScript(src) {
-  return new Promise((resolve, reject) => {
-    const js = document.createElement('script');
-    js.src = src;
-    js.onload = resolve;
-    js.onerror = () => reject(new Error('could not load ' + src));
-    document.head.appendChild(js);
-  });
-}
-
 function loadLibs() {
   if (!libsLoading) {
-    const css = document.createElement('link');
-    css.rel = 'stylesheet';
-    css.href = MAPLIBRE + 'maplibre-gl.min.css';
-    document.head.appendChild(css);
-    libsLoading = loadScript(MAPLIBRE + 'maplibre-gl.min.js')
+    libsLoading = loadMaplibre()
       .then(() => loadScript(DECK).catch(() => null))  // without deck.gl: flights as lines on the ground
       .catch(e => { libsLoading = null; throw e; });
   }
   return libsLoading;
 }
 
-// The base map's tiles as MapLibre wants them ({s} subdomains are not supported there: the first one is used)
+// The base map's tiles as MapLibre wants them ({s} subdomains are not supported there: the first one is used); for a
+// vector map, the raster map that stands in for it
 function baseSource() {
   const b = BASEMAPS[prefs.basemap] || BASEMAPS.auto, [url, attribution, maxzoom = 19] = b.tiles;
   return { type: 'raster', tiles: [url.replace('{s}', 'a')], tileSize: 256, attribution, maxzoom };
@@ -45,7 +31,7 @@ function baseSource() {
 // turned round, the hues kept), grey, or a little dimmed under a dark theme; so the lines, coloured for the map's tone,
 // stand out on it
 function baseTone() {
-  const b = BASEMAPS[prefs.basemap] ? prefs.basemap : 'auto', dark = document.documentElement.dataset.theme !== 'light';
+  const b = BASEMAPS[prefs.basemap]?.like || (BASEMAPS[prefs.basemap] ? prefs.basemap : 'auto'), dark = document.documentElement.dataset.theme !== 'light';
   const plain = { 'raster-brightness-min': 0, 'raster-brightness-max': 1, 'raster-hue-rotate': 0, 'raster-saturation': 0, 'raster-contrast': 0 };
   if (b === 'auto' && dark) return { ...plain, 'raster-brightness-min': 0.85, 'raster-brightness-max': 0, 'raster-hue-rotate': 180, 'raster-saturation': -0.4 };
   if (b === 'grey-dark') return { ...plain, 'raster-brightness-min': 0.8, 'raster-brightness-max': 0, 'raster-saturation': -1, 'raster-contrast': -0.25 };

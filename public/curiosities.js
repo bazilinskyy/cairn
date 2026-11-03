@@ -49,13 +49,14 @@ async function renderCuriosities() {
       card('Rides in the rain', `${Math.round(c.rides.rainy / c.rides.count * 100)}%`, `${c.rides.rainy} of ${c.rides.count} rides with 1 mm or more`) : '') +
     (c.body ? card('Sleep away / at home', `${hm(c.body.away.sleep)} / ${hm(c.body.home.sleep)}`,
       `score ${c.body.away.score ?? '–'} / ${c.body.home.score ?? '–'} · resting heart rate ${c.body.away.rhr} / ${c.body.home.rhr} · ${c.body.away.steps?.toLocaleString()} / ${c.body.home.steps?.toLocaleString()} steps a day`) : '') +
+    timeZoneCards(c.timeZones, card) +
     '</div>';
 
   // how far by each means, and the sea by year, as bars
   const names = { flight: '✈️ Flown', train: '🚆 Train', commute: '🔁 Commute', bus: '🚌 Bus', ferry: '⛴️ Ferry', hitch: '👍 Hitchhiked', drive: '🚙 By car', ride: '🚴 Cycled', run: '🏃 Run', walk: '🥾 Walked' };
   const max = Math.max(...Object.values(d.by));
   html += '<div class="music-cols" style="margin-top:16px"><div><h4>How far, by each means</h4><div class="curio-bars" style="grid-template-columns: 90px 1fr 80px">' +
-    Object.entries(d.by).sort((a, b) => b[1] - a[1]).map(([k, km]) => `<span>${escapeHTML(names[k] || k)}</span><div class="bar" style="width:${Math.max(1, km / max * 100)}%"></div><span>${fmtDist(km)}</span>`).join('') + '</div></div>';
+    Object.entries(d.by).sort((a, b) => b[1] - a[1]).map(([k, km]) => `<span>${escapeHTML(names[k] || k)}</span><div class="bar mode-bar" style="--c: var(${(TRAVEL_MODES[k] || TRAVEL_MODES.bus)[1]}); width:${Math.max(1, km / max * 100)}%"></div><span>${fmtDist(km)}</span>`).join('') + '</div></div>';
   const ys = Object.entries(c.sea.byYear).sort(), seaMax = Math.max(...ys.map(y => y[1]));
   html += `<div><h4>Days by the sea, by year</h4><div class="curio-bars">${ys.map(([y, n]) => `<span>${y}</span><div class="bar" style="width:${n / seaMax * 100}%"></div><span>${n}</span>`).join('')}</div></div></div>`;
   // days by their highest place, by how far from home, the months away and the weekdays you fly
@@ -76,12 +77,34 @@ async function renderCuriosities() {
   html += `<p style="margin-top:16px"><b>Nights in stays:</b> ${beds.map(([k, n]) => `${escapeHTML(k)} ${n.toLocaleString()}`).join(' · ')}</p>`;
   if (c.nye.length) html += `<p><b>New Year's Eve:</b> ${c.nye.map(n => `${n.year} ${flagOf(n.country)}<a href="#" class="sp-link" onclick="event.preventDefault(); openCityReport(${n.id})">${escapeHTML(n.town)}</a>`).join(' · ')}</p>`;
   if (c.leapDays?.length) html += `<p><b>29 February:</b> ${c.leapDays.map(n => `${n.year} ${flagOf(n.country)}<a href="#" class="sp-link" onclick="event.preventDefault(); openCityReport(${n.id})">${escapeHTML(n.town)}</a>`).join(' · ')}</p>`;
+  html += timeZoneTrips(c.timeZones);
   if (c.capitals.length) html += `<p><b>Capitals:</b> ${c.capitals.map(t => `${flagOf(t.country)}<a href="#" class="sp-link" onclick="event.preventDefault(); openCityReport(${t.id})">${escapeHTML(t.name)}</a>`).join(' · ')}</p>`;
   html += `<p class="sp-note">From every day Cairn knows a place for (${c.days.toLocaleString()} days since ${fmtDate(c.first)}): flights, trains, stays, activities, photos and Timeline. ` +
     `By the sea: Natural Earth's coastline. Heights: the ground's height at the place (AWS Terrain Tiles), so a flight counts where it landed, not in the air; ` +
     `below sea level only inland, more than 2 km from a coast (the tiles give the sea's depth too). How far from home: from your home airports, each day's farthest place. ` +
-    `Ride weather: Open-Meteo's history. Sleep and heart: Garmin, on trip days and on the others.</p></div>`;
+    `Ride weather: Open-Meteo's history. Sleep and heart: Garmin, on trip days and on the others. ` +
+    `Time zones: each airport's and town's zone on that day (summer time included), against your first home airport's.</p></div>`;
   box.innerHTML = html;
+}
+
+// Time zones (stats.js): the hours flights moved your clock, the trips farthest from your home clock and the jet lag
+// they are said to take, and what your sleep says
+const tzHours = h => `${h > 0 ? '+' : h < 0 ? '−' : ''}${Math.abs(h) % 1 ? Math.abs(h).toFixed(1) : Math.abs(h)} h`;
+function timeZoneCards(z, card) {
+  if (!z || !(z.east + z.west)) return '';
+  const f = z.farthest, mins = m => `${m > 0 ? '+' : m < 0 ? '−' : ''}${Math.abs(m)} min`;
+  return card('Clock moved by flights', `${(z.east + z.west).toLocaleString()} h`, `${z.east.toLocaleString()} h forward going east, ${z.west.toLocaleString()} h back going west`) +
+    (f ? card('Farthest from your home clock', tzHours(f.h), `${flagOf(f.country)}${escapeHTML(f.town)}, <a href="#trip=${dayId(f.id)}" class="sp-link" onclick="event.preventDefault(); openTrip('${dayId(f.id)}')">${escapeHTML(f.name)}</a>`) : '') +
+    (z.lagDays ? card('Days of jet lag', `≈ ${z.lagDays}`, 'by the rule of thumb: a day an hour going east, two thirds of one going west, from 3 hours') : '') +
+    (z.sleep ? card('Sleep after long flights', mins(z.sleep.minutes), `a night, the 3 nights after ${z.sleep.flights} flights over 4+ hours, against the 2 weeks before` +
+      `${z.sleep.east != null && z.sleep.west != null ? ` · east ${mins(z.sleep.east)}, west ${mins(z.sleep.west)}` : ''}`) : '');
+}
+function timeZoneTrips(z) {
+  if (!z?.trips?.length) return '';
+  return `<h4 style="margin-top:16px">Trips farthest from your home clock</h4><div class="sp-scroll"><table class="sp-table"><thead><tr><th>Trip</th><th>Clock</th><th>Where</th><th>Jet lag, about</th></tr></thead><tbody>` +
+    z.trips.map(t => `<tr><td><a href="#trip=${dayId(t.id)}" class="sp-link" onclick="event.preventDefault(); openTrip('${dayId(t.id)}')">${escapeHTML(t.name)}</a><small>${fmtDate(t.start)}</small></td>` +
+      `<td><b>${tzHours(t.h)}</b></td><td>${flagOf(t.country)}${escapeHTML(t.town)}</td>` +
+      `<td>${t.lagThere || t.lagBack ? `${t.lagThere} day${t.lagThere !== 1 ? 's' : ''} there, ${t.lagBack} back` : ''}</td></tr>`).join('') + '</tbody></table></div>';
 }
 
 // What the stays cost (spending.js): per year, country and town, the dearest and cheapest nights; and the card

@@ -225,8 +225,7 @@ function drawClimbMap(c) {
   document.getElementById('climb-map').dataset.basemap = BASEMAPS[prefs.basemap] ? prefs.basemap : 'auto';
   climbMap = L.map('climb-map', { zoomControl: true, attributionControl: true, worldCopyJump: true });
   toneMap(climbMap);
-  const b = BASEMAPS[prefs.basemap] || BASEMAPS.auto, [url, attribution, maxZoom = 19] = b.tiles;
-  L.tileLayer(url, { attribution, maxZoom }).addTo(climbMap);
+  addBasemap(climbMap);
   const color = mapVar('--climb'), bounds = L.latLngBounds([[c.lat, c.lon]]);
   // your rides over it, thin; the ways up on top: yours solid, the others dashed
   const ids = new Set([...(c.rides || []).map(r => r.id)]);

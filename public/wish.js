@@ -33,8 +33,7 @@ async function openWish() {
   el.dataset.basemap = BASEMAPS[prefs.basemap] ? prefs.basemap : 'auto';
   wishMap = L.map(el, { zoomControl: true, worldCopyJump: true });
   toneMap(wishMap);
-  const b = BASEMAPS[prefs.basemap] || BASEMAPS.auto, [url, attribution, maxZoom = 19] = b.tiles;
-  L.tileLayer(url, { attribution, maxZoom }).addTo(wishMap);
+  addBasemap(wishMap);
   const pts = [];
   placed.forEach(p => { L.circleMarker([p.lat, p.lon], { radius: 6, color: '#fff', weight: 1.5, fillColor: '#ffca28', fillOpacity: 0.95 })
     .bindPopup(`<b>⭐ ${escapeHTML(p.name || '')}</b><br><small>${escapeHTML(p.list || '')}${p.note ? ' · ' + escapeHTML(p.note) : ''}</small>${safeUrl(p.url) ? `<br><a href="${safeUrl(p.url)}" target="_blank" rel="noopener">Google Maps →</a>` : ''}`).addTo(wishMap); pts.push([p.lat, p.lon]); });

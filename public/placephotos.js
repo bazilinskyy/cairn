@@ -242,8 +242,7 @@ function ppMap() {
   el.dataset.basemap = BASEMAPS[prefs.basemap] ? prefs.basemap : 'auto';
   pp.map = L.map(el, { zoomControl: true, worldCopyJump: true }).setView([48, 15], 4);
   toneMap(pp.map);
-  const b = BASEMAPS[prefs.basemap] || BASEMAPS.auto, [url, attribution, maxZoom = 19] = b.tiles;
-  L.tileLayer(url, { attribution, maxZoom }).addTo(pp.map);
+  addBasemap(pp.map);
   pp.markers = L.layerGroup().addTo(pp.map);
   pp.undo.forEach(u => u.marker.addTo(pp.markers));
   el.addEventListener('dragover', e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; el.classList.add('pp-drop'); });

@@ -57,11 +57,13 @@ Two parts:
 | ![3D: the globe with real terrain and every layer](docs/globe-3d.jpg)<br><sub>3D: the globe with real terrain</sub> | ![3D: a flat, tilted map with flights along their rough path through the air](docs/flat-arcs-3d.jpg)<br><sub>3D: tilted, flights through the air</sub> |
 | ![The Stats tab: flights, airports, countries, airlines, flights per year](docs/stats.jpg)<br><sub>Stats: flights, airports, countries, per year</sub> | ![The Sports tab: activities, Eddington numbers, records, explored tiles](docs/sports.jpg)<br><sub>Sports</sub> |
 | ![The Flights tab: every flight, searchable and sortable](docs/flights.jpg)<br><sub>Flights: every flight, searchable</sub> | ![An airport's page: its routes, airlines and flights](docs/airport.jpg)<br><sub>An airport's page</sub> |
-| ![The Trips tab: every trip found in all the data, by year](docs/trips.jpg)<br><sub>Trips: every trip found in all the data</sub> | ![A trip's page: its map with the drives along the roads, and its numbers](docs/trip.jpg)<br><sub>A trip's page</sub> |
+| ![The Trips tab: every trip found in all the data, as cards with a cover photo and a sketch of the route](docs/trips.jpg)<br><sub>Trips: every trip found in all the data, as cards or a table</sub> | ![A trip's page: its cover, its map with the drives along the roads, and its numbers](docs/trip.jpg)<br><sub>A trip's page</sub> |
 | ![A trip day by day: rides with their weather, trains, where you slept, sleep and heart rate](docs/trip-story.jpg)<br><sub>A trip day by day</sub> | ![A year in review](docs/year.jpg)<br><sub>A year in review</sub> |
 | ![A town's page with its own map and photos](docs/city.jpg)<br><sub>A town's page</sub> | ![A country's page: its flag, its map with everything there, its towns](docs/country.jpg)<br><sub>A country's page</sub> |
 | ![A climb's page: the ways up, your ride up coloured by gradient, your times against your FTP, a top climber and the record](docs/climb.jpg)<br><sub>A climb's page: its ways up, your times, the record</sub> | ![Where you slept: the stays alone, by kind of bed (hotels, hostels, Airbnb, friends' places, Couchsurfing, camping)](docs/map-stays.jpg)<br><sub>Where you slept, by kind of bed</sub> |
 | ![What you spent: on stays, and by card and cash, per year, country, town and trip](docs/spending.jpg)<br><sub>What you spent: stays, card and cash</sub> | ![Placing photos that have no place: by day, in a town or on the map, or by Cairn itself](docs/place-photos.jpg)<br><sub>Placing photos that have no place</sub> |
+
+<p align="center"><img src="docs/replay.jpg" alt="A trip's replay: the trip drawn on the map day by day, a photo where it was taken" width="900"><br><sub>A trip's replay, to watch or save as a video</sub></p>
 
 <p align="center"><img src="docs/years.jpg" alt="The years side by side" width="900"><br><sub>The years side by side</sub></p>
 
@@ -221,7 +223,7 @@ No account is needed for any of these; each is asked at most about once a second
 - [Project layout](#repository-layout)
 - [Setup](#setup) · [Running Cairn](#running-cairn) · [Running on an always-on Mac](#running-on-an-always-on-mac)
 - [tripmail](#tripmail)
-- [Using Cairn](#using-cairn): [the map](#the-map), [sports](#sports-activities), [coming trips](#coming-trips), [spending](#spending), [year in review](#year-in-review), [report (PDF)](#report-pdf), [wish list](#wish-list), [fix](#fix), [adding](#adding-by-hand-and-from-your-photos), [backup](#backup)
+- [Using Cairn](#using-cairn): [the map](#the-map), [sports](#sports-activities), [coming trips](#coming-trips), [on this day](#on-this-day), [how it looks](#how-it-looks), [replay and export](#replay-and-export), [days per country](#days-per-country-and-schengen), [spending](#spending), [year in review](#year-in-review), [report (PDF)](#report-pdf), [wish list](#wish-list), [fix](#fix), [adding](#adding-by-hand-and-from-your-photos), [backup](#backup)
 - [Data](#data) · [API](#api) · [Tests](#tests) · [Privacy](#privacy) · [Troubleshooting](#troubleshooting)
 - [Support Cairn](#support-cairn) · [Acknowledgements](#acknowledgements) · [License](#license)
 
@@ -239,20 +241,22 @@ No account is needed for any of these; each is asked at most about once a second
 | `public/sports.js` | the Sports tab: cards, charts and tables of your Strava activities |
 | `public/city.js` | a town's report page, opened from a city on the map, with its map |
 | `trips.js`, `public/trips.js` | trips found in all the data, their moves along the roads (OSRM), the Trips tab and a page per trip |
+| `tripexport.js`, `public/replay.js` | a trip as KML, GPX or a page to share; its replay on a map, to watch or save as a video |
+| `onthisday.js` | where you were on today's date in the years before, for the Trips tab and the morning message |
 | `photos.js` | every photo's place and time (`data/photo_points.json`), its thumbnail and the whole photo |
 | `prep.js` | the coming trips: what is booked and missing, and the morning alert |
 | `spending.js` | what the stays cost, in euros |
 | `review.js`, `public/review.js` | a year in review |
 | `public/wish.js`, `imports/saved_places.py` | the wish list, and Google Maps' saved places |
 | `public/placephotos.js`, `imports/photos_place.py` | placing photos with no place by hand, and writing those places into the Photos library |
-| `imports/checkins.py`, `calendar_events.py`, `bank.py`, `ovchipkaart.py` | data downloads: check-ins, posts and rides; calendars; bank payments; OV-chipkaart journeys |
+| `imports/checkins.py`, `calendar_events.py`, `bank.py`, `ovchipkaart.py`, `spotify.py`, `health.py` | data downloads: check-ins, posts and rides; calendars; bank payments; OV-chipkaart journeys; Spotify's streaming history; Apple Health's workouts and steps |
 | `things.js`, `todotrips.js` | your Things to-dos (read-only), and the trips they mention that nothing else knows |
 | `backup.js` | a backup of all imported and added data, and restoring one |
 | `albums.js` | trips the names of your Google Photos albums give, for albums without places |
 | `suggestions.js`, `public/add.js` | the Add tab beyond flights: trains, buses, ferries and stays by hand, and the legs your photos suggest |
-| `stats.js`, `public/curiosities.js` | the curiosities: days by the sea and up in the mountains, extremes, capitals, distances, beds, ride weather, sleep |
+| `stats.js`, `public/curiosities.js` | the curiosities: days by the sea and up in the mountains, extremes, capitals, distances, beds, ride weather, sleep, time zones and jet lag |
 | `weather.js` | the weather on your rides (Open-Meteo's history) |
-| `lastfm.js` | your Last.fm scrobbles, for the music on trips and towns |
+| `lastfm.js` | your Last.fm scrobbles (and Spotify's plays on the days Last.fm has none), for the music on trips and towns |
 | `books.js` | your Goodreads library export or data download, for the books on the map, trips and towns |
 | `uploads.js` | the imports in Settings: a data download's files uploaded, then read by its import script |
 | `report.js` | the report of everything to print or keep as a PDF: the page, its trip sketches and the PDF made by Chrome |
@@ -682,7 +686,23 @@ The library export has the authors and pages and the day you finished each book,
 
 ### Curiosities
 
-The **Stats** tab ends with curiosities from every day Cairn knows a place for (up to today): days by the sea (within 2 km of [Natural Earth](https://www.naturalearthdata.com)'s coastline, `data/coastline.geojson`, 10 MB, downloaded on first use) and days above 1,000, 2,000 and 3,000 m, the highest place, the highest you went on foot or by bike, the highest night (the ground's height at each place from the AWS Terrain Tiles, kept in `data/heights.json`; the first time takes a minute or two), the farthest you went north, south, east and west and from home, days in the southern and western hemispheres and the tropics, the capitals you have been to, how far you went by each means (trains between the towns you live and work in, from your places, count apart as 🔁 commutes; and how many times around the earth that is), the most countries in a day, the longest stay, nights per kind of bed (a friend's place and family each count apart), where each New Year's Eve was, the hottest, coldest, wettest and windiest rides, and your sleep, resting heart rate and steps away and at home.
+The **Stats** tab ends with curiosities from every day Cairn knows a place for (up to today): days by the sea (within 2 km of [Natural Earth](https://www.naturalearthdata.com)'s coastline, `data/coastline.geojson`, 10 MB, downloaded on first use) and days above 1,000, 2,000 and 3,000 m, the highest place, the highest you went on foot or by bike, the highest night (the ground's height at each place from the AWS Terrain Tiles, kept in `data/heights.json`; the first time takes a minute or two), the farthest you went north, south, east and west and from home, days in the southern and western hemispheres and the tropics, the capitals you have been to, how far you went by each means (trains between the towns you live and work in, from your places, count apart as 🔁 commutes; and how many times around the earth that is), the most countries in a day, the longest stay, nights per kind of bed (a friend's place and family each count apart), where each New Year's Eve was, the hottest, coldest, wettest and windiest rides, and your sleep, resting heart rate and steps away and at home. **Time zones**: how many hours your flights moved your clock (forward going east, back going west; each airport's zone on that day, summer time included), the trips that took you farthest from your home clock (each day's town against your first home airport) with the jet lag they are said to take (a day an hour going east, two thirds of one going west, from 3 hours), and what your sleep says about it: Garmin's sleep the 3 nights after a flight across 4 or more hours, against the 2 weeks before.
+
+### Days per country, and Schengen
+
+The **Stats** tab's **Days per country, year by year**: a grid of the countries (your home countries first, then the 30 you spent most days in) by year, each cell as dark as the days there, with a row of the days abroad. Above it, the Schengen area's 90 days in any 180: the days in its countries other than the ones you live in in the last 180 days, and the most it comes to with what is booked ahead. (It applies to someone from outside the area; a citizen of it has no limit.)
+
+### On this day
+
+The **Trips** tab shows where you were on today's date in the years before: the towns, the trip it was part of, flights, trains, buses and ferries, where you slept, sports, a few photos, the song you played most and the book you finished. **⚙️ Settings → On this day** sends it every morning at 08:00 to the alerts channel (tripmail's Discord webhook); off unless turned on (kept in `data/home.json`, the day last sent in `data/onthisday_sent.json`).
+
+### How it looks
+
+**⚙️ Settings → Map** picks the base map of every map: OpenStreetMap (toned to the theme, grey or in colour), topographic, satellite, or a **vector map** ([OpenFreeMap](https://openfreemap.org): sharp at every zoom, with clear labels, no key; dark, dark blue-grey, light grey, in colour, or following the theme). A vector map is drawn by MapLibre GL, loaded the first time; the 3D view and a browser without WebGL show OpenStreetMap instead. The **Trips** tab shows the trips as **cards** (a cover photo, a sketch of the route from town to town, the days) or as a **table** (▦ / ☰, remembered in this browser). A trip's page opens with its cover across the top: the middle photo of its day with the most photos, or the one you pick with **🖼️ Change cover** (kept in `data/trip_covers.json`). Each way of moving has its icon on its map colour wherever it is listed, and in the replay. Switching between the light and dark theme (☀️/🌙) takes the map with it: a dark base map becomes its light one and back (the one you last used with each theme), and the lines and markers take the colours made for it.
+
+### Replay and export
+
+A trip's page has **🎬 Replay**: the trip drawn on a map as it happened, day by day, the camera flying from place to place, the photos coming up where they were taken (four a day at most), a title at the start and the trip's numbers at the end, at most two minutes. Pick the map (dark, satellite or light: OpenStreetMap's or Esri's tiles, drawn by the page itself) and the shape (16:9, 9:16 for a phone, square); **⬇️ Save video** loads the map first, then plays it once and saves it with the browser's recorder (MP4 where it can, else WebM), so keep the window in front until it ends. **⬇️ Export** gives the trip as **KML** (Google Earth, Google My Maps), **GPX** (a track per line, a waypoint per stay) or a **page to share**: one HTML file with its map and day by day, without the stays' names, bookings, prices, health or photos.
 
 ### Coming trips
 
@@ -742,12 +762,16 @@ The easiest way is **⚙️ Settings → Imports**: a row per source (these, and
 | **Bolt** | in the app: Profile → Privacy → *Request a copy of your data*; any ride CSV with pick-up and drop-off coordinates | `python imports/checkins.py ~/Downloads/bolt-rides.csv` |
 | **Calendars** (Google, Outlook, Apple) | takeout.google.com → "Calendar" (an `.ics` per calendar); Outlook: *Save calendar* as `.ics`; or straight from the Mac's Calendar app: `mail/tripmail.py events --calendar Work` (run as the tripmail app, which may read calendars) writes `~/.flightmail/events-Work.json` | `python imports/calendar_events.py ~/Downloads/takeout-*.zip` (or the `events-*.json` files) |
 | **Bank and card payments** | Revolut: Statement → CSV; ING, ABN AMRO, Rabobank, bunq: *Download transactions* as CSV | `python imports/bank.py ~/Downloads/*.csv` |
+| **Spotify**: every song you played, and the country you played it in | Account → Privacy → *Download your data* → **Extended streaming history** (it comes within 30 days) | `python imports/spotify.py ~/Downloads/my_spotify_data.zip` |
+| **Apple Health**: workouts with their routes, steps | Health app → your picture → *Export All Health Data* | `python imports/health.py ~/Downloads/export.zip` |
 | **OV-chipkaart** | ov-chipkaart.nl → Mijn OV-chip → card → *Reishistorie* → CSV (18 months back at most; per card) | `python imports/ovchipkaart.py ~/Downloads/reizen*.csv` (sends to Cairn) |
 
 Add `--send mini:repos/contrail/data/<file>.json` to copy the result to the Mac that runs Cairn. What they give:
 - **📍 Check-ins** (`data/checkins.json`): places you were at a known time, a map layer of their own, counted for your towns, countries and trips like the rest. A photo's own time and place come first, else its post's. Uber and Bolt give where each completed ride began and ended. Importing a source again replaces what it gave before; the other sources' stay.
 - **💼 Work trips** (`data/calendar.json`): events that last a day or more or have a place, each once (a repeating meeting only by its first). A trip with a work-like event (a conference, workshop, symposium, project meeting, defence, summer school…), or an event of several days in one of its towns, gets 💼 in the Trips list and the events under its name.
 - **Card payments** (`data/transactions.json`, card payments and cash withdrawals only, not transfers or salary): a trip's page adds **Paid by card and cash**, in euros on each day's rate. **+ Add → 💡 To check → Payments abroad no trip explains** lists the payments in a country (from the payment's description, "… MADRID ESP", or its currency) on days nothing else puts you there: trips that may be missing. ✕ one that was a purchase online.
+- **🎧 Spotify** (`data/spotify.json`): each day's country (where the phone or computer was connected from; plays made offline left out) lists **+ Add → 💡 To check → Days abroad on Spotify no trip explains**: days with 3 or more plays in a country nothing else in Cairn puts you in; ✕ one that was a VPN or someone else on your account. Its songs (played 30 s or more) count on towns' and trips' pages on the days Last.fm has none.
+- **❤️ Apple Health** (`data/health.json`): workouts of the iPhone, the Watch and the apps that write to Health, with their routes, in the Sports tab and on the map; one Garmin or Strava has too is left to them (started within ten minutes; or as long and whole quarter hours off, as Garmin Connect writes some in the wrong time zone), and so is everything Garmin Connect wrote to Health. Its steps and floors fill the days Garmin has no steps for.
 - **OV-chipkaart** journeys become trains (a station's name alone) and buses, trams and metros (a stop with its town: "Delft, Station"), counted per route and year: a daily commute is one line with how many times you took it, known to the year, so it makes no day of its own. Sending the file again updates the counts.
 
 ### Fix
@@ -831,7 +855,7 @@ Sport colours: orange cycling, violet running, magenta walks and hikes, yellow o
 
 ### Importing from TripIt
 
-Click **↓ TripIt** in the navigation bar.
+In **⚙️ Settings → Imports**, click **Import…** on the **🧳 TripIt** row.
 
 - **Calendar link (no credentials):** on tripit.com go to Profile → Account → Email & Calendar, copy the link under *Subscribe to your travel schedule*, paste it into the dialog and click **Import**.
 - **OAuth (more complete: cabin class, seat, aircraft):**
@@ -962,9 +986,13 @@ Moving to MongoDB later only needs the data layer in `app.js` (the `flights` arr
 | `GET` | `/api/suggestions/albums` | albums whose photos have no places: `key`, `album`, `photos`, `placed`, `place`, `year`, `first`, `last`, `lat`, `lon` (`{ "pending": true }` while they are read) |
 | `GET` | `/api/suggestions/albums/cover?key=` | an album's cover photo, small |
 | `GET` | `/api/curiosities` | the curiosities (`{ "pending": true }` while the first ones are worked out) |
-| `GET` | `/api/trips` | the trips, newest first: `id` (the first day), `start`, `end`, `name`, `days`, `nights`, `countries` (`cc`, `days`), `towns`, and counts of `flights`, `ground`, `activities`, `photos` |
+| `GET` | `/api/trips` | the trips, newest first: `id` (the first day), `start`, `end`, `name`, `days`, `nights`, `countries` (`cc`, `days`), `towns`, counts of `flights`, `ground`, `activities`, `photos`, its `cover` (a photo id or `null`) and `route` (the town of each day, `[lat, lon]`) |
 | `GET` | `/api/trips/:id` | one trip in full: as above plus its `flights`, `ground`, `stays`, `activities`, `photo_ids`, `moves` (`kind` `drive`, `road` or `move`, `km`, `t0`, `t1`, and `path` or `from`/`to`), `roads_pending`, `photos` (`[id, t, lat, lon, video]`), `body` (sleep and resting heart rate on the trip and the month before), `music` and `dayList` (with each day's `body`) |
-| `GET` | `/api/settings` | `home_airports`, for the trips on the map, and `home`: your places (`hometown`, `residence`, `work`, each `{ id, name, cc, lat, lon }` or `null`) |
+| `GET` | `/api/settings` | `home_airports`, for the trips on the map, and `home`: your places (`hometown`, `residence`, `work`, each `{ id, name, cc, lat, lon }` or `null`); `commutes`, `onthisday_discord` |
+| `GET` | `/api/onthisday?date=` | the years before on that date (today by default), newest first: `day`, `years`, `trip`, `towns`, `flights`, `ground`, `stay`, `activities`, `photos`, `photo_ids`, `song`, `books` |
+| `PUT` | `/api/trips/:id/cover` | `{ photo }`: the trip's cover photo, or `null` for Cairn's own choice |
+| `GET` | `/api/trips/:id/export/:format` | the trip as a file: `kml`, `gpx` or `html` (a page to share) |
+| `GET` | `/api/suggestions/spotify` | days abroad on Spotify no trip explains: `country`, `first`, `last`, `days`, `plays` |
 | `PUT` | `/api/home` | set your places: `{ "hometown": <GeoNames id>, "residence": …, "work": … }`; `null` clears one, a role left out stays |
 | `GET` | `/api/towns?q=` | towns whose name starts with `q`, biggest first (at most 10): `id`, `name`, `cc`, `lat`, `lon`, `pop` |
 | `GET` | `/api/activities` | all sports activities, Garmin's and Strava's, each once (gzipped when asked, `304` when the browser has them) |
@@ -974,6 +1002,7 @@ Moving to MongoDB later only needs the data layer in `app.js` (the `flights` arr
 | `GET` | `/api/city/:id?from=&to=` | one town (GeoNames id, as `/api/cities` gives it) for its report page: `town`, `days`, `first`, `last`, `visits` (`start`, `end`, `days`), and the `stays`, `flights` (with `direction` `in` or `out`), `ground`, `activities`, `photos` (`day`, `count`) and `timeline` places there |
 | `GET` | `/api/climbs` | the famous climbs with what you did on them ([] without rides): `id` (Wikidata), `name`, `country`, `lat`, `lon` (the road's high point once known), `ele`, `wiki`, `times`, `first`, `last`, `rides` (the newest 20: `id`, `date`, `name`), `ascents` (`from`, `length` km, `gain` m, `grade` %, `path`, `times`, `rides`, your `efforts` and `best`, predicted times `you` and `pro`, and the `record` from `climb_records.json`: `seconds`, `rider`, `year`, `event`, `measured`, `source`), `other` (ways up not among them: `via`, `times`, `rides`), `records` (best known times from a start that fits none of the ways up) |
 | `GET` | `/api/regions?scheme=&from=&to=` | the countries visited in the period, as the list `iso`, `un` or `tcc` counts them: `scheme`, `total` (countries on the list), `places`: `id`, `name`, `region` (TCC), `days`, `first`, `last`, `shape` (GeoJSON outline) |
+| `GET` | `/api/countries/years` | `years`, `rows` (per country: `cc`, `home`, `total`, `byYear`), `abroad` (days per year) and `schengen` (`today`, `limit`, `window`, `peak`, `home`, `since`) |
 | `GET` | `/api/countries?scheme=&from=&to=` | per country: `days`, `visits`, `towns`, `nights` in stays, `flights` in, `train`, `bus`, `ferry` from or to it, `cars`, `activities` and their `km`, `photos`, `first`, `last`; by the town's country code, or as `scheme` counts countries |
 | `GET` | `/api/activities/places` | where activities start: the towns and countries per kind of sport (`ride`, `run`, `walk`, `sport`, `all`) |
 | `POST` | `/api/strava/sync` | fetch new activities from Strava now |

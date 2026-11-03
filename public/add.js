@@ -103,12 +103,13 @@ function hookStayForm() {
 async function renderSuggestions() {
   const list = await fetch('/api/suggestions').then(r => (r.ok ? r.json() : [])).catch(() => []);
   const box = document.getElementById('add-other');
-  box.innerHTML = '<div id="todo-suggestions"></div><div id="tripdoc-suggestions"></div><div id="album-suggestions"></div><div id="album-places"></div><div id="payment-suggestions"></div><div id="gap-suggestions"></div><div id="leg-suggestions"></div>';
+  box.innerHTML = '<div id="todo-suggestions"></div><div id="tripdoc-suggestions"></div><div id="album-suggestions"></div><div id="album-places"></div><div id="payment-suggestions"></div><div id="spotify-suggestions"></div><div id="gap-suggestions"></div><div id="leg-suggestions"></div>';
   renderTodoSuggestions();
   renderTripdocSuggestions();
   renderAlbumSuggestions();
   renderAlbumPlaces();
   renderPaymentSuggestions();
+  renderSpotifySuggestions();
   renderGapSuggestions();
   const legs = document.getElementById('leg-suggestions');
   if (!list.length) { legs.innerHTML = '<p class="subtitle">Nothing to suggest: every move your photos show is already connected.</p>'; return; }
@@ -323,6 +324,27 @@ async function renderPaymentSuggestions() {
       `${Object.entries(r.amounts).map(([c, v]) => `${v.toLocaleString()} ${escapeHTML(c)}`).join(', ')} · ${escapeHTML(r.examples.join('; '))}</small></div>` +
       '<div class="acts"><button class="btn btn-ghost" data-no-pay title="No trip: online, or already known">✕</button></div></div>').join('')}</div>`;
   box.querySelectorAll('[data-no-pay]').forEach(b => b.addEventListener('click', async () => {
+    const row = b.closest('.sugg');
+    await dismissKey(row.dataset.key);
+    row.remove();
+    if (!box.querySelector('.sugg')) box.innerHTML = '';
+  }));
+}
+
+// --- days Spotify played abroad (its streaming history) that nothing else in Cairn puts you in that country ---
+
+async function renderSpotifySuggestions() {
+  const box = document.getElementById('spotify-suggestions');
+  const list = await fetch('/api/suggestions/spotify').then(r => (r.ok ? r.json() : [])).catch(() => []);
+  if (!box || !list.length) { if (box) box.innerHTML = ''; return; }
+  const names = new Intl.DisplayNames(['en'], { type: 'region' }), country = cc => { try { return names.of(cc); } catch (_) { return cc; } };
+  const when = r => (r.first === r.last ? fmtDate(r.first) : `${fmtDate(r.first)} – ${fmtDate(r.last)}`);
+  box.innerHTML = `<h3 class="sugg-title">Days abroad on Spotify no trip explains</h3><p class="subtitle">Days Spotify played music connected from a country ` +
+    `where nothing else in Cairn puts you (${list.length}). Add the trip (✈️ or 🚆 above), or ✕ when it was a VPN or someone else on your account.</p>` +
+    `<div class="sugg-group">${list.map(r => `<div class="sugg" data-key="${escapeHTML(r.key)}"><div class="pics"><span class="pic-icon">${flagOf(r.country).trim() || '🎧'}</span></div>` +
+      `<div><b>${escapeHTML(country(r.country))}</b> · ${when(r)}<small>${r.days} day${r.days > 1 ? 's' : ''}, ${r.plays} plays</small></div>` +
+      '<div class="acts"><button class="btn btn-ghost" data-no-spotify title="No trip: a VPN, or already known">✕</button></div></div>').join('')}</div>`;
+  box.querySelectorAll('[data-no-spotify]').forEach(b => b.addEventListener('click', async () => {
     const row = b.closest('.sugg');
     await dismissKey(row.dataset.key);
     row.remove();

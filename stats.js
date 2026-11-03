@@ -86,6 +86,23 @@ async function lookUpHeights(cells, known, save, log) {
 }
 
 // sources: getters; days() = [{ at, day, city }] from every source; towns() the town grid (cities.js)
+// a time zone's offset from UTC, in minutes, at a moment (summer time included); memoized by zone and day
+const JET_LAG_H = 3;
+const offsets = new Map();
+function offsetAt(tz, unix) {
+  const k = `${tz}|${Math.floor(unix / 86400)}`;
+  if (!offsets.has(k)) {
+    let m = 0;
+    try {
+      const s = new Intl.DateTimeFormat('en-US', { timeZone: tz, timeZoneName: 'longOffset' }).formatToParts(new Date(unix * 1000)).find(x => x.type === 'timeZoneName')?.value || '';
+      const r = /GMT([+-])(\d\d):?(\d\d)?/.exec(s);
+      if (r) m = (r[1] === '-' ? -1 : 1) * (+r[2] * 60 + +(r[3] || 0));
+    } catch (_) {}
+    offsets.set(k, m);
+  }
+  return offsets.get(k);
+}
+
 function create({ days, towns, cities, activities, stays, flights, airports, groundTrips, trips, weather, wellness, homeAirports, places = () => ({}), commutes = () => true, drives = () => [],
   heightsFile, coastFile, download, log = console.log }) {
   let memo = { key: null, value: null }, working = null, coast = null, heights = null;
@@ -263,6 +280,50 @@ function create({ days, towns, cities, activities, stays, flights, airports, gro
     const ridesWeather = rides.length ? { count: rides.length, hottest: pick(w => w.tmax), coldest: pick(w => -w.tmin), wettest: pick(w => w.rain),
       windiest: pick(w => w.gust || w.wind), rainy: rides.filter(a => wx[a.id].rain >= 1).length } : null;
 
+    // time zones: how many hours each flight moved the clock (east forward, west back), how far from your home clock
+    // each trip went, the jet lag that is usually said to take (a day an hour going east, two thirds of one going west,
+    // from a difference of JET_LAG_H hours), and what your sleep says about it (Garmin) the nights after a long flight
+    const homeAp = ap[(homeAirports() || [])[0]], homeTz = homeAp?.tz && /\//.test(homeAp.tz) ? homeAp.tz : null;
+    const unixOf = d => Date.parse(d.slice(0, 10) + 'T12:00:00Z') / 1000;
+    let east = 0, west = 0;
+    const longHauls = [];
+    for (const f of fl) {
+      const a = ap[f.from], b = ap[f.to], t = unixOf(f.date || '');
+      if (!a?.tz || !b?.tz || !t) continue;
+      const h = (offsetAt(b.tz, t) - offsetAt(a.tz, t)) / 60;
+      if (h > 0) east += h; else west -= h;
+      if (Math.abs(h) >= JET_LAG_H + 1) longHauls.push({ day: f.date.slice(0, 10), h });
+    }
+    const tzTrips = [];
+    if (homeTz && grid) {
+      const onDay = new Map();
+      for (const p of pts) { if (!onDay.has(p.day)) onDay.set(p.day, []); onDay.get(p.day).push(p); }
+      for (const t of tr) {
+        const home = offsetAt(homeTz, unixOf(t.start));
+        let far = null;
+        for (let d = t.start; d <= t.end; d = new Date(Date.parse(d) + 864e5).toISOString().slice(0, 10)) for (const p of onDay.get(d) || []) {
+          const tz = town(p)?.tz;
+          if (!tz) continue;
+          const h = (offsetAt(tz, unixOf(p.day)) - home) / 60;
+          if (!far || Math.abs(h) > Math.abs(far.h)) far = { h, day: p.day, town: town(p).name, country: town(p).cc };
+        }
+        if (far && Math.abs(far.h) >= 1) {
+          const lag = h => (Math.abs(h) < JET_LAG_H ? 0 : h > 0 ? Math.abs(h) : Math.abs(h) * 2 / 3);
+          tzTrips.push({ id: t.id, name: t.name, start: t.start, end: t.end, days: t.days, h: far.h, town: far.town, country: far.country,
+            lagThere: Math.round(lag(far.h)), lagBack: Math.round(lag(-far.h)) });
+        }
+      }
+    }
+    const nightsAfter = (d, n) => Array.from({ length: n }, (_, i) => new Date(Date.parse(d) + (i + 1) * 864e5).toISOString().slice(0, 10));
+    const sleepOf = days => { const v = days.map(d => wellness()[d]).filter(x => x?.sleep); return v.length ? { sleep: v.reduce((a, x) => a + x.sleep, 0) / v.length, n: v.length } : null; };
+    const lagged = longHauls.map(f => ({ after: sleepOf(nightsAfter(f.day, 3)), before: sleepOf(nightsAfter(new Date(Date.parse(f.day) - 15 * 864e5).toISOString().slice(0, 10), 14)), h: f.h }))
+      .filter(x => x.after && x.before && x.before.n >= 5);
+    const sleepDiff = list => (list.length ? Math.round(list.reduce((n, x) => n + x.after.sleep - x.before.sleep, 0) / list.length / 60) : null);
+    const timeZones = { east: Math.round(east), west: Math.round(west), flights: fl.length,
+      trips: tzTrips.sort((a, b) => Math.abs(b.h) - Math.abs(a.h)).slice(0, 12), farthest: tzTrips[0] || null,
+      lagDays: tzTrips.reduce((n, z) => n + z.lagThere + z.lagBack, 0),
+      sleep: lagged.length ? { flights: lagged.length, minutes: sleepDiff(lagged), east: sleepDiff(lagged.filter(x => x.h > 0)), west: sleepDiff(lagged.filter(x => x.h < 0)) } : null };
+
     // sleep and heart away and at home
     const well = wellness(), away = new Set();
     for (const t of tr) for (let d = t.start; d <= t.end; d = new Date(Date.parse(d) + 864e5).toISOString().slice(0, 10)) away.add(d);
@@ -284,7 +345,7 @@ function create({ days, towns, cities, activities, stays, flights, airports, gro
       below: { days: dayLow.size, lowest: lowest && named(lowest.p, { h: lowest.h }) },
       tops: Object.fromEntries([[0, [...dayTop.values()].filter(x => x.h < HEIGHTS[0]).length],
         ...HEIGHTS.map((m, i) => [m, [...dayTop.values()].filter(x => x.h >= m && (i === HEIGHTS.length - 1 || x.h < HEIGHTS[i + 1])).length])]),
-      rings, weekdays, crossings, leapDays
+      rings, weekdays, crossings, leapDays, timeZones
     };
   }
 
@@ -362,4 +423,4 @@ function awayNightsOf(stays) {
 // the nights you slept in a stay: those booked, less those away on side trips (awayNights)
 const sleptNights = (s, away) => Math.max(0, bookedNights(s) - (away.get(s)?.nights || 0));
 
-module.exports = { inDepression, create, coastIndex, coastKm, stayKind, groundKind, commuteSince, sideTrip, awayNights, sleptNights };
+module.exports = { offsetAt, inDepression, create, coastIndex, coastKm, stayKind, groundKind, commuteSince, sideTrip, awayNights, sleptNights };

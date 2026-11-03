@@ -28,7 +28,7 @@ before(async () => {
   fs.copyFileSync(path.join(ROOT, 'activities.js'), path.join(dir, 'activities.js'));
   fs.copyFileSync(path.join(ROOT, 'regions.js'), path.join(dir, 'regions.js'));
   fs.copyFileSync(path.join(ROOT, 'country-lists.json'), path.join(dir, 'country-lists.json'));
-  ['climbs.js', 'ascents.js', 'efforts.js', 'climbs.json', 'climbs_extra.json', 'photos.js', 'climb_records.json', 'trips.js', 'weather.js', 'stats.js', 'lastfm.js', 'suggestions.js', 'backup.js', 'albums.js', 'things.js', 'todotrips.js', 'prep.js', 'spending.js', 'review.js', 'bases.js', 'books.js', 'uploads.js', 'report.js'].forEach(f => fs.copyFileSync(path.join(ROOT, f), path.join(dir, f)));
+  ['climbs.js', 'ascents.js', 'efforts.js', 'climbs.json', 'climbs_extra.json', 'photos.js', 'climb_records.json', 'trips.js', 'weather.js', 'stats.js', 'lastfm.js', 'suggestions.js', 'backup.js', 'albums.js', 'things.js', 'todotrips.js', 'prep.js', 'spending.js', 'review.js', 'bases.js', 'books.js', 'uploads.js', 'report.js', 'onthisday.js', 'tripexport.js'].forEach(f => fs.copyFileSync(path.join(ROOT, f), path.join(dir, f)));
   fs.copyFileSync(path.join(ROOT, 'default.config'), path.join(dir, 'default.config'));
   fs.cpSync(path.join(ROOT, 'public'), path.join(dir, 'public'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'data'));
@@ -159,7 +159,7 @@ test('photos and Timeline come from the import files, read again when they chang
   const cells = [{ lat: 51.44, lon: 5.47, year: 2024, count: 2, days: ['2024-06-01'] }];
   fs.writeFileSync(path.join(dir, 'data', 'photos.json'), JSON.stringify(cells));
   assert.deepStrictEqual(await (await call('GET', '/api/photos')).json(), cells);
-  assert.deepStrictEqual(await (await call('GET', '/api/settings')).json(), { home_airports: ['AMS', 'EIN', 'RTM'], home: { hometown: null, residence: null, work: null }, commutes: true });
+  assert.deepStrictEqual(await (await call('GET', '/api/settings')).json(), { home_airports: ['AMS', 'EIN', 'RTM'], home: { hometown: null, residence: null, work: null }, commutes: true, onthisday_discord: false });
 });
 
 test('activities: Strava not set up, then the Garmin file read when it appears, gzipped and cached', async () => {
@@ -505,4 +505,65 @@ test('the report: a page to print, with a "Save as PDF" button', async () => {
   const html = await res.text();
   assert.match(html, /<h1>Your travels<\/h1>/);
   assert.match(html, /Save as PDF/);
+});
+
+test('Apple Health: workouts Garmin does not have, and steps on the days Garmin has none', async () => {
+  const known = (await (await call('GET', '/api/activities')).json()).map(a => a.id);
+  const run = { id: 900000000000 + 1717400000, name: 'Run (Watch)', sport: 'Run', source: 'health', date: '2024-06-03 09:33:20', start: 1717400000, distance: 5,
+    moving_time: 1800, elapsed_time: 1800, elevation: 0, heartrate: null, trainer: true, path: '', at: null, tiles: [] };
+  const again = { ...run, id: 900000000000 + 1717225260, sport: 'Ride', date: '2024-06-01 09:01:00', start: 1717225260 };  // Garmin's ride, from Health
+  // Garmin's ride again, written to Health two hours off (the wrong time zone), as long; and one from Garmin Connect
+  const shifted = { ...run, id: 900000000000 + 1717218000, sport: 'Ride', start: 1717218000, distance: 15.1, app: 'Strava' };
+  const connect = { ...run, id: 900000000000 + 1717500000, sport: 'Swim', start: 1717500000, distance: 1, app: 'Connect' };
+  fs.writeFileSync(path.join(dir, 'data', 'health.json'), JSON.stringify({ activities: [run, again, shifted, connect], days: { '2024-06-03': { steps: 9000, floors: 4 } } }));
+  assert.deepStrictEqual((await (await call('GET', '/api/activities')).json()).map(a => a.id).sort(), [...known, run.id].sort());
+  assert.deepStrictEqual((await (await call('GET', '/api/wellness?from=2024-06-03&to=2024-06-03')).json()), { '2024-06-03': { steps: 9000, floors: 4 } });
+  fs.rmSync(path.join(dir, 'data', 'health.json'));
+});
+
+test('Spotify: its songs on the days Last.fm has none; days abroad on it that no trip explains, until dismissed', async () => {
+  fs.writeFileSync(path.join(dir, 'data', 'spotify.json'), JSON.stringify({ plays: [[Date.UTC(2021, 4, 5, 20) / 1000, 'Band', 'Song', 'LP']],
+    countries: { '2021-05-05': { PT: 5 }, '2021-05-06': { PT: 1, UA: 9 } } }));  // Ukraine: home (the hometown set above)
+  const m = await (await call('GET', '/api/music?from=2021-05-05&to=2021-05-05')).json();
+  assert.deepStrictEqual([m.plays, m.tracks[0].name], [1, 'Song']);
+  const list = await (await call('GET', '/api/suggestions/spotify')).json();
+  assert.deepStrictEqual(list.map(r => [r.country, r.first, r.last, r.days, r.plays]), [['PT', '2021-05-05', '2021-05-05', 1, 5]]);
+  await call('POST', '/api/suggestions/dismiss', { key: list[0].key });
+  assert.deepStrictEqual(await (await call('GET', '/api/suggestions/spotify')).json(), []);
+  fs.rmSync(path.join(dir, 'data', 'spotify.json'));
+});
+
+test('on this day: the years before on that date; to the alerts channel only when turned on', async () => {
+  const list = await (await call('GET', '/api/onthisday?date=2027-11-16')).json();
+  assert.deepStrictEqual(list.map(x => [x.day, x.years, x.flights.map(f => f.from)]), [['2026-11-16', 1, ['AMS']]]);
+  assert.deepStrictEqual(await (await call('GET', '/api/onthisday?date=2027-01-05')).json(), []);
+  assert.strictEqual((await (await call('GET', '/api/settings')).json()).onthisday_discord, false);
+  await call('PUT', '/api/home', { onthisday_discord: true });
+  assert.strictEqual((await (await call('GET', '/api/settings')).json()).onthisday_discord, true);
+  await call('PUT', '/api/home', { onthisday_discord: false });
+  assert.strictEqual((await (await call('GET', '/api/settings')).json()).onthisday_discord, false);
+});
+
+test('days per country per year, and the Schengen count; a trip as KML, GPX and a page to share without its private things', async () => {
+  const stay = await (await call('POST', '/api/stays', { code: 'export-stay', what: 'stay', place: 'Eindhoven', hotel: 'Hotel Hidden', start: '2018-07-01', end: '2018-07-04', lat: 51.44, lon: 5.48 })).json();
+  const y = await (await call('GET', '/api/countries/years')).json();
+  assert.ok(y.rows.find(r => r.cc === 'NL' && !r.home).byYear['2018'] >= 3 && y.abroad['2018'] >= 3, JSON.stringify(y.rows));
+  assert.deepStrictEqual([y.schengen.limit, y.schengen.window, typeof y.schengen.today], [90, 180, 'number']);
+  const trip = (await (await call('GET', '/api/trips')).json()).find(t => t.start === '2018-07-01');
+  const kml = await (await call('GET', `/api/trips/${trip.id}/export/kml`)).text();
+  assert.match(kml, /<kml[^]*Hotel Hidden[^]*<coordinates>5\.48,51\.44,0<\/coordinates>/);
+  const gpx = await call('GET', `/api/trips/${trip.id}/export/gpx`);
+  assert.match(gpx.headers.get('content-disposition'), /attachment; filename="2018-07-01-.*\.gpx"/);
+  assert.match(await gpx.text(), /<wpt lat="51\.44" lon="5\.48"><name>Hotel Hidden<\/name>/);
+  const page = await (await call('GET', `/api/trips/${trip.id}/export/html`)).text();
+  assert.ok(page.includes('<title>') && page.includes('Night in') && !page.includes('Hotel Hidden'));
+  assert.strictEqual((await call('GET', `/api/trips/${trip.id}/export/pdf`)).status, 404);
+  // its cover: chosen, then Cairn's own choice again (none: no photos); its route, the town of each day
+  assert.deepStrictEqual([trip.cover, trip.route], [null, [[51.44, 5.48]]]);
+  assert.deepStrictEqual(await (await call('PUT', `/api/trips/${trip.id}/cover`, { photo: 'abc123' })).json(), { cover: 'abc123' });
+  assert.strictEqual((await (await call('GET', '/api/trips')).json()).find(t => t.id === trip.id).cover, 'abc123');
+  assert.strictEqual((await call('PUT', `/api/trips/${trip.id}/cover`, { photo: '<x>' })).status, 400);
+  await call('PUT', `/api/trips/${trip.id}/cover`, { photo: null });
+  assert.strictEqual((await (await call('GET', '/api/trips')).json()).find(t => t.id === trip.id).cover, null);
+  await call('DELETE', `/api/stays/${stay.id}`);
 });

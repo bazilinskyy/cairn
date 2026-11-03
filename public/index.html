@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Cairn</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230f172a'/%3E%3Cellipse cx='32' cy='51' rx='21' ry='7' fill='%2394a3b8'/%3E%3Cellipse cx='31' cy='38.5' rx='16' ry='6.5' fill='%23cbd5e1'/%3E%3Cellipse cx='33' cy='27' rx='11.5' ry='5.5' fill='%2394a3b8'/%3E%3Cellipse cx='32' cy='17' rx='7.5' ry='4.5' fill='%2338bdf8'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..800&display=swap">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css">
@@ -18,6 +21,7 @@
   <script src="airport.js"></script>
   <script src="country.js"></script>
   <script src="trips.js"></script>
+  <script src="replay.js"></script>
   <script src="curiosities.js"></script>
   <script src="add.js"></script>
   <script src="review.js"></script>
@@ -130,8 +134,6 @@
     .tab.active { color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
     .tab-add { color: var(--accent) !important; border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent) !important; margin-left: 8px; }
     .tab-add:hover { background: rgba(79,195,247,0.15) !important; }
-    .tab-tripit { color: #a78bfa !important; border: 1px solid rgba(167,139,250,0.3) !important; font-size: 12px !important; }
-    .tab-tripit:hover { background: rgba(167,139,250,0.12) !important; }
     .nav-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
     .theme-btn { background: none; border: none; cursor: pointer; font-size: 16px; padding: 4px 6px; border-radius: 6px; line-height: 1; }
     .theme-btn:hover { background: var(--surface2); }
@@ -179,7 +181,7 @@
     .import-row { display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; padding: 8px 0; border-top: 1px solid var(--border); }
     .import-row small { display: block; color: var(--text2); font-size: 12px; margin-top: 2px; }
     .import-row .import-last { color: var(--text); }
-    .import-row .btn { flex-shrink: 0; }
+    .settings-group .import-row .btn { flex-shrink: 0; display: inline-flex; white-space: nowrap; padding: 7px 14px; font-size: 13px; }
     .book-pin small { font-size: 10px; font-weight: 700; color: var(--text); }
     .leaflet-tooltip.home-label { background: var(--surface); color: var(--text); border: 1px solid var(--home); font-weight: 600; font-size: 11px; padding: 1px 6px; }
     .modal .settings-group input { accent-color: var(--accent); width: auto; margin: 0; padding: 0; flex: none; }
@@ -202,6 +204,10 @@
     /* Base maps chosen in the settings (layers.js BASEMAPS) */
     :is(#map, .mini-map)[data-basemap="grey"] .leaflet-tile-pane { filter: grayscale(1) contrast(0.8) brightness(1.08); }
     :is(#map, .mini-map)[data-basemap="grey"].leaflet-container { background: #e6e6e6 !important; }
+    .leaflet-container[data-vector="dark"] { background: #1b1b1b !important; }
+    .leaflet-container[data-vector="fiord"] { background: #45516e !important; }
+    .leaflet-container[data-vector="positron"] { background: #f2f3f0 !important; }
+    .leaflet-container[data-vector="liberty"] { background: #f8f4f0 !important; }
     :is(#map, .mini-map)[data-basemap="grey-dark"] .leaflet-tile-pane { filter: grayscale(1) invert(1) contrast(0.75) brightness(0.8); }
     :is(#map, .mini-map)[data-basemap="grey-dark"].leaflet-container { background: #262626 !important; }
     [data-theme="dark"] :is(#map, .mini-map)[data-basemap="satellite"] .leaflet-tile-pane,
@@ -228,7 +234,7 @@
     /* Which lines the map shows (not inverted in dark mode, so its colours match the lines) */
     .leaflet-control.map-legend {
       filter: none; background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
-      padding: 6px 10px; color: var(--text); font-size: 12px; line-height: 1.6;
+      padding: 6px 10px; color: var(--text); font-size: 12px; line-height: 1.6; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin;
     }
     .map-legend label { display: flex; align-items: center; gap: 7px; cursor: pointer; white-space: nowrap; }
     .map-legend input { accent-color: var(--accent); margin: 0; }
@@ -420,6 +426,26 @@
     .story-time { flex: 0 0 44px; color: var(--text2); font-variant-numeric: tabular-nums; font-size: 12px; }
     .story-photos { align-items: flex-start !important; }
     .story-strip { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    .export-menu { position: relative; }
+    .export-menu summary { list-style: none; }
+    .export-menu summary::-webkit-details-marker { display: none; }
+    .export-menu > div { position: absolute; right: 0; top: calc(100% + 6px); z-index: 1200; background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+      padding: 6px; min-width: 260px; box-shadow: 0 10px 30px rgba(0,0,0,0.35); }
+    .export-menu a { display: block; padding: 8px 10px; border-radius: 6px; color: var(--text); text-decoration: none; font-size: 13px; }
+    .export-menu a small { display: block; color: var(--text2); }
+    .export-menu a:hover { background: var(--surface2); }
+    .replay { position: fixed; inset: 0; z-index: 5000; background: #05070b; display: flex; flex-direction: column; }
+    .replay[hidden] { display: none; }
+    .replay-stage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; position: relative; padding: 12px; }
+    .replay canvas { max-width: 100%; max-height: 100%; border-radius: 10px; box-shadow: 0 20px 60px rgba(0,0,0,0.6); background: #0b0d12; }
+    .replay-wait { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); background: rgba(10,12,18,0.85); color: #fff; padding: 12px 20px; border-radius: 10px; font-size: 14px; }
+    .replay-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: center; padding: 10px 16px 16px; }
+    .replay-bar select { background: #151924; color: #e8e8f0; border: 1px solid #2a2e3a; border-radius: 8px; padding: 7px 8px; }
+    .replay-bar input[type=range] { flex: 1 1 200px; max-width: 520px; accent-color: #5ec8ff; }
+    .replay-bar .btn-ghost { color: #e8e8f0; }
+    .otd .story-strip { margin: 6px 0 4px; }
+    .otd .story-strip small { color: var(--text2); }
+    .story-day h4 small.otd-ago { margin-left: 0; }
     .story-strip a { position: relative; display: block; }
     .story-strip img { height: 84px; width: 112px; object-fit: cover; border-radius: 5px; display: block; background: var(--surface2); }
     .story-strip span { position: absolute; left: 4px; bottom: 4px; font-size: 12px; }
@@ -437,6 +463,17 @@
     .country-stats th[data-sort] { cursor: pointer; white-space: nowrap; }
     .country-stats th.sorted { color: var(--accent); }
     .country-stats td { text-align: right; }
+    .cy-table td { text-align: center; font-size: 11px; min-width: 30px; padding: 4px 3px; font-variant-numeric: tabular-nums; }
+    .cy-table td.cy-0 { color: transparent; }
+    .cy-table th:first-child { text-align: left; white-space: nowrap; }
+    .cy-table th a { color: var(--text); text-decoration: none; }
+    .cy-table th a:hover { color: var(--accent); }
+    .cy-table tr.cy-abroad th, .cy-table tr.cy-abroad td { font-weight: 600; border-bottom: 2px solid var(--border); }
+    .cy-table tr.cy-home th { color: var(--text2); }
+    .schengen { display: flex; flex-wrap: wrap; gap: 8px 24px; align-items: center; margin-bottom: 14px; }
+    .schengen .meter { flex: 1 1 220px; height: 10px; border-radius: 5px; background: var(--surface2); overflow: hidden; }
+    .schengen .meter i { display: block; height: 100%; border-radius: 5px; background: var(--accent); }
+    .schengen .meter i.over { background: #e5484d; }
     .sp-tip { display: none; position: fixed; z-index: 3000; pointer-events: none; background: var(--surface); color: var(--text);
       border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; font-size: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.3); }
 
@@ -578,7 +615,6 @@
       .tabs::-webkit-scrollbar { display: none; }
       .tab { padding: 6px 9px; white-space: nowrap; flex-shrink: 0; }
       .tab-add { margin-left: 2px; }
-      .tab-tripit { display: none; }
       .nav-right { gap: 0; }
       .stats-page, .add-page { padding: 16px; }
       .stat-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 20px; }
@@ -604,6 +640,102 @@
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: var(--surface2); border-radius: 3px; }
+
+    /* --- The look: one font (Inter, the system's while it loads), a scale of headings, room around things, soft
+       surfaces; the travel modes each with their icon on their map colour (modeTag) --- */
+    :root { --radius: 14px; --radius-s: 9px; --shadow: 0 1px 2px rgba(0,0,0,0.18), 0 8px 24px rgba(0,0,0,0.12); --ease: cubic-bezier(.2,.7,.2,1); }
+    [data-theme="light"] { --shadow: 0 1px 2px rgba(20,30,60,0.06), 0 8px 24px rgba(20,30,60,0.06); }
+    html, body { font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-feature-settings: 'cv11', 'ss01', 'ss03'; line-height: 1.45;
+      -webkit-font-smoothing: antialiased; }
+    nav { background: color-mix(in srgb, var(--surface) 82%, transparent); backdrop-filter: saturate(1.4) blur(14px); -webkit-backdrop-filter: saturate(1.4) blur(14px); }
+    .tab { border-radius: 8px; letter-spacing: 0.1px; }
+    .btn { border-radius: var(--radius-s); transition: background .15s, border-color .15s, color .15s, transform .15s var(--ease); }
+    .btn:active { transform: translateY(1px); }
+    .stats-page { padding: 32px 28px 48px; }
+    .sp-head h2, #trip-title { font-size: 22px; font-weight: 750; letter-spacing: -0.02em; }
+    .chart-section { border-radius: var(--radius); box-shadow: var(--shadow); padding: 24px 26px; }
+    .chart-section h3 { font-size: 12px; letter-spacing: 0.08em; font-weight: 650; }
+    .chart-section h3 a.sp-link { color: var(--accent); text-decoration: none; letter-spacing: 0; }
+    .chart-section h3 a.sp-link:hover { text-decoration: underline; }
+    .stat-card { border-radius: var(--radius); box-shadow: var(--shadow); transition: transform .2s var(--ease); }
+    .stat-card .value { font-weight: 750; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+    .sp-table { font-variant-numeric: tabular-nums; }
+    .sp-table tbody tr { transition: background .12s; }
+    .sp-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 5%, transparent); }
+    .modal { border-radius: 16px; box-shadow: 0 30px 80px rgba(0,0,0,0.45); }
+    .sp-note { font-size: 11.5px; }
+
+    .mode-tag { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 7px; font-size: 12px; line-height: 1; margin-right: 6px; vertical-align: -5px;
+      background: color-mix(in srgb, var(--c) 16%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c) 42%, transparent); }
+    .curio-bars .bar.mode-bar { background: var(--c); }
+
+    /* trips as cards */
+    .view-switch { display: inline-flex; padding: 3px; gap: 2px; border-radius: 10px; background: var(--surface); border: 1px solid var(--border); margin-bottom: 18px; }
+    .view-switch button { background: none; border: none; color: var(--text2); font: inherit; font-size: 12.5px; font-weight: 600; padding: 6px 12px; border-radius: 7px; cursor: pointer; }
+    .view-switch button.on { background: var(--surface2); color: var(--text); }
+    .trip-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; }
+    .trip-card { display: flex; flex-direction: column; border-radius: 12px; overflow: hidden; background: var(--surface2); border: 1px solid var(--border); color: var(--text);
+      text-decoration: none; transition: transform .25s var(--ease), box-shadow .25s var(--ease); }
+    .trip-card:hover { transform: translateY(-3px); box-shadow: 0 14px 34px rgba(0,0,0,0.28); }
+    .tc-pic { position: relative; aspect-ratio: 16 / 10; background: var(--bg); overflow: hidden; }
+    .tc-pic img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform .5s var(--ease); }
+    .trip-card:hover .tc-pic img { transform: scale(1.04); }
+    .tc-blank { position: absolute; inset: 0; display: grid; place-items: center; font-size: 34px;
+      background: radial-gradient(120% 90% at 20% 10%, hsl(var(--h) 38% 36%), hsl(calc(var(--h) + 40) 35% 14%)); }
+    [data-theme="light"] .tc-blank { background: radial-gradient(120% 90% at 20% 10%, hsl(var(--h) 70% 82%), hsl(calc(var(--h) + 40) 55% 62%)); }
+    .tc-pic::after { content: ''; position: absolute; inset: 0; background: linear-gradient(180deg, transparent 55%, rgba(0,0,0,0.45)); pointer-events: none; }
+    .tc-route { position: absolute; right: 8px; bottom: 8px; width: 84px; height: 56px; z-index: 1; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.8)); }
+    .tc-route polyline { fill: none; stroke: #fff; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; opacity: 0.95; }
+    .tc-route circle { fill: #fff; } .tc-route circle.end { fill: var(--accent); stroke: #fff; stroke-width: 1.2; }
+    .tc-days { position: absolute; left: 8px; bottom: 8px; z-index: 1; font-size: 11px; font-weight: 700; color: #fff; background: rgba(0,0,0,0.45); padding: 3px 8px; border-radius: 99px;
+      backdrop-filter: blur(6px); }
+    .tc-body { padding: 11px 13px 13px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .tc-body b { font-size: 14px; font-weight: 650; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+    .tc-body small { color: var(--text2); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .tc-body .tc-counts { margin-top: 4px; }
+
+    /* a trip's page: its cover across the top, the name on it */
+    .trip-hero { position: relative; height: clamp(220px, 38vh, 420px); border-radius: var(--radius); overflow: hidden; margin-bottom: 24px; box-shadow: var(--shadow); background: var(--surface2); }
+    .trip-hero img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .trip-hero::after { content: ''; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(0,0,0,0.05) 30%, rgba(0,0,0,0.72)); }
+    .th-text { position: absolute; left: 28px; right: 28px; bottom: 22px; z-index: 1; color: #fff; }
+    .th-text h1 { font-size: clamp(26px, 4.4vw, 44px); font-weight: 800; letter-spacing: -0.03em; line-height: 1.05; text-shadow: 0 2px 18px rgba(0,0,0,0.4); }
+    .th-text p { margin-top: 8px; font-size: 14px; opacity: 0.92; }
+    .th-change { position: absolute; top: 14px; right: 14px; z-index: 1; color: #fff !important; border-color: rgba(255,255,255,0.4) !important; background: rgba(0,0,0,0.3) !important;
+      backdrop-filter: blur(8px); opacity: 0; transition: opacity .2s; }
+    .trip-hero:hover .th-change, .th-change:focus-visible { opacity: 1; }
+    #tab-trip:has(.trip-hero) #trip-title, #tab-trip:has(.trip-hero) #trip-sub { display: none; }
+    #tab-trip:has(.trip-hero) .sp-head { margin-bottom: 14px; }
+    .cover-modal { width: 760px; }
+    .cover-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 6px; max-height: 60vh; overflow-y: auto; margin-bottom: 16px; }
+    .cover-grid button { border: none; padding: 0; background: var(--surface2); border-radius: 8px; overflow: hidden; aspect-ratio: 1; cursor: pointer; }
+    .cover-grid img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform .2s var(--ease); }
+    .cover-grid button:hover img { transform: scale(1.06); }
+
+    /* phones */
+    @media (max-width: 700px) {
+      .stats-page { padding: 16px 14px 32px; }
+      .sp-head h2, #trip-title { font-size: 19px; }
+      .chart-section { padding: 16px; border-radius: 12px; }
+      .trip-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+      .tc-route { width: 60px; height: 40px; }
+      .tc-body { padding: 8px 10px 10px; }
+      .tc-body b { font-size: 13px; }
+      .trip-hero { height: 220px; margin-left: -14px; margin-right: -14px; border-radius: 0; }
+      .th-text { left: 16px; right: 16px; bottom: 14px; }
+      .th-change { opacity: 1; padding: 4px 8px !important; font-size: 11px !important; }
+      .sp-head .btn { padding: 5px 8px; }
+      .export-menu > div { right: auto; left: 0; max-width: calc(100vw - 28px); }
+      .modal { padding: 20px; }
+      .cover-grid { grid-template-columns: repeat(3, 1fr); }
+      .sp-table { font-size: 12.5px; }
+      .sp-table th, .sp-table td { padding: 6px 6px; }
+      .story-day h4 small { margin-left: 0; flex-basis: 100%; }
+      .replay-bar { gap: 6px; padding: 8px; }
+      .replay-bar input[type=range] { order: 9; flex-basis: 100%; max-width: none; }
+      .view-switch { margin-bottom: 12px; }
+    }
+    @media (prefers-reduced-motion: reduce) { .trip-card, .tc-pic img, .stat-card, .btn, .cover-grid img { transition: none; } .trip-card:hover { transform: none; } }
   </style>
 </head>
 <body>
@@ -621,7 +753,6 @@
   <div class="nav-right">
     <button class="theme-btn" onclick="openSettings()" title="Settings" aria-label="Settings">⚙️</button>
     <button class="theme-btn" id="theme-toggle" onclick="toggleTheme()" title="Toggle light/dark mode">☀️</button>
-    <button class="tab tab-tripit" id="tripit-btn" onclick="openTripItModal()" title="Import all flights from TripIt">↓ TripIt</button>
   </div>
 </nav>
 
@@ -697,6 +828,7 @@
         <div class="sp-scroll"><table class="sp-table country-stats" id="country-stats"></table></div>
         <p class="sp-note">A day counts in a country when you were there that day by any source (flights, trains, buses and ferries, stays, rental cars, photos, Timeline, sports activities); trains, buses and ferries count in both countries they connect. Countries are counted as chosen in the settings (⚙️). Click a column to sort.</p>
       </div>
+      <div class="chart-section" id="country-years"></div>
     </div>
   </div>
 
@@ -769,6 +901,8 @@
         <h2 id="trip-title"></h2>
         <button class="btn btn-ghost" onclick="tripOnMap()">Show on the map</button>
         <button class="btn btn-ghost" onclick="printJournal()" title="The trip day by day, to print or save as a PDF">🖨️ Journal</button>
+        <button class="btn btn-ghost" onclick="openReplay()" title="The trip replayed on the map, to watch or save as a video">🎬 Replay</button>
+        <details class="export-menu"><summary class="btn btn-ghost" title="The trip as a file">⬇️ Export</summary><div id="trip-export"></div></details>
       </div>
       <p class="sp-note" id="trip-sub" style="margin: -12px 0 20px"></p>
       <div id="trip-body"></div>
@@ -946,6 +1080,10 @@
       <label><input type="checkbox" id="set-commutes"> 🔁 Count the trains between where you live and work (commutes) in the distances and on the map</label>
     </fieldset>
     <fieldset class="settings-group">
+      <legend>On this day</legend>
+      <label><input type="checkbox" id="set-onthisday"> 📅 Every morning at 08:00, send where you were on this date in the years before to the alerts channel (Discord)</label>
+    </fieldset>
+    <fieldset class="settings-group">
       <legend>Distances</legend>
       <label><input type="radio" name="set-units" value="km"> Kilometres and metres</label>
       <label><input type="radio" name="set-units" value="mi"> Miles and feet</label>
@@ -1045,12 +1183,16 @@ function getCSSVar(name) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
+// the page in a theme; the map (and an open trip's) follow, without drawing everything again (layers.js retone)
 function applyTheme(theme) {
+  const before = document.documentElement.dataset.theme, oldTone = typeof mapTone === 'function' ? mapTone() : null;
   document.documentElement.dataset.theme = theme;
   document.getElementById('theme-toggle').textContent = theme === 'dark' ? '☀️' : '🌙';
+  if (before && before !== theme && typeof themeBasemap === 'function') themeBasemap(before, theme);
   if (document.getElementById('tab-stats').classList.contains('active')) renderStats();
   if (document.getElementById('tab-sports').classList.contains('active') && typeof renderSports === 'function') renderSports();
-  if (typeof drawAirports === 'function' && airportLayer) redrawMap();
+  if (typeof drawAirports === 'function' && airportLayer) { setBasemap(); retone(oldTone); }
+  if (document.getElementById('tab-trip')?.classList.contains('active') && tripShown) drawTripMap(tripShown, true);
 }
 
 function toggleTheme() {
@@ -1063,6 +1205,14 @@ let airportLayer = null;
 let clusterMode  = localStorage.getItem('clusterMode') === '1';  // remembered in this browser
 const routeLayer  = L.layerGroup();  // flights
 const groundModes = { train: '🚆 Trains', commute: '🔁 Commutes', bus: '🚌 Buses', ferry: '⛴️ Ferries', hitch: '👍 Hitchhiking', drive: '🚙 By car' };
+// Every way of moving, and the rest a trip's day has: its icon and its colour on the map (the CSS variable), so that a
+// mode looks the same in the tables, the stories and the map
+const TRAVEL_MODES = {
+  flight: ['✈️', '--accent'], train: ['🚆', '--train'], commute: ['🔁', '--commute'], bus: ['🚌', '--bus'], ferry: ['⛴️', '--ferry'], hitch: ['👍', '--hitch'],
+  drive: ['🚙', '--drive'], car: ['🚗', '--car'], scooter: ['🛵', '--car'], road: ['🛣️', '--timeline'], move: ['📍', '--photo'],
+  ride: ['🚴', '--ride'], run: ['🏃', '--run'], walk: ['🥾', '--walk'], sport: ['🏅', '--sport'], stay: ['🏨', '--stay'], photo: ['📷', '--photo'], song: ['🎵', '--book'], book: ['📚', '--book']
+};
+const modeTag = k => `<span class="mode-tag" style="--c: var(${(TRAVEL_MODES[k] || TRAVEL_MODES.bus)[1]})">${(TRAVEL_MODES[k] || TRAVEL_MODES.bus)[0]}</span>`;
 const groundLayer = Object.fromEntries(Object.keys(groundModes).map(m => [m, L.layerGroup()]));
 
 applyTheme(localStorage.getItem('theme') || 'dark');
@@ -1215,7 +1365,9 @@ function renderImports() {
   fetch('/api/imports').then(r => r.json()).then(list => {
     const last = s => s.running ? '⏳ Importing…' : !s.last ? (s.changed ? `Data kept, last changed ${fmtDate(s.changed)}.` : 'Not imported yet.')
       : `${s.last.ok ? '✓' : '✗'} ${fmtDate(s.last.at)}: ${escapeHTML(s.last.message || '')} <small>(${s.last.files.map(escapeHTML).join(', ')})</small>`;
-    document.getElementById('imports-list').innerHTML = list.map(s => `<div class="import-row">
+    document.getElementById('imports-list').innerHTML = `<div class="import-row"><div><b>🧳 TripIt</b><small>Your flights from TripIt: its private calendar address ` +
+      '(tripit.com → Profile → Account → Email &amp; Calendar), or signed in with TripIt where Cairn has its keys. Adds the flights not there yet.</small></div>' +
+      '<button class="btn btn-ghost" onclick="openTripItModal()">Import…</button></div>' + list.map(s => `<div class="import-row">
         <div><b>${escapeHTML(s.label)}</b><small>${escapeHTML(s.what)}. ${escapeHTML(s.note)}</small><small class="import-last">${last(s)}</small></div>
         <label class="btn btn-ghost" style="cursor:pointer">${s.running ? 'Importing…' : 'Import…'}<input type="file" data-import="${s.key}" accept="${s.accept}" multiple hidden ${s.running ? 'disabled' : ''}></label>
       </div>`).join('');
@@ -1264,6 +1416,7 @@ const pickedTown = {};  // role -> the town picked in the dialog since it opened
 function fillPlaces() {
   document.querySelectorAll('#set-home-group input[data-role]').forEach(i => { i.value = townLabel(settings.home?.[i.dataset.role]); });
   document.getElementById('set-commutes').checked = settings.commutes !== false;
+  document.getElementById('set-onthisday').checked = settings.onthisday_discord === true;
   Object.keys(pickedTown).forEach(k => delete pickedTown[k]);
 }
 document.querySelectorAll('#set-home-group input[data-role]').forEach(input => attachTownPicker(input, {
@@ -1285,11 +1438,14 @@ async function savePlaces() {
   }
   const counted = document.getElementById('set-commutes').checked;
   if (counted !== (settings.commutes !== false)) body.commutes = counted;
+  const daily = document.getElementById('set-onthisday').checked;
+  if (daily !== (settings.onthisday_discord === true)) body.onthisday_discord = daily;
   if (!Object.keys(body).length) return;
   const r = await fetch('/api/home', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   if (!r.ok) return toast('Your places were not saved', 'error');
   settings.home = await r.json();
   settings.commutes = counted;
+  settings.onthisday_discord = daily;
   if (map) { drawHome(); paintCities(); drawGround(); }
 }
 
@@ -1301,6 +1457,7 @@ function saveSettings() {
     grid: document.getElementById('set-grid').checked,
     countries: document.querySelector('input[name="set-countries"]:checked').value,
     basemap: document.querySelector('input[name="set-basemap"]:checked')?.value || prefs.basemap,
+    basemapFor: { [document.documentElement.dataset.theme]: document.querySelector('input[name="set-basemap"]:checked')?.value || prefs.basemap },
     lines: document.querySelector('input[name="set-lines"]:checked')?.value || prefs.lines,
     photos: document.querySelector('input[name="set-photos"]:checked')?.value || prefs.photos
   });
@@ -1309,6 +1466,7 @@ function saveSettings() {
   if (map) redrawMap();
   renderStats();
   renderCountryStats();
+  renderCountryYears();
   renderTable(document.getElementById('search').value);
   if (document.getElementById('tab-sports').classList.contains('active')) renderSports();
 }
@@ -1434,6 +1592,16 @@ function initMap() {
     try { localStorage.setItem('contrail-view', JSON.stringify({ center: [map.getCenter().lat, map.getCenter().lng], zoom: map.getZoom() })); } catch (_) {}
   });
   L.control.zoom({ position: 'bottomright' }).addTo(map);  // the filters box has the top left corner
+  // the legend (top right) ends above the buttons of the bottom right corner (3D, where am I, zoom) and scrolls when the
+  // window is too short for all of it; measured again when the map or those buttons change size
+  const corner = map.getContainer().querySelector('.leaflet-bottom.leaflet-right');
+  const fitLegend = () => {
+    const box = document.getElementById('map-legend');
+    if (box) box.style.maxHeight = `${Math.max(120, map.getContainer().clientHeight - corner.offsetHeight - 30)}px`;
+  };
+  new ResizeObserver(fitLegend).observe(map.getContainer());
+  new ResizeObserver(fitLegend).observe(corner);
+  window.fitLegend = fitLegend;
 
   setBasemap();
   initExtraPanes();
@@ -1527,6 +1695,7 @@ function initMap() {
     box.querySelector('[data-layer="all"]').indeterminate = on > 0 && on < rows.length;
     box.querySelectorAll('[data-group]').forEach(i => { const n = lit(kids(i.dataset.group)); i.indeterminate = n > 0 && n < kids(i.dataset.group).length; });
     showClusterMode();  // the airport and photo buttons, with their layers
+    window.fitLegend?.();
   };
 
   addPeriodControl();
@@ -1885,6 +2054,35 @@ async function renderCountryStats(fetchAgain = true) {
   }));
 }
 
+// Days per country per year (app.js /api/countries/years): a grid, each cell as dark as the days there that year;
+// above it, the Schengen area's 90 days in any 180
+async function renderCountryYears() {
+  const box = document.getElementById('country-years');
+  const d = await fetch('/api/countries/years').then(r => (r.ok ? r.json() : null)).catch(() => null);
+  if (!box || !d || !d.rows.length) return;
+  const names = new Intl.DisplayNames(['en'], { type: 'region' }), name = cc => { try { return names.of(cc); } catch (_) { return cc; } };
+  const years = d.years, rows = [...d.rows.filter(r => r.home), ...d.rows.filter(r => !r.home).slice(0, 30)];
+  const most = Math.max(1, ...d.rows.filter(r => !r.home).flatMap(r => Object.values(r.byYear)), ...Object.values(d.abroad));
+  const shade = n => (n ? `background: color-mix(in srgb, var(--accent) ${Math.round(12 + 70 * Math.sqrt(Math.min(n, most) / most))}%, transparent)` : '');
+  const cell = (n, title) => `<td class="${n ? '' : 'cy-0'}" style="${shade(n)}" title="${escapeHTML(title)}: ${n || 0} day${n === 1 ? '' : 's'}">${n || '·'}</td>`;
+  const s = d.schengen;
+  let html = '<h3>Days per country, year by year</h3>';
+  if (s) {
+    const pct = n => Math.min(100, Math.round(n / s.limit * 100));
+    html += `<div class="schengen"><div><b>🇪🇺 Schengen: ${s.today} of ${s.limit} days</b><small class="sp-note" style="display:block;margin:0">in the 180 days since ${fmtDate(s.since)}, outside ${s.home.length ? s.home.map(name).join(' and ') : 'your home countries'}</small></div>` +
+      `<div class="meter" role="img" aria-label="${s.today} of ${s.limit} days"><i class="${s.today > s.limit ? 'over' : ''}" style="width:${pct(s.today)}%"></i></div>` +
+      (s.peak.day > new Date().toISOString().slice(0, 10) ? `<div>With what is booked: <b>${s.peak.days}</b> on ${fmtDate(s.peak.day)}${s.peak.days > s.limit ? ' ⚠️ over the limit' : ''}</div>` : '') + '</div>';
+  }
+  html += '<div class="sp-scroll"><table class="sp-table cy-table"><thead><tr><th>Country</th>' + years.map(y => `<th>’${y.slice(2)}</th>`).join('') + '<th>All</th></tr></thead><tbody>' +
+    `<tr class="cy-abroad"><th>✈️ Abroad</th>${years.map(y => cell(d.abroad[y], `Abroad, ${y}`)).join('')}<td>${Object.values(d.abroad).reduce((a, b) => a + b, 0).toLocaleString()}</td></tr>` +
+    rows.map(r => `<tr class="${r.home ? 'cy-home' : ''}"><th>${countryLink(r.cc, flagOf(r.cc) + escapeHTML(name(r.cc)))}</th>` +
+      years.map(y => (r.home ? `<td title="${escapeHTML(name(r.cc))}, ${y}: ${r.byYear[y] || 0} days">${r.byYear[y] || ''}</td>` : cell(r.byYear[y], `${name(r.cc)}, ${y}`))).join('') +
+      `<td>${r.total.toLocaleString()}</td></tr>`).join('') + '</tbody></table></div>' +
+    `<p class="sp-note">A day counts in every country you were in that day, by any source (as above); “Abroad” counts each day once. Your home countries first, unshaded; then the ${Math.min(30, d.rows.filter(r => !r.home).length)} countries you spent most days in. ` +
+    'Schengen: the 90 days in any 180 that someone from outside the area may stay; days in the country you live in do not count, and an EU or Schengen citizen has no limit.</p>';
+  box.innerHTML = html;
+}
+
 // --- Flights table ---
 
 let filteredFlights = [];
@@ -2082,6 +2280,7 @@ async function init() {
   renderStats();
   renderTopCities();
   renderCountryStats();
+  renderCountryYears();
   initSports();
   renderTable();
 

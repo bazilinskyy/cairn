@@ -33,23 +33,83 @@ async function renderTrips() {
     `<div class="sub">${list.reduce((n, t) => n + t.nights, 0).toLocaleString()} nights in stays</div></div>` +
     `<div class="stat-card"><div class="label">Longest</div><div class="value">${Math.max(...list.map(t => t.days))} days</div>` +
     `<div class="sub">${escapeHTML(list.reduce((a, b) => (b.days > a.days ? b : a)).name)}</div></div></div>`;
+  const cards = prefs.tripsView !== 'table';
+  html += `<div class="view-switch" role="group" aria-label="Show trips as"><button class="${cards ? 'on' : ''}" data-view="cards">▦ Cards</button>` +
+    `<button class="${cards ? '' : 'on'}" data-view="table">☰ Table</button></div>`;
   Object.keys(years).sort().reverse().forEach(y => {
     const ts = years[y];
-    html += `<div class="chart-section"><h3>${y} · ${ts.length} trip${ts.length !== 1 ? 's' : ''}, ${ts.reduce((n, t) => n + t.days, 0)} days` +
-      ` <a href="#year=${dayId(y)}" class="sp-link inline" style="text-transform:none;font-weight:400" onclick="event.preventDefault(); openYear(${dayId(y) || 0})">the year in review →</a></h3><div class="sp-scroll">` +
+    const head = `<h3>${y} · ${ts.length} trip${ts.length !== 1 ? 's' : ''}, ${ts.reduce((n, t) => n + t.days, 0)} days` +
+      ` <a href="#year=${dayId(y)}" class="sp-link inline" style="text-transform:none;font-weight:400" onclick="event.preventDefault(); openYear(${dayId(y) || 0})">the year in review →</a></h3>`;
+    if (cards) { html += `<div class="chart-section">${head}<div class="trip-cards">${ts.map(tripCard).join('')}</div></div>`; return; }
+    html += `<div class="chart-section">${head}<div class="sp-scroll">` +
       `<table class="sp-table"><thead><tr><th>When</th><th>Trip</th><th>Days</th><th>Towns</th><th></th></tr></thead><tbody>` +
       ts.map(t => `<tr><th>${tripRange(t.start, t.end)}</th><td>${tripFlags(t)} ${tripLink(t)}${t.work?.length ? ` <span title="For work: ${escapeHTML(t.work.join('; '))}">💼</span>` : ''}</td><td>${t.days}${t.nights ? `<small>${t.nights} night${t.nights !== 1 ? 's' : ''} in stays</small>` : ''}</td>` +
         `<td>${t.towns.slice(0, 3).map(c => `<a href="#" class="sp-link inline" onclick="event.preventDefault(); openCityReport(${c.id})">${escapeHTML(c.name)}</a>`).join(', ')}</td>` +
         `<td>${[[t.flights, '✈️'], [t.ground, '🚆'], [t.activities, '🏃'], [t.photos, '📷']].filter(([n]) => n).map(([n, i]) => `${i} ${n}`).join(' · ')}</td></tr>`).join('') +
       '</tbody></table></div></div>';
   });
-  box.innerHTML = '<div id="coming-trips"></div>' + html;
+  box.innerHTML = '<div id="coming-trips"></div><div id="on-this-day"></div>' + html;
+  box.querySelectorAll('[data-view]').forEach(b => b.addEventListener('click', () => { savePrefs({ tripsView: b.dataset.view }); renderTrips(); }));
   paginateTables('trips-body');
   renderComing();
+  renderOnThisDay();
+}
+
+// --- On this day (onthisday.js on the server): where you were on today's date in the years before ---
+
+async function renderOnThisDay() {
+  const box = document.getElementById('on-this-day'), now = new Date();
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const list = await fetch(`/api/onthisday?date=${today}`).then(r => (r.ok ? r.json() : [])).catch(() => []);
+  if (!box || !list.length) return;
+  box.innerHTML = `<div class="chart-section otd"><h3>📅 On this day · ${now.toLocaleDateString('en-GB', { day: 'numeric', month: 'long' })}</h3>` + list.map(x => {
+    const bits = [
+      ...x.flights.map(f => `${modeTag('flight')}<b>${escapeHTML(f.from_city)} → ${escapeHTML(f.to_city)}</b> <small>${escapeHTML(f.flight_number)}</small>`),
+      ...x.ground.map(g => `${modeTag(g.mode)}<b>${escapeHTML(g.from)} → ${escapeHTML(g.to)}</b>`),
+      ...x.activities.map(a => `${modeTag(sportOf(a.sport))}${linkTo(a)}${a.distance ? ` <small>${fmtDist(a.distance, 1)}</small>` : ''}`),
+      x.stay && `${modeTag('stay')}${escapeHTML(x.stay.hotel || x.stay.type || x.stay.place || 'Stay')}${x.stay.hotel && x.stay.place ? ` <small>${escapeHTML(x.stay.place)}</small>` : ''}`,
+      x.song && `${modeTag('song')}${escapeHTML(x.song.artist)} – ${escapeHTML(x.song.name)}`,
+      ...x.books.map(b => `${modeTag('book')}finished <i>${escapeHTML(b.title)}</i>`)
+    ].filter(Boolean);
+    const pics = x.photo_ids.length ? `<div class="story-strip">${x.photo_ids.map(id => `<a href="/api/photos/${id}/full" target="_blank" rel="noopener"><img src="/api/photos/${id}/thumb" alt="" loading="lazy"></a>`).join('')}` +
+      `${x.photos > x.photo_ids.length ? `<small>${x.photos} photos</small>` : ''}</div>` : '';
+    return `<div class="story-day"><h4>${x.day.slice(0, 4)} <small class="otd-ago">${x.years} year${x.years !== 1 ? 's' : ''} ago</small>` +
+      ` <span>${x.towns.map(c => `${flagOf(c.country)}<a href="#" class="sp-link" onclick="event.preventDefault(); openCityReport(${c.id})">${escapeHTML(c.name)}</a>`).join(' · ')}</span>` +
+      (x.trip ? `<small>${tripLink(x.trip)}</small>` : '') + `</h4>` +
+      (bits.length ? `<ul>${bits.map(b => `<li>${b}</li>`).join('')}</ul>` : '') + pics + '</div>';
+  }).join('') + '<p class="sp-note">Where you were on this date in the years before. It can go to the alerts channel every morning: ⚙️ Settings → On this day.</p></div>';
+  hookLinks('on-this-day');
+}
+
+// A trip as a card: its cover photo (or its flags on a colour of its own), a sketch of its route, its name and numbers
+function tripCard(t) {
+  const hue = [...t.id].reduce((n, c) => n * 31 + c.charCodeAt(0), 7) % 360;
+  const cover = t.cover != null ? `<img src="/api/photos/${encodeURIComponent(t.cover)}/thumb" alt="" loading="lazy">`
+    : `<div class="tc-blank" style="--h:${hue}"><span>${t.countries.slice(0, 4).map(c => flagOf(c.cc).trim()).join(' ') || '🧭'}</span></div>`;
+  const counts = [[t.flights, '✈️'], [t.ground, '🚆'], [t.activities, '🏃'], [t.photos, '📷']].filter(([n]) => n).map(([n, i]) => `${i} ${n}`).join(' · ');
+  return `<a class="trip-card" href="#trip=${dayId(t.id)}" onclick="event.preventDefault(); openTrip('${dayId(t.id)}')">` +
+    `<div class="tc-pic">${cover}${routeSketch(t.route)}<span class="tc-days">${t.days} day${t.days !== 1 ? 's' : ''}</span></div>` +
+    `<div class="tc-body"><b>${t.countries.length ? t.countries.slice(0, 4).map(c => flagOf(c.cc).trim()).join('') + ' ' : ''}${escapeHTML(t.name)}${t.work?.length ? ' 💼' : ''}</b>` +
+    `<small>${tripRange(t.start, t.end)}</small><small>${t.towns.slice(0, 3).map(c => escapeHTML(c.name)).join(' · ')}</small>${counts ? `<small class="tc-counts">${counts}</small>` : ''}</div></a>`;
+}
+
+// the route as a small drawing: the town of each day, joined, in the trip's own shape
+function routeSketch(route) {
+  if (!route?.length) return '';
+  const W = 84, H = 56, P = 6, k = Math.cos((route.reduce((n, p) => n + p[0], 0) / route.length) * Math.PI / 180);
+  const xs = route.map(p => p[1] * k), ys = route.map(p => -p[0]);
+  const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)], span = Math.max(x1 - x0, y1 - y0, 1e-6);
+  const f = Math.min((W - 2 * P) / span, (H - 2 * P) / span);
+  const pt = i => [P + (xs[i] - x0) * f + (W - 2 * P - (x1 - x0) * f) / 2, P + (ys[i] - y0) * f + (H - 2 * P - (y1 - y0) * f) / 2].map(v => v.toFixed(1));
+  const pts = route.map((_, i) => pt(i));
+  return `<svg class="tc-route" viewBox="0 0 ${W} ${H}" aria-hidden="true">` +
+    (pts.length > 1 ? `<polyline points="${pts.map(p => p.join(',')).join(' ')}"/>` : '') +
+    `<circle cx="${pts[0][0]}" cy="${pts[0][1]}" r="2.6"/>${pts.length > 1 ? `<circle cx="${pts[pts.length - 1][0]}" cy="${pts[pts.length - 1][1]}" r="2.6" class="end"/>` : ''}</svg>`;
 }
 
 async function openTrip(id) {
-  const d = await fetch(`/api/trips/${id}`).then(r => (r.ok ? r.json() : null)).catch(() => null);
+  const [d, list] = await Promise.all([fetch(`/api/trips/${id}`).then(r => (r.ok ? r.json() : null)).catch(() => null), loadTrips()]);
+  tripsByDay = list;
   if (!d) return toast('No such trip', 'error');
   tripShown = d;
   document.querySelectorAll('.tab[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === 'trips'));
@@ -96,7 +156,7 @@ function prepBlock(t, withTitle) {
   const ahead = d => (d || '').slice(0, 10) >= today;  // a trip under way: only what is still to come
   const rows = [
     ...t.flights.filter(f => ahead(f.date)).map(f => `<li>✈️ <b>${escapeHTML(f.flight_number || '')}</b> ${escapeHTML(f.from_city || f.from)} → ${escapeHTML(f.to_city || f.to)} <small>${escapeHTML(f.date.slice(0, 16).replace(' ', ' at '))}</small> ${badge(f)}</li>`),
-    ...t.ground.filter(g => ahead(g.date)).map(g => `<li>${(groundModes[g.mode] || '🚌').split(' ')[0]} ${escapeHTML(g.from)} → ${escapeHTML(g.to)} <small>${escapeHTML(g.date.slice(0, 16).replace(' ', ' at '))}</small></li>`),
+    ...t.ground.filter(g => ahead(g.date)).map(g => `<li>${modeTag(g.mode)}${escapeHTML(g.from)} → ${escapeHTML(g.to)} <small>${escapeHTML(g.date.slice(0, 16).replace(' ', ' at '))}</small></li>`),
     ...t.stays.filter(x => ahead(x.end || x.start)).map(s => `<li>🏨 ${escapeHTML(s.hotel || s.type || s.place || '')} <small>${escapeHTML(s.place || '')} · ${tripRange(s.start, s.end)} · ${escapeHTML(s.provider || '')}</small></li>`),
     ...t.cars.filter(c => ahead(c.end || c.start)).map(c => `<li>${rentalIcon(c)} ${rentalName(c)} <small>${escapeHTML(c.place || '')} · ${tripRange(c.start, c.end)} · ${escapeHTML(c.provider || '')}</small></li>`)];
   const missing = t.missing.map(m => `<li class="prep-missing" data-key="${escapeHTML(m.key)}">⚠️ ${escapeHTML(m.text)} ` +
@@ -121,6 +181,30 @@ function hookPrep(box) {
     const li = b.closest('[data-key]');
     fetch('/api/suggestions/dismiss', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: li.dataset.key }) }).then(() => li.remove());
   }));
+}
+
+// The cover: one of the trip's photos, picked from all of them (or Cairn's own choice again)
+function pickCover() {
+  const d = tripShown, id = dayId(d.id);
+  let box = document.getElementById('cover-pick');
+  if (!box) { box = Object.assign(document.createElement('div'), { id: 'cover-pick', className: 'modal-backdrop' }); document.body.appendChild(box); }
+  const ids = (d.photos || []).filter(p => !p[4]).map(p => p[0]);
+  box.innerHTML = `<div class="modal cover-modal"><h3>Cover photo</h3><p>Pick the photo for the top of the trip's page and its card.</p>` +
+    `<div class="cover-grid">${ids.map(p => `<button data-photo="${escapeHTML(String(p))}"><img src="/api/photos/${encodeURIComponent(p)}/thumb" alt="" loading="lazy"></button>`).join('')}</div>` +
+    '<div class="modal-actions"><button class="btn btn-ghost" data-auto>Let Cairn choose</button><button class="btn btn-ghost" data-close>Close</button></div></div>';
+  box.classList.add('open');
+  const set = async photo => {
+    const r = await fetch(`/api/trips/${id}/cover`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ photo }) });
+    if (!r.ok) return toast('The cover was not saved', 'error');
+    box.classList.remove('open');
+    tripList = null;
+    tripsByDay = await loadTrips();
+    renderTrip();
+  };
+  box.querySelectorAll('[data-photo]').forEach(b => b.addEventListener('click', () => set(b.dataset.photo)));
+  box.querySelector('[data-auto]').addEventListener('click', () => set(null));
+  box.querySelector('[data-close]').addEventListener('click', () => box.classList.remove('open'));
+  box.onclick = e => { if (e.target === box) box.classList.remove('open'); };
 }
 
 // the roads looked up meanwhile: the map again
@@ -150,6 +234,12 @@ function renderTrip() {
   const d = tripShown;
   const plural = (n, w) => `${n.toLocaleString()} ${w}${n !== 1 ? 's' : ''}`;
   document.getElementById('trip-title').innerHTML = `${tripFlags(d)} ${escapeHTML(d.name)}`;
+  const cover = tripsByDay.find(t => t.id === d.id)?.cover;
+  const id = dayId(d.id);
+  document.getElementById('trip-export').innerHTML = [['kml', '🌍 KML', 'For Google Earth and Google My Maps: every line and stay'],
+    ['gpx', '🧭 GPX', 'For a GPS, a bike computer or a map app: a track per line'],
+    ['html', '🔗 Page to share', 'One web page with the map and day by day; no stays\' names, bookings, prices, health or photos']]
+    .map(([f, t, sub]) => `<a href="/api/trips/${id}/export/${f}" download>${t}<small>${sub}</small></a>`).join('');
   document.getElementById('trip-sub').textContent = `${tripRange(d.start, d.end)} · ${plural(d.days, 'day')}` +
     (d.countries.length ? ` · ${d.countries.map(c => `${c.cc} ${c.days} d`).join(', ')}` : '') +
     (d.work?.length ? ` · 💼 ${d.work.join('; ')}` : '');  // from your calendars
@@ -165,7 +255,11 @@ function renderTrip() {
   const actKm = d.activities.reduce((n, a) => n + (a.distance || 0), 0);
   const climbed = allClimbs.map(c => ({ c, rides: (c.rides || []).filter(r => r.date >= d.start && r.date <= d.end) })).filter(x => x.rides.length);
 
-  let html = `<div class="chart-section" style="padding:0;overflow:hidden"><div id="trip-map" class="mini-map" style="height:440px"></div></div>` +
+  let html = (cover != null ? `<div class="trip-hero"><img src="/api/photos/${encodeURIComponent(cover)}/full" alt="">` +
+      `<div class="th-text"><h1>${escapeHTML(d.name)}</h1><p>${tripFlags(d)} ${tripRange(d.start, d.end)} · ${plural(d.days, 'day')}</p></div>` +
+      (d.photo_ids.length ? '<button class="btn btn-ghost th-change" onclick="pickCover()">🖼️ Change cover</button>' : '') + '</div>'
+      : (d.photo_ids.length ? '<p class="sp-note" style="margin-top:-8px"><a href="#" class="sp-link" onclick="event.preventDefault(); pickCover()">🖼️ Choose a cover photo</a></p>' : '')) +
+    `<div class="chart-section" style="padding:0;overflow:hidden"><div id="trip-map" class="mini-map" style="height:440px"></div></div>` +
     '<div class="stat-cards">' +
     card('Days', d.days, `${plural(d.nights, 'night')} in stays`) +
     card('Towns', d.towns.length ? d.towns.length + (d.towns.length >= 6 ? '+' : '') : '', d.towns.slice(0, 3).map(c => escapeHTML(c.name)).join(', ')) +
@@ -185,8 +279,8 @@ function renderTrip() {
   html += tripStory(d);
   html += section('Days at a glance', table(['Day', 'Where', 'How you moved', 'What you did', 'Slept', ...(withBody ? ['Sleep, heart'] : [])], d.dayList.map(x => {
     const moved = [
-      ...x.flights.map(id => byId(d.flights, id)).map(f => `✈️ ${escapeHTML(f.from)} → ${escapeHTML(f.to)}`),
-      ...x.ground.map(id => byId(d.ground, id)).map(g => `${(groundModes[g.mode] || '🚌').split(' ')[0]} ${escapeHTML(g.from)} → ${escapeHTML(g.to)}`),
+      ...x.flights.map(id => byId(d.flights, id)).map(f => `${modeTag('flight')}${escapeHTML(f.from)} → ${escapeHTML(f.to)}`),
+      ...x.ground.map(id => byId(d.ground, id)).map(g => `${modeTag(g.mode)}${escapeHTML(g.from)} → ${escapeHTML(g.to)}`),
       x.road ? `${(c => (c ? rentalIcon(c) : '🛣️'))(cars.find(c => x.day >= c.start && x.day <= (c.end || c.start)))} ${Math.round(dist(x.road))} ${DU()}` : ''
     ].filter(Boolean).join('<br>');
     const did = [...x.activities.map(id => byId(d.activities, id)).map(a => linkTo(a) + (a.weather ? `<small>${weatherText(a.weather, true)}</small>` : '')),
@@ -212,7 +306,7 @@ function renderTrip() {
   }
   if (d.ground.length) {
     html += section('Trains, buses and ferries', table(['When', '', 'Route', DU()], d.ground.map(g =>
-      `<tr><th>${fmtDate(g.date)}</th><td>${(groundModes[g.mode] || '🚌').split(' ')[0]}</td>` +
+      `<tr><th>${fmtDate(g.date)}</th><td>${modeTag(g.mode)}</td>` +
       `<td>${escapeHTML(g.from)} → ${escapeHTML(g.to)}</td><td>${g.distance ? Math.round(dist(g.distance)).toLocaleString() : ''}</td></tr>`)));
   }
   if (d.activities.length) {
@@ -243,14 +337,14 @@ function tripStory(d) {
   const local = (t, lon) => new Date((t + Math.round((lon || 0) / 15) * 3600) * 1000).toISOString().slice(0, 16);
   const at = s => (s || '').replace(' ', 'T').slice(0, 16);
   const ev = [];
-  d.flights.forEach(f => ev.push({ at: at(f.date), html: `✈️ <b>${escapeHTML(f.from_city || f.from)} → ${escapeHTML(f.to_city || f.to)}</b> ` +
+  d.flights.forEach(f => ev.push({ at: at(f.date), html: `${modeTag('flight')}<b>${escapeHTML(f.from_city || f.from)} → ${escapeHTML(f.to_city || f.to)}</b> ` +
     `<small>${escapeHTML(f.flight_number || '')} ${escapeHTML(f.from)}–${escapeHTML(f.to)}${f.distance ? ` · ${fmtDist(f.distance)}` : ''}</small>` }));
-  d.ground.forEach(g => ev.push({ at: at(g.date), html: `${(groundModes[g.mode] || '🚌').split(' ')[0]} <b>${escapeHTML(g.from)} → ${escapeHTML(g.to)}</b> ` +
+  d.ground.forEach(g => ev.push({ at: at(g.date), html: `${modeTag(g.mode)}<b>${escapeHTML(g.from)} → ${escapeHTML(g.to)}</b> ` +
     `<small>${[g.service, g.arrival ? `until ${g.arrival.slice(11, 16)}` : '', g.distance ? fmtDist(g.distance) : ''].filter(Boolean).map(escapeHTML).join(' · ')}</small>` }));
-  d.activities.forEach(a => ev.push({ at: at(a.date), html: `${sportEmoji[sportOf(a.sport)] || '🏅'} ${linkTo(a)} <small>${[a.distance ? fmtDist(a.distance, 1) : '',
+  d.activities.forEach(a => ev.push({ at: at(a.date), html: `${modeTag(sportOf(a.sport))}${linkTo(a)} <small>${[a.distance ? fmtDist(a.distance, 1) : '',
     a.elevation ? '↑' + fmtHeight(a.elevation) : '', a.moving_time ? hm(a.moving_time) : ''].filter(Boolean).join(' · ')}` +
     `${a.weather ? ` · ${weatherText(a.weather, true)}` : ''}</small>` }));
-  d.moves.filter(m => m.kind !== 'move').forEach(m => ev.push({ at: local(m.t0, m.from[1]), html: `${m.kind === 'drive' ? (m.by === 'scooter' ? '🛵 Rode' : '🚗 Drove') : '🛣️ By road'} <small>${fmtDist(m.km)}</small>` }));
+  d.moves.filter(m => m.kind !== 'move').forEach(m => ev.push({ at: local(m.t0, m.from[1]), html: `${m.kind === 'drive' ? (m.by === 'scooter' ? `${modeTag('scooter')}Rode` : `${modeTag('car')}Drove`) : `${modeTag('road')}By road`} <small>${fmtDist(m.km)}</small>` }));
   (d.photos || []).forEach(p => ev.push({ at: local(p[1], p[3]), photo: p }));
   const stays = d.stays.filter(s => s.what !== 'car');
   const days = {};
@@ -271,7 +365,7 @@ function tripStory(d) {
       body += `<li><span class="story-time">${escapeHTML(e.at.slice(11))}</span>${e.html}</li>`;
     });
     flush();
-    if (night) body += `<li><span class="story-time">night</span>🏨 ${escapeHTML(night.hotel || night.type || night.place || 'Stay')} <small>${escapeHTML([night.place, night.provider].filter(Boolean).join(' · '))}</small></li>`;
+    if (night) body += `<li><span class="story-time">night</span>${modeTag('stay')}${escapeHTML(night.hotel || night.type || night.place || 'Stay')} <small>${escapeHTML([night.place, night.provider].filter(Boolean).join(' · '))}</small></li>`;
     const b = x.body;
     html += `<div class="story-day"><h4>${new Date(x.day + 'T12:00:00Z').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}` +
       ` <span>${x.towns.map(c => `${flagOf(c.country)}<a href="#" class="sp-link" onclick="event.preventDefault(); openCityReport(${c.id})">${escapeHTML(c.name)}</a>`).join(' · ')}</span>` +
@@ -339,8 +433,7 @@ function drawTripMap(d, keepView = false) {
   box.dataset.basemap = BASEMAPS[prefs.basemap] ? prefs.basemap : 'auto';
   tripMap = L.map(box, { zoomControl: true, attributionControl: true, worldCopyJump: true });
   toneMap(tripMap);
-  const b = BASEMAPS[prefs.basemap] || BASEMAPS.auto, [url, attribution, maxZoom = 19] = b.tiles;
-  L.tileLayer(url, { attribution, maxZoom }).addTo(tripMap);
+  addBasemap(tripMap);
   const st = lineStyle(), col = k => mapVar('--' + k), bounds = [], local = [];  // local: the trip's own area, without the flights there
   // moves first, under the rest: along the roads solid, the short ones dotted
   d.moves.forEach(m => {

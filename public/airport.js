@@ -81,8 +81,7 @@ function drawAirportMap(ap, ends) {
   box.dataset.basemap = BASEMAPS[prefs.basemap] ? prefs.basemap : 'auto';
   airportMap = L.map(box, { zoomControl: true, attributionControl: true, worldCopyJump: true });
   toneMap(airportMap);
-  const b = BASEMAPS[prefs.basemap] || BASEMAPS.auto, [url, attribution, maxZoom = 19] = b.tiles;
-  L.tileLayer(url, { attribution, maxZoom }).addTo(airportMap);
+  addBasemap(airportMap);
   const accent = mapVar('--accent'), bounds = [[ap.lat, ap.lon], ...[...ends.keys()].map(c => allAirports[c]).filter(Boolean).map(o => [o.lat, o.lon])];
   if (bounds.length > 1) airportMap.fitBounds(bounds, { padding: [24, 24], maxZoom: 9 }); else airportMap.setView([ap.lat, ap.lon], 9);  // the view before the lines
   ends.forEach(e => {

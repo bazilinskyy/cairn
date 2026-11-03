@@ -136,8 +136,7 @@ function drawCityMap(d) {
   box.dataset.basemap = BASEMAPS[prefs.basemap] ? prefs.basemap : 'auto';
   cityMap = L.map(box, { zoomControl: true, attributionControl: true, worldCopyJump: true }).setView([t.lat, t.lon], 12);
   toneMap(cityMap);
-  const b = BASEMAPS[prefs.basemap] || BASEMAPS.auto, [url, attribution, maxZoom = 19] = b.tiles;
-  L.tileLayer(url, { attribution, maxZoom }).addTo(cityMap);
+  addBasemap(cityMap);
   const st = lineStyle(), col = k => mapVar('--' + k);
   const near = (lat, lon, maxKm) => Math.hypot(lat - t.lat, (lon - t.lon) * Math.cos(t.lat * Math.PI / 180)) * 111.2 <= maxKm;
   const acts = new Set(d.activities.map(a => a.id));
