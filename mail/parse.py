@@ -67,13 +67,16 @@ class Parsed:
     codes: tuple = ()                             # booking codes of the email (also when no leg could be read)
 
 
-def load_airports(path):
-    """OpenFlights airports.dat: IATA code -> Airport (rows without IATA code or time zone are skipped)."""
+def load_airports(path, zone=None):
+    """OpenFlights airports.dat: IATA code -> Airport. A row without a time zone (newer airports such as Beijing
+    Daxing) gets zone(lat, lon) when that gives one; rows without IATA code or time zone are skipped."""
     out = {}
     with open(path, encoding="utf-8", newline="") as f:
         for row in csv.reader(f):
-            if len(row) > 11 and re.fullmatch(r"[A-Z]{3}", row[4]) and "/" in row[11]:
-                out[row[4]] = Airport(row[1], row[2], row[11], row[3])
+            if len(row) > 11 and re.fullmatch(r"[A-Z]{3}", row[4]):
+                tz = row[11] if "/" in row[11] else zone(float(row[6]), float(row[7])) if zone else ""
+                if tz:
+                    out[row[4]] = Airport(row[1], row[2], tz, row[3])
     return out
 
 
@@ -371,6 +374,14 @@ def _positional_legs(lines, airlines, airports, cities, year_hint):
                 floor, s0 = (occ[k - 1][0] + 1 if k else 0), i
                 while s0 > max(floor, i - 2) and not TIME_RX.search(lines[s0 - 1]):
                     s0 -= 1
+                # a date heading a few lines up is this flight's (China Southern: date | route, baggage, table head);
+                # left out, it would date the flight before
+                up = s0
+                while up > max(floor, i - 5) and not TIME_RX.search(lines[up - 1]):
+                    up -= 1
+                    if _dates(lines[up], year_hint):
+                        s0 = up
+                        break
                 starts.append(s0)
             blocks = [lines[starts[k]:(starts[k + 1] if k + 1 < len(occ) else len(lines))] for k in range(len(occ))]
     return [_leg_from_block(b, f, airports, cities, year_hint) for b, (_, f) in zip(blocks, occ)]

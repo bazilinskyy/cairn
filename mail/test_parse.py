@@ -25,6 +25,7 @@ AIRPORTS_DAT = "\n".join([
     '1382,"Charles de Gaulle International Airport","Paris","France","CDG","LFPG",49.0128,2.55,392,1,"E","Europe/Paris","airport","OurAirports"',
     '4317,"Kalaleh Airport","Kalaleh","Iran","KLM","OINE",37.3833,55.452,0,3.5,"E","Asia/Tehran","airport","OurAirports"',
     '9999,"No Code Field","Nowhere","Nowhere",\\N,"XXXX",0,0,0,0,"U",\\N,"airport","OurAirports"',
+    '10209,"Beijing Daxing International Airport","Beijing","China","PKX","ZBAD",39.509945,116.41092,98,8,"U",\\N,"airport","OurAirports"',
 ])
 
 
@@ -45,6 +46,7 @@ AIRLINES_DAT = "\n".join([
     '4255,"SATA Air Acores","","SP","SAT","SATA","Portugal","Y"',
     '137,"Air France","","AF","AFR","AIRFRANS","France","Y"',
     '4319,"TAP Portugal","","TP","TAP","AIR PORTUGAL","Portugal","Y"',
+    '1767,"China Southern Airlines","","CZ","CSN","CHINA SOUTHERN","China","Y"',
     '9998,"Defunct Air","","KL","KLX","","Nowhere","N"',
 ])
 
@@ -79,7 +81,17 @@ def test_load_airports():
     assert ap["AMS"].tz == "Europe/Amsterdam"
     assert ap["PDL"].tz == "Atlantic/Azores"
     assert ap["LIS"].city == "Lisbon"
-    assert "XXXX" not in ap and len(ap) == 15
+    assert "XXXX" not in ap and "PKX" not in ap and len(ap) == 15  # no time zone in the file
+
+
+def test_airport_without_zone_gets_its_citys():
+    tmp = HERE / ".test_airports.dat"
+    tmp.write_text(AIRPORTS_DAT, encoding="utf-8")
+    try:
+        ap = parse.load_airports(tmp, lambda lat, lon: "Asia/Shanghai" if 39 < lat < 40 and 116 < lon < 117 else "")
+    finally:
+        tmp.unlink()
+    assert ap["PKX"].tz == "Asia/Shanghai" and ap["AMS"].tz == "Europe/Amsterdam"
 
 
 def test_html_to_text_tables():
@@ -174,6 +186,16 @@ def test_gotogate_change():
     assert p.legs[0].codes[0] == "ABC123"
     assert parse.is_passenger(p.passengers, ["Jan Testers"])
 
+
+
+def test_date_heading_above_each_flight():
+    """China Southern puts each flight's date in a heading above its table; it must not date the flight before."""
+    p = parsed("csair_date_headings")
+    assert p.kind == "booking"
+    assert [(l.flight, l.dep_local, l.arr_local) for l in p.legs] == [
+        ("CZ111", D(2026, 12, 15, 21, 40), D(2026, 12, 16, 16, 0)), ("CZ222", D(2026, 12, 16, 17, 0), D(2026, 12, 16, 18, 55)),
+        ("CZ333", D(2027, 1, 12, 8, 10), D(2027, 1, 12, 11, 25)), ("CZ444", D(2027, 1, 12, 14, 40), D(2027, 1, 12, 18, 35))]
+    assert parse.is_passenger(p.passengers, ["Jan Testers"])
 
 def test_overnight():
     p = parsed("edreams_nl_overnight")

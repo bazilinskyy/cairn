@@ -11,6 +11,7 @@ import tempfile
 import unicodedata
 from dataclasses import replace
 from datetime import datetime, timedelta
+from math import cos, radians
 from pathlib import Path
 
 from parse import DATE_RX, Leg, TIME_RX, _dates, reservations
@@ -46,6 +47,23 @@ def load_cities(path):
                 if k and pop > best.get(k, (-1, ""))[0]:
                     best[k] = (pop, row[17])
     return {k: tz for k, (_, tz) in best.items()}
+
+
+def zone_near(path):
+    """zone(lat, lon): the time zone of the nearest GeoNames town within about a degree, else "". The towns are
+    read on the first call."""
+    grid = {}
+
+    def zone(lat, lon):
+        if not grid:
+            with open(path, encoding="utf-8", newline="") as f:
+                for row in csv.reader(f, delimiter="\t", quoting=csv.QUOTE_NONE):
+                    if len(row) >= 18 and row[17]:
+                        a, b = float(row[4]), float(row[5])
+                        grid.setdefault((int(a // 1), int(b // 1)), []).append((a, b, row[17]))
+        near = [t for i in (-1, 0, 1) for j in (-1, 0, 1) for t in grid.get((int(lat // 1) + i, int(lon // 1) + j), [])]
+        return min(near, key=lambda t: (t[0] - lat) ** 2 + ((t[1] - lon) * cos(radians(lat))) ** 2)[2] if near else ""
+    return zone
 
 
 def station_tz(name, cities, home_tz):

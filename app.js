@@ -261,7 +261,7 @@ function lookupFlightAPI(flightNumber, date) {
   const fn = flightNumber.replace(/\s+/g, '').toUpperCase();
   const options = {
     hostname: 'aerodatabox.p.rapidapi.com',
-    path: `/flights/number/${fn}/${date}`,
+    path: `/flights/number/${fn}/${date}?dateLocalRole=Departure`,  // the flight leaving that day, not one arriving then
     method: 'GET',
     headers: {
       'x-rapidapi-key':  secret.rapidapi_key,

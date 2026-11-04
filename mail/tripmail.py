@@ -90,7 +90,7 @@ def load_reference(cfg):
     if not towns.exists():
         with urllib.request.urlopen(ground.CITIES_URL, timeout=120) as r:
             zipfile.ZipFile(io.BytesIO(r.read())).extract("cities1000.txt", data)
-    return load_airports(REPO / cfg["airports_file"]), load_airlines(airlines), ground.load_cities(towns)
+    return load_airports(REPO / cfg["airports_file"], ground.zone_near(towns)), load_airlines(airlines), ground.load_cities(towns)
 
 
 def load_state():

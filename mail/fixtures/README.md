@@ -19,6 +19,7 @@ tables and wording are the airline's own.
 | `synthetic_other_passenger.eml` | the KLM booking for another passenger | synthetic: must be skipped |
 | `gotogate_order_update.eml` | Gotogate "Order …" update | written by hand in the same layout; date and flight number on one line, details below |
 | `gotogate_action_needed.eml` | Gotogate "Action needed" | written by hand; lists options to choose from, must be ignored |
+| `csair_date_headings.eml` | China Southern itinerary | written by hand in the same layout; each flight's date in a heading above its table |
 | `easyjet_city_names.eml` | easyJet booking | the easyJet fixture with a city name that matches no airport (`Majorca (Palma)`) |
 | `hotel_booking.eml` | Booking.com hotel confirmation | must give no flights |
 | `ns_train.eml` | NS International train tickets | train numbers like `EC 9236` and an IBAN, must give no flights |
