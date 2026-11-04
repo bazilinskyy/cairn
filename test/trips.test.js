@@ -94,6 +94,18 @@ test('a car from the morning after an evening in town: the way out that morning 
   assert.ok(new Date(out.t0 * 1000).toISOString().startsWith('2026-03-02'), 'on the day of the car');
 });
 
+test('a day trip with the car on a short ferry: driven to the ferry and on from it, not picked up off it', () => {
+  const room = { id: 1, what: 'stay', start: '2026-03-01', end: '2026-03-03', lat: 38.72, lon: -9.14 };
+  const car = { id: 2, what: 'car', start: '2026-03-02', end: '2026-03-02', lat: 38.72, lon: -9.14 };
+  const at = (iso, lat, lon, id) => [id, Date.parse(iso) / 1000, lat, lon];
+  const s = store({ stays: [room, car],
+    ground: [{ id: 1, mode: 'ferry', date: '2026-03-02 13:00', arrival: '2026-03-02 13:20', from_lat: 38.705, from_lon: -9.145, to_lat: 38.688, to_lon: -9.148 }],
+    photos: [at('2026-03-02T11:00:00Z', 38.697, -9.206, 1), at('2026-03-02T16:00:00Z', 38.52, -8.89, 2)] });   // Belém; Setúbal
+  const moves = s.get(s.list()[0].id).moves.filter(m => new Date(m.t0 * 1000).toISOString().startsWith('2026-03-02') && m.km >= 2);
+  assert.ok(moves.some(m => m.kind === 'drive' && Math.abs(m.to[0] - 38.705) < 0.01), 'to the ferry by car');
+  assert.ok(moves.some(m => m.kind === 'drive' && Math.abs(m.from[0] - 38.688) < 0.01 && Math.abs(m.to[0] - 38.52) < 0.01), 'on from it by car');
+});
+
 test('island to island: a ferry with its times ends one car and starts the next, waiting at the port; a slow hop by car', () => {
   const carA = { id: 1, what: 'car', start: '2026-03-01', end: '2026-03-03', lat: 38.72, lon: -9.14 };   // the first island's car
   const carB = { id: 2, what: 'car', start: '2026-03-03', end: '2026-03-05', lat: 38.53, lon: -8.89 };   // the next one's, at its port

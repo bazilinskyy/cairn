@@ -192,7 +192,9 @@ function create({ towns, cities, days, flights, airports, groundTrips, stays, ac
       // not before you landed near it that day (the way to the airport at home that morning was not by car)
       const near = e => c.lat == null || (!(e.home && ground.km(e.at, [c.lat, c.lon]) > PICKUP_KM)
         && (ground.km(e.at, [c.lat, c.lon]) <= ROAD_MAX_KM || ground.km(e.at, [c.lat, c.lon]) < ground.km(e.from, [c.lat, c.lon])));
-      const since = Math.max(from, ...ev.filter(e => e.on && e.t >= from && e.t < from + 86400 && near(e)).map(e => e.t));
+      // (from afar: a car ferry near it that day is crossed with the car, a day trip to an island)
+      const since = Math.max(from, ...ev.filter(e => e.on && e.t >= from && e.t < from + 86400 && near(e)
+        && !(c.lat != null && ground.km(e.from, [c.lat, c.lon]) <= PICKUP_KM)).map(e => e.t));
       const legs = ev.filter(e => (e.off || e.on) && e.t > since && e.t <= to).sort((a, b) => a.t - b.t);
       const until = legs.find(e => e.off)?.t ?? to;
       let open = since;
