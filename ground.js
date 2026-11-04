@@ -793,7 +793,9 @@ async function ferryLines(a, b) {
   }
   // Dijkstra from the nodes near a (starting at their distance from it) to the nearest finish near b
   const dist = new Map(), prev = new Map(), done = new Set(), todo = new Heap();
-  for (const [id, p] of at) if (edges.has(id) && km(p, a) <= FERRY_PORT_KM) { dist.set(id, km(p, a)); todo.push(km(p, a), id); }
+  // a port's line ends within FERRY_PORT_KM, nearer on a short crossing (else a point by both ports is a way straight over)
+  const port = Math.min(FERRY_PORT_KM, Math.max(0.5, km(a, b) / 4));
+  for (const [id, p] of at) if (edges.has(id) && km(p, a) <= port) { dist.set(id, km(p, a)); todo.push(km(p, a), id); }
   let best = null, bestKm = Infinity;
   while (todo.size) {
     const id = todo.pop();
@@ -801,7 +803,7 @@ async function ferryLines(a, b) {
     done.add(id);
     const d = dist.get(id), toB = km(at.get(id), b);
     if (d >= bestKm) break;
-    if (toB <= FERRY_PORT_KM && d + toB < bestKm) { bestKm = d + toB; best = id; }
+    if (toB <= port && d + toB < bestKm) { bestKm = d + toB; best = id; }
     for (const [n, w] of edges.get(id) || []) {
       if (!done.has(n) && d + w < (dist.get(n) ?? Infinity)) { dist.set(n, d + w); prev.set(n, id); todo.push(d + w, n); }
     }
