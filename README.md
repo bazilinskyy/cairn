@@ -316,6 +316,7 @@ cp default.secret secret
 | `flights_file` | `data/flights.json` | the flight list |
 | `airports_file` | `data/airports.dat` | OpenFlights airport database, downloaded on first run |
 | `csv_backup` | `""` | openflights.org CSV export to import on first run (see [Importing](#importing-from-openflightsorg)) |
+| `backup_copy_dir`, `backup_copy_days` | `""`, `14` | a folder (a synced one: OneDrive, iCloud Drive, Dropbox) Cairn writes its backup to every `backup_copy_days` days, the full one as **Download backup** makes it; only the newest stays there (see [Backup](#backup)) |
 | `ground_file`, `stays_file`, `photos_file`, `timeline_file`, `strava_file`, `strava_token_file` | `data/…` | where the map's other data is kept (see [Data](#data)) |
 | `wallet_dir` | `"auto"` | `"auto"` to read this Mac's Apple Wallet (read-only; iCloud keeps the passes in `~/Library/Passes/Cards`); a folder of passes; `""` for none |
 | `things_db` | `""` | `"auto"` to read your Things 3 to-dos on this Mac (read-only), for the coming trips' checks and the trips your to-dos mention; or the path of its `main.sqlite` |
@@ -822,6 +823,8 @@ On a phone the tabs scroll sideways, the cards stand two abreast and the map's *
 curl -o cairn-backup.tar.gz localhost:3000/api/backup
 curl -o cairn-backup-no-activities.tar.gz "localhost:3000/api/backup?activities=0"
 ```
+
+With `backup_copy_dir` set in `config`, Cairn keeps one there by itself: every 14 days (`backup_copy_days`) a new `cairn-backup-<date>.tar.gz`, and the one before it goes, so only the newest is kept. Point it at a synced folder (OneDrive, iCloud Drive, Dropbox) for a copy off this machine.
 
 **Restore from backup…** puts one back: it checks it is a Cairn backup (only the files a backup holds, each readable), keeps the data as it is now in `data/backups/before-restore-<date>.tar.gz`, then replaces each file the backup has (files it does not have stay as they are; tracks are added). Cairn's service then starts it again to read them; run by hand, start it again yourself. The backup is an ordinary `.tar.gz` with a `manifest.json` saying when it was made and what it holds.
 

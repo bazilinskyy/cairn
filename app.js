@@ -1583,6 +1583,29 @@ app.post('/api/backup/restore', express.raw({ type: () => true, limit: '2gb' }),
     res.status(400).json({ error: e.message });
   }
 });
+// a backup kept in a folder of your choice (a synced one: OneDrive, iCloud Drive, Dropbox) every backup_copy_days
+// days, the newest only: written beside the old one first, which then goes
+const BACKUP_COPY = /^cairn-backup-[\d-]+\.tar\.gz$/;
+async function copyBackup() {
+  const dir = (config.backup_copy_dir || '').replace(/^~(?=\/|$)/, require('os').homedir());
+  if (!dir) return;
+  let old = [];
+  try { old = fs.readdirSync(dir).filter(n => BACKUP_COPY.test(n)); } catch (_) {}
+  const newest = Math.max(0, ...old.map(n => fs.statSync(path.join(dir, n)).mtimeMs));
+  if (Date.now() - newest < (config.backup_copy_days || 14) * 864e5) return;
+  const name = `cairn-backup-${backups.stamp()}.tar.gz`, part = path.join(dir, `.${name}.part`);
+  try {
+    await backups.toFile(part);
+    fs.renameSync(part, path.join(dir, name));
+  } catch (e) {
+    fs.rmSync(part, { force: true });
+    return console.log(`[backup] no copy in ${dir}: ${e.message}`);
+  }
+  old.forEach(n => fs.rmSync(path.join(dir, n), { force: true }));
+  console.log(`[backup] ${name} in ${dir}${old.length ? `, instead of ${old.join(', ')}` : ''}`);
+}
+setTimeout(copyBackup, 5 * 60e3).unref();
+setInterval(copyBackup, 3600e3).unref();
 
 // --- Suggestions (suggestions.js): journeys your photos show and nothing else does ---
 // stays your runs show: nights away with no stay, where your loops start (bases.js), in the health list
