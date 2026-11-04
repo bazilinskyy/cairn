@@ -28,7 +28,7 @@ before(async () => {
   fs.copyFileSync(path.join(ROOT, 'activities.js'), path.join(dir, 'activities.js'));
   fs.copyFileSync(path.join(ROOT, 'regions.js'), path.join(dir, 'regions.js'));
   fs.copyFileSync(path.join(ROOT, 'country-lists.json'), path.join(dir, 'country-lists.json'));
-  ['climbs.js', 'ascents.js', 'efforts.js', 'climbs.json', 'climbs_extra.json', 'photos.js', 'climb_records.json', 'trips.js', 'weather.js', 'stats.js', 'lastfm.js', 'suggestions.js', 'backup.js', 'albums.js', 'things.js', 'todotrips.js', 'prep.js', 'spending.js', 'review.js', 'bases.js', 'books.js', 'uploads.js', 'report.js', 'onthisday.js', 'tripexport.js', 'wallet.js'].forEach(f => fs.copyFileSync(path.join(ROOT, f), path.join(dir, f)));
+  ['climbs.js', 'ascents.js', 'efforts.js', 'climbs.json', 'climbs_extra.json', 'photos.js', 'climb_records.json', 'trips.js', 'weather.js', 'stats.js', 'lastfm.js', 'suggestions.js', 'backup.js', 'albums.js', 'things.js', 'todotrips.js', 'prep.js', 'spending.js', 'review.js', 'bases.js', 'books.js', 'uploads.js', 'report.js', 'onthisday.js', 'tripexport.js', 'wallet.js', 'code.js'].forEach(f => fs.copyFileSync(path.join(ROOT, f), path.join(dir, f)));
   fs.copyFileSync(path.join(ROOT, 'default.config'), path.join(dir, 'default.config'));
   fs.cpSync(path.join(ROOT, 'public'), path.join(dir, 'public'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'data'));
@@ -603,4 +603,12 @@ test('Wallet: boarding passes give their flights seats and booking codes, list t
   assert.strictEqual((await (await call('GET', '/api/suggestions/wallet')).json()).fill.flights, 0);  // never over what is there
   fs.rmSync(path.join(dir, 'passes'), { recursive: true });
   for (const f of [there, back]) await call('DELETE', `/api/flights/${f.id}`);
+});
+
+test('code: your commits by place, once imported', async () => {
+  assert.strictEqual(await (await call('GET', '/api/code')).json(), null);
+  fs.writeFileSync(path.join(dir, 'data', 'github.json'), JSON.stringify({ login: 'me', commits: [[Date.UTC(2026, 10, 17, 9) / 1000, 0, 'me/app', 'Fix']] }));
+  const c = await (await call('GET', '/api/code')).json();
+  assert.deepStrictEqual([c.commits, c.repos, c.first, c.hours[9]], [1, 1, '2026-11-17', 1]);
+  fs.rmSync(path.join(dir, 'data', 'github.json'));
 });

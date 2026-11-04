@@ -456,6 +456,24 @@ def test_health_workouts_routes_and_steps():
     assert (ride["sport"], ride["distance"], ride["trainer"], ride["path"]) == ("Ride", 20.0, True, ""), ride
 
 
+
+def test_github_commits_by_you_with_their_clock():
+    import os
+    import subprocess
+    import github
+    with tempfile.TemporaryDirectory() as d:
+        def commit(name, email, when, msg):
+            env = {**os.environ, "GIT_AUTHOR_NAME": name, "GIT_AUTHOR_EMAIL": email, "GIT_AUTHOR_DATE": when,
+                   "GIT_COMMITTER_NAME": name, "GIT_COMMITTER_EMAIL": email, "GIT_COMMITTER_DATE": when}
+            subprocess.run(["git", "-C", d, "commit", "-q", "--allow-empty", "-m", msg], env=env, check=True)
+        subprocess.run(["git", "init", "-q", d], check=True)
+        commit("Jane Doe", "jane@example.org", "2024-05-01T23:30:00+02:00", "Late in Amsterdam")
+        commit("Someone Else", "else@example.org", "2024-05-02T10:00:00+00:00", "Not mine")
+        commit("Jane Doe", "jane@work.example", "2024-05-03T09:00:00Z", "From the work laptop\twith a tab")
+        got = [c for _, c in github.commits(Path(d), "jane/app", {"jane@example.org"}, {"jane doe"})]
+    assert got == [[1714726800, 0, "jane/app", "From the work laptop\twith a tab"], [1714599000, 120, "jane/app", "Late in Amsterdam"]], got
+
+
 if __name__ == "__main__":
     tests = [f for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
     for t in tests:

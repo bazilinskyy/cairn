@@ -152,5 +152,50 @@ function cardSpending(c, eur, card) {
     'where Cairn has you that day (the town most of that day\'s places are in). Away: the days of a trip; at home: all other days. A trip\'s total adds what its stays cost.</p></div>';
 }
 
+// Where you wrote code (code.js): your GitHub commits by country, town, year, hour and trip, and those made in the air
+async function renderCode() {
+  const box = document.getElementById('code-stats');
+  const c = await fetch('/api/code').then(r => (r.ok ? r.json() : null)).catch(() => null);
+  if (!box || !c) return;
+  const card = (label, value, sub = '') => `<div class="stat-card"><div class="label">${label}</div><div class="value">${value}</div>${sub ? `<div class="sub">${sub}</div>` : ''}</div>`;
+  const country = cc => `${flagOf(cc)}${escapeHTML(new Intl.DisplayNames(['en'], { type: 'region' }).of(cc) || cc)}`;
+  const town = t => `${flagOf(t.cc)}<a href="#" class="sp-link" onclick="event.preventDefault(); openCityReport(${t.id})">${escapeHTML(t.name)}</a>`;
+  const trip = t => `<a href="#trip=${dayId(t.id)}" class="sp-link" onclick="event.preventDefault(); openTrip('${dayId(t.id)}')">${escapeHTML(t.name)}</a> <small>${fmtDate(t.start)}</small>`;
+  const bars = (rows, w = 'minmax(0, max-content)') => { const max = Math.max(1, ...rows.map(r => r[1])); return `<div class="curio-bars" style="grid-template-columns: ${w} 1fr max-content">` +
+    rows.map(([label, n, sub]) => `<span>${label}</span><div class="bar" style="width:${Math.max(n ? 1 : 0, n / max * 100)}%"></div><span>${sub ?? n.toLocaleString()}</span>`).join('') + '</div>'; };
+  const inAir = c.air.reduce((n, a) => n + a.commits, 0), abroad = c.countries.filter((x, i) => i > 0).reduce((n, x) => n + x.commits, 0);
+  const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  box.innerHTML = '<div class="chart-section" style="margin-top:24px"><h3>Where you write code</h3><div class="stat-cards curio-cards">' +
+    card('Commits', c.commits.toLocaleString(), `${c.repos} repositories · ${fmtDate(c.first)} – ${fmtDate(c.last)}`) +
+    card('On trips', `${Math.round(c.awayCommits / c.commits * 100)}%`, `${c.awayCommits.toLocaleString()} commits made away from home`) +
+    card('Countries', c.countries.length, c.countries.slice(0, 8).map(x => flagOf(x.cc).trim()).join(' ')) +
+    card('Towns', c.towns.length >= 25 ? '25+' : c.towns.length, c.towns.slice(0, 3).map(t => escapeHTML(t.name)).join(', ')) +
+    (c.farthest ? card('Farthest from home', fmtDist(c.farthest.km), `${town(c.farthest.town)}, ${fmtDate(c.farthest.day)} · ${escapeHTML(c.farthest.repo.split('/')[1] || c.farthest.repo)}`) : '') +
+    (inAir ? card('In the air', inAir, `${c.air.length} flight${c.air.length !== 1 ? 's' : ''}, between take-off and landing`) : '') +
+    card('Time zones', c.zones, 'your computer\'s clock was in') + '</div>' +
+    `<div class="music-cols" style="margin-top:16px"><div><h4>By country</h4>${bars(c.countries.slice(0, 12).map(x => [country(x.cc), x.commits, `${x.commits.toLocaleString()} · ${x.days} d`]))}</div>` +
+    `<div><h4>By year</h4>${bars(c.years.map(y => [y.year, y.commits, `${y.commits.toLocaleString()}${y.away ? ` · ${y.away} away` : ''}`]), '50px')}</div></div>` +
+    `<div class="music-cols" style="margin-top:16px"><div><h4>By hour, on your clock</h4>${bars(c.hours.map((n, h) => [`${String(h).padStart(2, '0')}:00`, n]), '50px')}</div>` +
+    `<div><h4>By weekday</h4>${bars(c.weekdays.map((n, i) => [days[i], n]), '50px')}</div></div>` +
+    `<p style="margin-top:12px"><b>Towns:</b> ${c.towns.map(t => `${town(t)} ${t.commits.toLocaleString()}`).join(' · ')}</p>` +
+    (c.trips.length ? `<h4 style="margin-top:16px">Trips you coded most on</h4>${bars(c.trips.map(t => [trip(t), t.commits]))}` : '') +
+    (c.air.length ? `<p style="margin-top:12px"><b>In the air:</b> ${c.air.map(a => `✈️ ${escapeHTML(a.flight.flight_number)} ${escapeHTML(a.flight.from)} → ${escapeHTML(a.flight.to)} ` +
+      `<small>${fmtDate(a.flight.date)}</small> ${a.commits} <small>(${a.repos.map(r => escapeHTML(r.split('/')[1] || r)).join(', ')})</small>`).join(' · ')}</p>` : '') +
+    `<p class="sp-note">Your commits on GitHub (imports/github.py: every repository you committed to), each on the day of its computer's clock and in the town ` +
+    `Cairn has you in that day (the one most of the day's places are in). Not in the countries and towns: ${(c.commits - c.placed - c.elsewhere).toLocaleString()} on days with no place ` +
+    `(at home, mostly), and ${c.elsewhere.toLocaleString()} made by another computer (its clock not in the time zone you were in: a server, a job running at home); ` +
+    `those are not counted as on trips either. In the air: made between a flight's take-off and landing (its time and duration), on a clock of either end.</p></div>`;
+}
+
+// A town's, country's or trip's commits (code.js): how many, on how many days, and in which repositories
+function codeSection(c, title, what) {
+  if (!c?.commits) return '';
+  return `<div class="chart-section"><h3>${title} · ${c.commits.toLocaleString()} commit${c.commits !== 1 ? 's' : ''}</h3>` +
+    `<p>${c.days} day${c.days !== 1 ? 's' : ''}, ${fmtDate(c.first)}${c.last !== c.first ? ` – ${fmtDate(c.last)}` : ''} · ` +
+    `${c.repos.map(([r, n]) => `<b>${escapeHTML(r.split('/')[1] || r)}</b> <small>${n}</small>`).join(' · ')}` +
+    `${c.towns?.length ? `<br>${c.towns.map(([t, n]) => `${escapeHTML(t)} <small>${n}</small>`).join(' · ')}` : ''}</p><p class="sp-note">${what}</p></div>`;
+}
+
 window.addEventListener('load', () => setTimeout(renderCuriosities, 2000));
 window.addEventListener('load', () => setTimeout(renderSpending, 2500));
+window.addEventListener('load', () => setTimeout(renderCode, 3000));

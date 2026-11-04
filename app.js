@@ -1210,6 +1210,7 @@ app.get('/api/country/:cc', async (req, res) => {
     activities: { count: acts.length, km: Math.round(acts.reduce((n, a) => n + (a.distance || 0), 0)), ids: acts.map(a => a.id) },
     photos: photosHere.length, photo_ids: photosHere.map(p => p[0]),
     climbs: { total: climbsHere.length, done: climbsHere.filter(c => c.times).map(c => ({ id: c.id, name: c.name, ele: c.ele, times: c.times })) },
+    code: code.inCountry(cc),
     music: music.top({ days: new Set(days) })
   });
 });
@@ -1293,6 +1294,7 @@ app.get('/api/city/:id', (req, res) => {
     photos: [...photoDays].map(([day, n]) => ({ day, count: Math.max(1, Math.round(n)) })).sort(sortBy('day')), photo_ids: photoIds,
     timeline: timelineHere.sort(sortBy('start')),
     books: booksRead(from, to).filter(b => b.town?.id === town.id),
+    code: from || to ? null : code.inTown(town.id),
     music: music.top({ days: new Set(days) })
   });
 });
@@ -1557,6 +1559,7 @@ const backups = require('./backup').create({
     ['photo_places.json', PHOTO_PLACES],
     ['checkins.json', path.join(DATA_DIR, 'checkins.json')], ['calendar.json', path.join(DATA_DIR, 'calendar.json')],
     ['spotify.json', SPOTIFY_FILE], ['health.json', HEALTH_FILE], ['trip_covers.json', path.join(DATA_DIR, 'trip_covers.json')],
+    ['github.json', path.join(DATA_DIR, 'github.json')],
     ['transactions.json', path.join(DATA_DIR, 'transactions.json')]
   ].map(([name, file]) => ({ name, file })),
   tracks: path.join(DATA_DIR, 'tracks'), backupsDir: path.join(DATA_DIR, 'backups'), log: m => console.log(m)
@@ -1668,7 +1671,7 @@ function dayTownMap() {
   if (dayTowns.list !== list) {
     const count = new Map();
     list.forEach(p => { const t = townOfAt(p.at, p.city); if (!t) return; const m = count.get(p.day) || new Map(); m.set(t, (m.get(t) || 0) + 1); count.set(p.day, m); });
-    dayTowns = { list, map: new Map([...count].map(([d, m]) => { const t = [...m].sort((x, y) => y[1] - x[1])[0][0]; return [d, { id: t.id, name: t.name, cc: t.cc, lat: t.lat, lon: t.lon }]; })) };
+    dayTowns = { list, map: new Map([...count].map(([d, m]) => { const t = [...m].sort((x, y) => y[1] - x[1])[0][0]; return [d, { id: t.id, name: t.name, cc: t.cc, lat: t.lat, lon: t.lon, tz: t.tz }]; })) };
   }
   return dayTowns.map;
 }
@@ -1918,6 +1921,21 @@ app.get('/api/suggestions/spotify', (_req, res) => {
   }
   res.json(spotifyCache.list);
 });
+// --- Code (code.js): your GitHub commits (imports/github.py) in the towns and countries you wrote them in ---
+const GITHUB_FILE = path.join(DATA_DIR, 'github.json');
+const code = require('./code').create({
+  read: () => readImport(GITHUB_FILE, { commits: [] }), dayTowns: dayTownMap, trips: () => tripStore.list(), flights: () => flights,
+  airports: () => airports, home: () => homePlaces().residence || homePlaces().hometown, km: ground.km
+});
+app.get('/api/code', (_req, res) => res.json(code.summary()));
+// every night, once you have imported your commits: the new ones (the GitHub CLI signed in on this Mac; its cache in
+// ~/.cache/cairn-github makes it a fetch of each repository)
+setInterval(() => {
+  let age = 0;
+  try { age = Date.now() - fs.statSync(GITHUB_FILE).mtimeMs; } catch (_) { return; }
+  if (new Date().getHours() === 4 && age > 20 * 3600e3) py('github.py', outTo('github.json')).then(m => console.log(`[github] ${m}`), e => console.log(`[github] ${e.message}`));
+}, 15 * 60e3);
+
 // --- Apple Wallet (wallet.js): boarding passes, train and bus tickets and tickets to events, read from this Mac ---
 const WALLET_DIR = path.join(DATA_DIR, 'wallet');
 const walletPasses = require('./wallet');
@@ -2120,7 +2138,7 @@ app.post('/api/suggestions/dismiss', (req, res) => {
 app.get('/api/curiosities', (_req, res) => res.json(curiosities.get() || { pending: true }));
 app.get('/api/trips/:id', (req, res) => {
   const t = tripStore.get(req.params.id);
-  return t ? res.json({ ...t, music: music.top({ from: t.start, to: t.end }), spending: spending.forTrip(t.start, t.end), books: booksRead(t.start, t.end), tickets: walletTickets(t.start, t.end) })
+  return t ? res.json({ ...t, music: music.top({ from: t.start, to: t.end }), spending: spending.forTrip(t.start, t.end), books: booksRead(t.start, t.end), tickets: walletTickets(t.start, t.end), code: code.between(t.start, t.end) })
     : res.status(404).json({ error: 'no such trip' });
 });
 

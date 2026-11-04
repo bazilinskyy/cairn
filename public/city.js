@@ -114,6 +114,7 @@ function renderCityReport() {
       `<tr><th>${new Date(m + '-15T12:00:00Z').toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })}</th>` +
       `<td>${v.n.toLocaleString()}</td><td>${v.days}</td></tr>`)), 'From the photo places import; counts per day are spread over a place’s days.');
   }
+  html += codeSection(d.code, 'Code written here', 'Your GitHub commits on the days Cairn has you in this town');
   if (d.music?.plays) html += musicSection(d.music, 'Music played here', 'What you played on Last.fm on your days here');
   if (d.books?.length) html += booksSection(d.books, 'Books finished here', 'From your Goodreads export: where you slept that night, or the town you were in most that day');
   if (d.timeline.length) {

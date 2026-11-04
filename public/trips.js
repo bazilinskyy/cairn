@@ -286,6 +286,7 @@ function renderTrip() {
     ].filter(Boolean).join('<br>');
     const did = [...x.activities.map(id => byId(d.activities, id)).map(a => linkTo(a) + (a.weather ? `<small>${weatherText(a.weather, true)}</small>` : '')),
       ...(d.tickets || []).filter(e => e.day === x.day).map(e => `🎟️ ${escapeHTML(e.title)}`),
+      d.code?.byDay[x.day] ? `💻 ${d.code.byDay[x.day]} commit${d.code.byDay[x.day] !== 1 ? 's' : ''}` : '',
       x.photos ? `📷 ${x.photos}` : ''].filter(Boolean).join('<br>');
     const s = x.stay != null && byId(d.stays, x.stay);
     return `<tr><th>${fmtDate(x.day)}<small>${new Date(x.day + 'T12:00:00Z').toLocaleDateString('en-GB', { weekday: 'short' })}</small></th>` +
@@ -322,6 +323,7 @@ function renderTrip() {
       `<tr><th>${fmtDate(e.day)}${e.time ? ` <small>${e.time}</small>` : ''}</th><td><b>${escapeHTML(e.title)}</b><small>${escapeHTML(e.org || '')}</small></td>` +
       `<td>${escapeHTML(e.venue || '')}</td></tr>`)), 'From your Apple Wallet: concerts, films, museums and events');
   }
+  html += codeSection(d.code, 'Code', 'Your GitHub commits on the trip\'s days, by repository');
   if (d.books?.length) html += booksSection(d.books, 'Books finished', 'From your Goodreads export: where you slept that night, or the town you were in most that day');
   if (climbed.length) {
     html += section('Famous climbs', `<p>${climbed.map(({ c, rides }) => `⛰️ <a href="#" class="sp-link" onclick="event.preventDefault(); openClimb('${c.id}')">${escapeHTML(c.name)}</a>` +

@@ -87,6 +87,7 @@ function renderCountry() {
     html += section(`Famous climbs ridden · ${d.climbs.done.length} of ${d.climbs.total}`, table('<th>Climb</th><th>Height</th><th>Times</th>', d.climbs.done.map(c =>
       `<tr><td><a href="#climb=${c.id}" class="sp-link inline" onclick="event.preventDefault(); openClimb('${c.id}')">${escapeHTML(c.name)}</a></td><td>${c.ele ? fmtHeight(c.ele) : ''}</td><td>${c.times}</td></tr>`)));
   }
+  html += codeSection(d.code, 'Code written here', 'Your GitHub commits on the days Cairn has you in this country, and its towns you wrote them in');
   if (d.music?.plays) html += musicSection(d.music, 'Music played here', 'What you played on Last.fm on your days here');
   document.getElementById('country-body').innerHTML = html;
   hookLinks('country-body');
