@@ -69,7 +69,8 @@ async function renderOnThisDay() {
       ...x.activities.map(a => `${modeTag(sportOf(a.sport))}${linkTo(a)}${a.distance ? ` <small>${fmtDist(a.distance, 1)}</small>` : ''}`),
       x.stay && `${modeTag('stay')}${escapeHTML(x.stay.hotel || x.stay.type || x.stay.place || 'Stay')}${x.stay.hotel && x.stay.place ? ` <small>${escapeHTML(x.stay.place)}</small>` : ''}`,
       x.song && `${modeTag('song')}${escapeHTML(x.song.artist)} – ${escapeHTML(x.song.name)}`,
-      ...x.books.map(b => `${modeTag('book')}finished <i>${escapeHTML(b.title)}</i>`)
+      ...x.books.map(b => `${modeTag('book')}finished <i>${escapeHTML(b.title)}</i>`),
+      ...(x.tickets || []).map(e => `${modeTag('ticket')}${escapeHTML(e.title)}${e.venue ? ` <small>${escapeHTML(e.venue)}</small>` : ''}`)
     ].filter(Boolean);
     const pics = x.photo_ids.length ? `<div class="story-strip">${x.photo_ids.map(id => `<a href="/api/photos/${id}/full" target="_blank" rel="noopener"><img src="/api/photos/${id}/thumb" alt="" loading="lazy"></a>`).join('')}` +
       `${x.photos > x.photo_ids.length ? `<small>${x.photos} photos</small>` : ''}</div>` : '';
@@ -284,6 +285,7 @@ function renderTrip() {
       x.road ? `${(c => (c ? rentalIcon(c) : '🛣️'))(cars.find(c => x.day >= c.start && x.day <= (c.end || c.start)))} ${Math.round(dist(x.road))} ${DU()}` : ''
     ].filter(Boolean).join('<br>');
     const did = [...x.activities.map(id => byId(d.activities, id)).map(a => linkTo(a) + (a.weather ? `<small>${weatherText(a.weather, true)}</small>` : '')),
+      ...(d.tickets || []).filter(e => e.day === x.day).map(e => `🎟️ ${escapeHTML(e.title)}`),
       x.photos ? `📷 ${x.photos}` : ''].filter(Boolean).join('<br>');
     const s = x.stay != null && byId(d.stays, x.stay);
     return `<tr><th>${fmtDate(x.day)}<small>${new Date(x.day + 'T12:00:00Z').toLocaleDateString('en-GB', { weekday: 'short' })}</small></th>` +
@@ -315,6 +317,11 @@ function renderTrip() {
       `<td>${(Math.round(dist(a.distance || 0) * 10) / 10).toLocaleString()}</td><td>${a.elevation ? fmtHeight(a.elevation) : ''}</td></tr>`)));
   }
   if (d.music?.plays) html += musicSection(d.music, 'Soundtrack', 'what you played on Last.fm from the first day to the last');
+  if (d.tickets?.length) {
+    html += section('Tickets', table(['When', 'What', 'Where'], d.tickets.map(e =>
+      `<tr><th>${fmtDate(e.day)}${e.time ? ` <small>${e.time}</small>` : ''}</th><td><b>${escapeHTML(e.title)}</b><small>${escapeHTML(e.org || '')}</small></td>` +
+      `<td>${escapeHTML(e.venue || '')}</td></tr>`)), 'From your Apple Wallet: concerts, films, museums and events');
+  }
   if (d.books?.length) html += booksSection(d.books, 'Books finished', 'From your Goodreads export: where you slept that night, or the town you were in most that day');
   if (climbed.length) {
     html += section('Famous climbs', `<p>${climbed.map(({ c, rides }) => `⛰️ <a href="#" class="sp-link" onclick="event.preventDefault(); openClimb('${c.id}')">${escapeHTML(c.name)}</a>` +

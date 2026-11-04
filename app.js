@@ -1407,6 +1407,17 @@ const imports = require('./uploads').create({
     health: { file: path.join(DATA_DIR, 'health.json'), label: '❤️ Apple Health', accept: '.zip', what: 'Health app → your picture → Export All Health Data: export.zip, as it came',
       note: 'Replaces what was kept. Workouts Garmin or Strava do not have, with their routes; steps on the days Garmin has none.',
       run: files => py('health.py', [files.find(f => /\.zip$/i.test(f)) || files[0], ...outTo('health.json')]) },
+    wallet: { label: '🎫 Apple Wallet', accept: '.pkpass,.zip',
+      get what() { return wallet.available() ? `This Mac's Wallet is read by itself (iCloud keeps every pass there, the expired ones too): ${wallet.list().length} passes. For a phone that shares no Wallet with this Mac: a pass → ⋯ → Share, the .pkpass files`
+        : 'A pass → ⋯ → Share: the .pkpass files (or a zip of them)'; },
+      note: 'Boarding passes give the flights their seats and booking codes, and with train and bus tickets list what may be missing (+ Add → 💡 To check); tickets to events go to their days.',
+      run: async files => {
+        let n = 0;
+        files.forEach(f => (/\.zip$/i.test(f) ? Object.entries(require('./books').unzip(fs.readFileSync(f))).filter(([k]) => /\.pkpass$/i.test(k))
+          .map(([k, buf]) => { const tmp = path.join(require('os').tmpdir(), path.basename(k)); fs.writeFileSync(tmp, buf); return tmp; }) : [f])
+          .forEach(x => { wallet.keep(x); n++; }));
+        return `${n} pass${n !== 1 ? 'es' : ''} kept; ${wallet.list().length} in all`;
+      } },
     ov: { label: '🚆 OV-chipkaart', accept: '.csv', what: 'ov-chipkaart.nl → Mijn OV-chip → card → Reishistorie, as CSV (18 months back at most, per card)',
       note: 'Updates the routes\' counts; adds nothing twice.', run: files => py('ovchipkaart.py', [...files, '--cairn', `http://127.0.0.1:${config.port}`]) },
     goodreads: { file: path.join(DATA_DIR, 'books.json'), label: '📚 Goodreads', accept: '.csv,.zip', what: 'My Books → Import and export → Export library: goodreads_library_export.csv; or Account settings → Download your data: the zip, as it came',
@@ -1639,7 +1650,7 @@ app.get('/api/coming', async (_req, res) => res.json(await prep.coming()));
 const onThisDay = require('./onthisday').create({
   towns: loadTowns, cities, days: (from, to) => placesAndDays(from, to), trips: () => tripStore.list(), flights: () => flights,
   airports: () => airports, groundTrips: () => trips, stays: () => stays, activities: () => activities.list(), photos: datedPhotos,
-  music: range => music.top(range), books: booksRead, enabled: () => readImport(HOME_FILE, {}).onthisday_discord === true,
+  music: range => music.top(range), books: booksRead, tickets: (from, to) => walletTickets(from, to), enabled: () => readImport(HOME_FILE, {}).onthisday_discord === true,
   discord, sentFile: path.join(DATA_DIR, 'onthisday_sent.json'), log: m => console.log(m)
 });
 app.get('/api/onthisday', (req, res) => {  // ?date=YYYY-MM-DD: that day instead of today (the browser's own date)
@@ -1907,6 +1918,83 @@ app.get('/api/suggestions/spotify', (_req, res) => {
   }
   res.json(spotifyCache.list);
 });
+// --- Apple Wallet (wallet.js): boarding passes, train and bus tickets and tickets to events, read from this Mac ---
+const WALLET_DIR = path.join(DATA_DIR, 'wallet');
+const walletPasses = require('./wallet');
+const wallet = walletPasses.create({ dir: () => config.wallet_dir ?? 'auto', uploads: WALLET_DIR,
+  names: () => config.tripmail?.passenger_names || [], log: m => console.log(m) });
+// Each pass against what Cairn has: a boarding pass with its flight (the same route, a day either side; one with only
+// its day of the year on that day of any year), a train or bus ticket with a trip that day of the same kind or between
+// the same towns. Yours that match nothing are the flights and trips that may be missing (the passes of the people you
+// travelled with only match); tickets to events go to their days
+let walletMemo = { passes: null, version: -1, value: null };
+function walletMatched() {
+  const passes = wallet.list();
+  if (walletMemo.passes === passes && walletMemo.version === dataVersion) return walletMemo.value;
+  const byRoute = new Map();
+  flights.forEach(f => { const k = `${f.from}|${f.to}`; if (!byRoute.has(k)) byRoute.set(k, []); byRoute.get(k).push(f); });
+  const town = n => (n || '').normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s*\(.*?\)/g, '').split(/[\s,/-]+/)[0];
+  const onDay = new Map();
+  trips.forEach(t => { const d = (t.date || '').slice(0, 10); if (!onDay.has(d)) onDay.set(d, []); onDay.get(d).push(t); });
+  // the flight Cairn has a week or less from a pass's day with its number or route: a wrong day there, or a rebooking
+  const fn = x => (x || '').replace(/\s+/g, '').toUpperCase();
+  const closeFlight = p => {
+    const f = flights.filter(x => Math.abs(Date.parse((x.date || '').slice(0, 10)) - Date.parse(p.day)) <= 7 * 864e5
+      && ((p.flight_number && fn(x.flight_number) === fn(p.flight_number)) || (x.from === p.from && x.to === p.to)))
+      .sort((a, b) => Math.abs(Date.parse(a.date.slice(0, 10)) - Date.parse(p.day)) - Math.abs(Date.parse(b.date.slice(0, 10)) - Date.parse(p.day)))[0];
+    return f ? { id: f.id, date: f.date, flight_number: f.flight_number || '', from: f.from, to: f.to } : null;
+  };
+  const matched = [], missing = new Map(), ground = new Map();
+  for (const p of passes) {
+    if (p.kind === 'flight') {
+      const near = x => { const t = Date.parse((x.date || '').slice(0, 10)); return p.day ? Math.abs(t - Date.parse(p.day)) <= 864e5
+        : Math.abs(t - walletPasses.dayOfYear(new Date(t).getUTCFullYear(), p.julian)) <= 864e5; };
+      const f = (byRoute.get(`${p.from}|${p.to}`) || []).find(near);
+      if (f) matched.push({ pass: p, flight: f });
+      else if (p.yours) {
+        const key = `wallet|flight|${p.day || `day${p.julian}`}|${p.from}|${p.to}`;  // no year on the pass: its day of the year
+        if (!missing.has(key)) missing.set(key, { key, day: p.day, julian: p.julian, time: p.date.slice(11, 16), from: p.from, to: p.to,
+          from_city: airports[p.from]?.city || p.from, to_city: airports[p.to]?.city || p.to, flight_number: p.flight_number, seat: p.seat, class: p.class, booking: p.booking, org: p.org,
+          close: p.day ? closeFlight(p) : null });
+      }
+    } else if (p.kind !== 'event' && p.yours && p.day) {
+      const same = (onDay.get(p.day) || []).some(t => t.mode === p.kind || [t.from, t.to].some(x => [p.from, p.to].some(y => town(x) && town(x) === town(y))));
+      const key = `wallet|ground|${p.day}|${town(p.from)}|${town(p.to)}`;
+      if (!same && !ground.has(key)) ground.set(key, { key, day: p.day, time: p.date.slice(11, 16), mode: p.kind, from: p.from, to: p.to, org: p.org });
+    }
+  }
+  walletMemo = { passes, version: dataVersion, value: { passes, matched, missing: [...missing.values()], ground: [...ground.values()] } };
+  return walletMemo.value;
+}
+// what your passes add to the flights Cairn has: the seat, the cabin and the booking code where a flight has none
+const walletFills = () => walletMatched().matched.filter(m => m.pass.yours).map(({ pass: p, flight: f }) => ({ f,
+  changes: Object.fromEntries([['seat', p.seat], ['class', p.class], ['booking', p.booking]].filter(([k, v]) => v && !(f[k] || '').trim())) }))
+  .filter(x => Object.keys(x.changes).length);
+// the tickets to events of a period: [{ day, time, title, venue, org, at }]
+const walletTickets = (from, to) => {
+  const seen = new Set();
+  return wallet.list().filter(p => p.kind === 'event' && (!from || p.day >= from) && (!to || p.day <= to))
+    .filter(p => { const k = `${p.date}|${p.title}`; if (seen.has(k)) return false; seen.add(k); return true; })
+    .map(p => ({ day: p.day, time: p.date.slice(11, 16), title: p.title, venue: p.venue, org: p.org, at: p.at })).sort((a, b) => a.day.localeCompare(b.day));
+};
+app.get('/api/suggestions/wallet', (_req, res) => {
+  const m = walletMatched(), no = dismissedSet(), fills = walletFills();
+  res.json({ available: wallet.available(), passes: m.passes.length, matched: m.matched.length, flights: m.missing.filter(x => !no.has(x.key)),
+    ground: m.ground.filter(x => !no.has(x.key)), fill: { flights: fills.length, seats: fills.filter(x => x.changes.seat).length, bookings: fills.filter(x => x.changes.booking).length } });
+});
+// the seats, cabins and booking codes of your boarding passes into the flights that have none (never over what is there)
+app.post('/api/wallet/fill', (_req, res) => {
+  const fills = walletFills();
+  if (fills.length) {
+    fs.mkdirSync(path.join(DATA_DIR, 'backups'), { recursive: true });
+    fs.copyFileSync(FLIGHTS_FILE, path.join(DATA_DIR, 'backups', `flights.before-wallet.${new Date().toISOString().replace(/[:.]/g, '-')}.json`));
+    fills.forEach(({ f, changes }) => Object.assign(f, changes));
+    saveFlights();
+  }
+  res.json({ flights: fills.length });
+});
+app.get('/api/wallet/tickets', (req, res) => res.json(walletTickets(req.query.from || '', req.query.to || '')));
+
 // Your home countries, and every 'cc|day' Cairn puts you in a country (from every place of every day)
 function countryDays() {
   const memo = new Map(), ccAt = at => { const k = at[0].toFixed(2) + ',' + at[1].toFixed(2); if (!memo.has(k)) memo.set(k, cities.townAt(towns, at[0], at[1])?.cc || null); return memo.get(k); };
@@ -2032,7 +2120,7 @@ app.post('/api/suggestions/dismiss', (req, res) => {
 app.get('/api/curiosities', (_req, res) => res.json(curiosities.get() || { pending: true }));
 app.get('/api/trips/:id', (req, res) => {
   const t = tripStore.get(req.params.id);
-  return t ? res.json({ ...t, music: music.top({ from: t.start, to: t.end }), spending: spending.forTrip(t.start, t.end), books: booksRead(t.start, t.end) })
+  return t ? res.json({ ...t, music: music.top({ from: t.start, to: t.end }), spending: spending.forTrip(t.start, t.end), books: booksRead(t.start, t.end), tickets: walletTickets(t.start, t.end) })
     : res.status(404).json({ error: 'no such trip' });
 });
 

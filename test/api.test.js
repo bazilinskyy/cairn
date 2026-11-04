@@ -28,7 +28,7 @@ before(async () => {
   fs.copyFileSync(path.join(ROOT, 'activities.js'), path.join(dir, 'activities.js'));
   fs.copyFileSync(path.join(ROOT, 'regions.js'), path.join(dir, 'regions.js'));
   fs.copyFileSync(path.join(ROOT, 'country-lists.json'), path.join(dir, 'country-lists.json'));
-  ['climbs.js', 'ascents.js', 'efforts.js', 'climbs.json', 'climbs_extra.json', 'photos.js', 'climb_records.json', 'trips.js', 'weather.js', 'stats.js', 'lastfm.js', 'suggestions.js', 'backup.js', 'albums.js', 'things.js', 'todotrips.js', 'prep.js', 'spending.js', 'review.js', 'bases.js', 'books.js', 'uploads.js', 'report.js', 'onthisday.js', 'tripexport.js'].forEach(f => fs.copyFileSync(path.join(ROOT, f), path.join(dir, f)));
+  ['climbs.js', 'ascents.js', 'efforts.js', 'climbs.json', 'climbs_extra.json', 'photos.js', 'climb_records.json', 'trips.js', 'weather.js', 'stats.js', 'lastfm.js', 'suggestions.js', 'backup.js', 'albums.js', 'things.js', 'todotrips.js', 'prep.js', 'spending.js', 'review.js', 'bases.js', 'books.js', 'uploads.js', 'report.js', 'onthisday.js', 'tripexport.js', 'wallet.js'].forEach(f => fs.copyFileSync(path.join(ROOT, f), path.join(dir, f)));
   fs.copyFileSync(path.join(ROOT, 'default.config'), path.join(dir, 'default.config'));
   fs.cpSync(path.join(ROOT, 'public'), path.join(dir, 'public'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'data'));
@@ -44,7 +44,7 @@ before(async () => {
   const town = (id, name, lat, lon, cc, pop) => [id, name, name, '', lat, lon, 'P', 'PPLA', cc, '', '', '', '', '', pop, '', '', 'Europe/X', '2024-01-01'].join('\t');
   fs.writeFileSync(path.join(dir, 'data', 'cities1000.txt'), [town(710735, 'Chernihiv', 51.505, 31.287, 'UA', 282747),
     town(710719, 'Chernivtsi', 48.292, 25.936, 'UA', 264298), town(2756253, 'Eindhoven', 51.441, 5.478, 'NL', 235691)].join('\n'));
-  fs.writeFileSync(path.join(dir, 'config'), JSON.stringify({ port: PORT, ground_lookups: false, photos_write_back: false }));
+  fs.writeFileSync(path.join(dir, 'config'), JSON.stringify({ port: PORT, ground_lookups: false, photos_write_back: false, wallet_dir: path.join(dir, 'passes') }));
   fs.writeFileSync(path.join(dir, 'secret'), '{}');
   server = spawn(process.execPath, ['app.js'], {
     cwd: dir, env: { ...process.env, NODE_PATH: path.join(ROOT, 'node_modules') }, stdio: 'ignore',
@@ -566,4 +566,41 @@ test('days per country per year, and the Schengen count; a trip as KML, GPX and 
   await call('PUT', `/api/trips/${trip.id}/cover`, { photo: null });
   assert.strictEqual((await (await call('GET', '/api/trips')).json()).find(t => t.id === trip.id).cover, null);
   await call('DELETE', `/api/stays/${stay.id}`);
+});
+
+test('Wallet: boarding passes give their flights seats and booking codes, list the flights and trips missing; tickets on their days', async () => {
+  const pass = (name, d, enc) => {
+    const p = path.join(dir, 'passes', `${name}.pkpass`);
+    fs.mkdirSync(p, { recursive: true });
+    fs.writeFileSync(path.join(p, 'pass.json'), Buffer.from(JSON.stringify(d), enc || 'utf8'));
+  };
+  // IATA's barcode: name, booking, from, to, airline, flight, day of the year, cabin, seat, ...
+  const bcbp = (pnr, from, to, num, julian, seat) => `M1${'EXAMPLE/ANN'.padEnd(20)}E${pnr.padEnd(7)}${from}${to}KL ${num.padStart(4, '0')} ${julian}Y${seat}0012 100`;
+  const air = (date, msg) => ({ formatVersion: 1, serialNumber: msg.slice(22, 36) + (date || ''), passTypeIdentifier: 'pass.test', organizationName: 'KLM',
+    ...(date && { relevantDate: date }), barcode: { message: msg, format: 'PKBarcodeFormatAztec' }, boardingPass: { transitType: 'PKTransitTypeAir' } });
+  const there = await (await call('POST', '/api/flights', { date: '2031-11-16 16:10:00', from: 'MAD', to: 'LIS', flight_number: 'KL1234' })).json();
+  const back = await (await call('POST', '/api/flights', { date: '2031-11-20 10:00:00', from: 'LIS', to: 'MAD', flight_number: 'KL1235' })).json();
+  pass('kl1234', air('2031-11-16T16:10:00+01:00', bcbp('ABC123', 'MAD', 'LIS', '1234', '320', '012A')));
+  pass('kl1235', air('', bcbp('DEF456', 'LIS', 'MAD', '1235', '324', '003C')), 'utf16le');  // no date: its day of the year; UTF-16
+  pass('later', air('2031-11-18T16:10:00+01:00', bcbp('GHI789', 'MAD', 'LIS', '1234', '322', '014B')));  // Cairn has it two days off
+  pass('missing', air('2030-03-01T08:00:00+01:00', bcbp('JKL012', 'MAD', 'AMS', '0601', '060', '021F')));
+  pass('train', { formatVersion: 1, serialNumber: 't1', passTypeIdentifier: 'pass.rail', organizationName: 'Comboios', relevantDate: '2030-03-02T10:00:00+00:00',
+    boardingPass: { transitType: 'PKTransitTypeTrain', primaryFields: [{ key: 'origin', label: 'origin_label', value: 'LISBOA ORIENTE' }, { key: 'destination', label: 'PORTO', value: '13:00' }] } });
+  pass('fado', { formatVersion: 1, serialNumber: 'e1', passTypeIdentifier: 'pass.event', organizationName: 'Casa', relevantDate: '2031-11-17T20:00:00+00:00',
+    eventTicket: { primaryFields: [{ key: 'event', value: 'Fado night' }], secondaryFields: [{ key: 'venue', value: 'Casa do Fado\nRua 1' }] } });
+  const d = await (await call('GET', '/api/suggestions/wallet')).json();
+  assert.deepStrictEqual([d.passes, d.matched, d.fill], [6, 2, { flights: 2, seats: 2, bookings: 2 }]);
+  assert.deepStrictEqual(d.flights.map(x => [x.day, x.time, x.flight_number, x.seat, x.close?.id ?? null]), [['2031-11-18', '16:10', 'KL1234', '14B', there.id], ['2030-03-01', '08:00', 'KL601', '21F', null]]);
+  assert.deepStrictEqual(d.ground.map(x => [x.day, x.mode, x.from, x.to]), [['2030-03-02', 'train', 'Lisboa Oriente', 'Porto']]);
+  assert.deepStrictEqual((await (await call('GET', '/api/wallet/tickets?from=2031-11-16&to=2031-11-20')).json()).map(t => [t.day, t.time, t.title, t.venue]),
+    [['2031-11-17', '20:00', 'Fado night', 'Casa do Fado']]);
+  await call('POST', '/api/suggestions/dismiss', { key: d.flights[1].key });
+  assert.strictEqual((await (await call('GET', '/api/suggestions/wallet')).json()).flights.length, 1);
+  assert.deepStrictEqual(await (await call('POST', '/api/wallet/fill', {})).json(), { flights: 2 });
+  const onDisk = JSON.parse(fs.readFileSync(path.join(dir, 'data', 'flights.json'), 'utf8'));
+  assert.deepStrictEqual([there, back].map(x => onDisk.find(f => f.id === x.id)).map(f => [f.seat, f.class, f.booking]), [['12A', 'Y', 'ABC123'], ['3C', 'Y', 'DEF456']]);
+  assert.ok(fs.readdirSync(path.join(dir, 'data', 'backups')).some(n => n.startsWith('flights.before-wallet.')));
+  assert.strictEqual((await (await call('GET', '/api/suggestions/wallet')).json()).fill.flights, 0);  // never over what is there
+  fs.rmSync(path.join(dir, 'passes'), { recursive: true });
+  for (const f of [there, back]) await call('DELETE', `/api/flights/${f.id}`);
 });

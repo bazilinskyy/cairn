@@ -976,6 +976,7 @@
               <th data-col="date">Date</th>
               <th data-col="route">Route</th>
               <th data-col="flight_number">Flight</th>
+              <th data-col="seat">Seat</th>
               <th data-col="airline">Airline</th>
               <th data-col="distance">Distance</th>
               <th data-col="duration">Duration</th>
@@ -1210,7 +1211,7 @@ const groundModes = { train: '🚆 Trains', commute: '🔁 Commutes', bus: '🚌
 const TRAVEL_MODES = {
   flight: ['✈️', '--accent'], train: ['🚆', '--train'], commute: ['🔁', '--commute'], bus: ['🚌', '--bus'], ferry: ['⛴️', '--ferry'], hitch: ['👍', '--hitch'],
   drive: ['🚙', '--drive'], car: ['🚗', '--car'], scooter: ['🛵', '--car'], road: ['🛣️', '--timeline'], move: ['📍', '--photo'],
-  ride: ['🚴', '--ride'], run: ['🏃', '--run'], walk: ['🥾', '--walk'], sport: ['🏅', '--sport'], stay: ['🏨', '--stay'], photo: ['📷', '--photo'], song: ['🎵', '--book'], book: ['📚', '--book']
+  ride: ['🚴', '--ride'], run: ['🏃', '--run'], walk: ['🥾', '--walk'], sport: ['🏅', '--sport'], stay: ['🏨', '--stay'], photo: ['📷', '--photo'], song: ['🎵', '--book'], book: ['📚', '--book'], ticket: ['🎟️', '--book']
 };
 const modeTag = k => `<span class="mode-tag" style="--c: var(${(TRAVEL_MODES[k] || TRAVEL_MODES.bus)[1]})">${(TRAVEL_MODES[k] || TRAVEL_MODES.bus)[0]}</span>`;
 const groundLayer = Object.fromEntries(Object.keys(groundModes).map(m => [m, L.layerGroup()]));
@@ -2121,6 +2122,7 @@ function renderTable(filter = '') {
         <span class="airport-code" style="cursor:pointer" title="Airport page" data-iata="${escapeHTML(f.to || '')}">${escapeHTML(f.to || '—')}</span>
       </td>
       <td class="dim">${escapeHTML(f.flight_number || '—')}</td>
+      <td class="dim"${f.booking ? ` title="Booking ${escapeHTML(f.booking)}"` : ''}>${escapeHTML(f.seat || '—')}${f.class && f.class !== 'Y' ? ` <small>${{ F: 'first', C: 'business', P: 'premium' }[f.class] || ''}</small>` : ''}</td>
       <td>${escapeHTML(f.airline || '—')}</td>
       <td class="dim">${f.distance ? fmtDist(f.distance) : '—'}</td>
       <td class="dim">${escapeHTML(f.duration || '—')}</td>

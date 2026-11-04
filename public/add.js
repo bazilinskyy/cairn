@@ -103,13 +103,14 @@ function hookStayForm() {
 async function renderSuggestions() {
   const list = await fetch('/api/suggestions').then(r => (r.ok ? r.json() : [])).catch(() => []);
   const box = document.getElementById('add-other');
-  box.innerHTML = '<div id="todo-suggestions"></div><div id="tripdoc-suggestions"></div><div id="album-suggestions"></div><div id="album-places"></div><div id="payment-suggestions"></div><div id="spotify-suggestions"></div><div id="gap-suggestions"></div><div id="leg-suggestions"></div>';
+  box.innerHTML = '<div id="todo-suggestions"></div><div id="tripdoc-suggestions"></div><div id="album-suggestions"></div><div id="album-places"></div><div id="payment-suggestions"></div><div id="spotify-suggestions"></div><div id="wallet-suggestions"></div><div id="gap-suggestions"></div><div id="leg-suggestions"></div>';
   renderTodoSuggestions();
   renderTripdocSuggestions();
   renderAlbumSuggestions();
   renderAlbumPlaces();
   renderPaymentSuggestions();
   renderSpotifySuggestions();
+  renderWalletSuggestions();
   renderGapSuggestions();
   const legs = document.getElementById('leg-suggestions');
   if (!list.length) { legs.innerHTML = '<p class="subtitle">Nothing to suggest: every move your photos show is already connected.</p>'; return; }
@@ -349,6 +350,86 @@ async function renderSpotifySuggestions() {
     await dismissKey(row.dataset.key);
     row.remove();
     if (!box.querySelector('.sugg')) box.innerHTML = '';
+  }));
+}
+
+// --- your Apple Wallet: boarding passes and train and bus tickets Cairn has no flight or trip for, and the seats and
+// booking codes of the boarding passes for the flights it has ---
+
+async function renderWalletSuggestions() {
+  const box = document.getElementById('wallet-suggestions');
+  const d = await fetch('/api/suggestions/wallet').then(r => (r.ok ? r.json() : null)).catch(() => null);
+  if (!box || !d || (!d.flights.length && !d.ground.length && !d.fill.flights)) { if (box) box.innerHTML = ''; return; }
+  const day = x => (x.day ? `${fmtDate(x.day)}${x.time ? ` ${x.time}` : ''}` : `day ${x.julian} of a year not on the pass`);
+  const no = '<button class="btn btn-ghost" data-no-wallet title="Not taken: cancelled, or someone else\'s">✕</button>';
+  let html = `<h3 class="sugg-title">Your Wallet</h3><p class="subtitle">The ${d.passes} passes in this Mac's Wallet: ${d.matched} boarding passes are flights Cairn has.</p>`;
+  if (d.fill.flights) html += `<div class="sugg-group"><h4><span>🎫 Seats and booking codes for ${d.fill.flights} flight${d.fill.flights > 1 ? 's' : ''}` +
+    ` (${d.fill.seats} seats, ${d.fill.bookings} booking codes)</span><button class="btn btn-primary" data-wallet-fill>Add them</button></h4>` +
+    '<small class="sp-note">From your own boarding passes, onto the flights that have none; nothing there is changed. flights.json is copied to data/backups/ first.</small></div>';
+  if (d.flights.length) html += `<h3 class="sugg-title">Boarding passes with no flight</h3><p class="subtitle">Your boarding passes Cairn has no flight for (${d.flights.length}). ` +
+    'Add the ones you flew; ✕ the ones cancelled. When Cairn has the flight a few days off, its day there may be wrong, or it was rebooked.</p>' +
+    `<div class="sugg-group">${d.flights.map(x => `<div class="sugg" data-key="${escapeHTML(x.key)}"><div class="pics"><span class="pic-icon">✈️</span></div>` +
+      `<div><b>${escapeHTML(x.from_city)} (${escapeHTML(x.from)}) → ${escapeHTML(x.to_city)} (${escapeHTML(x.to)})</b><small>${day(x)} · ${escapeHTML(x.flight_number)}` +
+      `${x.seat ? ` · seat ${escapeHTML(x.seat)}` : ''} · ${escapeHTML(x.org)}</small>` +
+      (x.close ? `<small>Cairn has ${escapeHTML(x.close.flight_number || `${x.close.from} → ${x.close.to}`)} on ${fmtDate(x.close.date)}</small>` : '') + '</div>' +
+      `<div class="acts">${x.close ? `<button class="btn btn-primary" data-wallet-move title="Its day as on the boarding pass">Move to ${fmtDate(x.day)}</button>` : ''}` +
+      `<button class="btn ${x.close ? 'btn-ghost' : 'btn-primary'}" data-wallet-add>Add</button>${no}</div></div>`).join('')}</div>`;
+  if (d.ground.length) html += `<h3 class="sugg-title">Train and bus tickets with no trip</h3><p class="subtitle">Your tickets in Wallet on days Cairn has no train or bus like them (${d.ground.length}).</p>` +
+    `<div class="sugg-group">${d.ground.map(x => `<div class="sugg" data-key="${escapeHTML(x.key)}"><div class="pics"><span class="pic-icon">${(MODES[x.mode] || '🚌').split(' ')[0]}</span></div>` +
+      `<div><b>${escapeHTML(x.from)} → ${escapeHTML(x.to)}</b><small>${day(x)} · ${escapeHTML(x.org)}</small></div>` +
+      `<div class="acts"><button class="btn btn-primary" data-wallet-ride>Add</button>${no}</div></div>`).join('')}</div>`;
+  box.innerHTML = html;
+  const byKey = Object.fromEntries([...d.flights, ...d.ground].map(x => [x.key, x]));
+  const gone = row => { const g = row.parentNode; row.remove(); if (!g.querySelector('.sugg')) { g.previousElementSibling?.remove(); g.previousElementSibling?.remove(); g.remove(); } };
+  box.querySelector('[data-wallet-fill]')?.addEventListener('click', async e => {
+    e.target.disabled = true;
+    const r = await post('/api/wallet/fill', {});
+    toast(`Seats and booking codes added to ${r.flights} flight${r.flights !== 1 ? 's' : ''}`);
+    allFlights = await fetch('/api/flights').then(x => x.json());
+    renderTable(document.getElementById('search').value);
+    renderWalletSuggestions();
+  });
+  box.querySelectorAll('[data-no-wallet]').forEach(b => b.addEventListener('click', async () => { const row = b.closest('.sugg'); await dismissKey(row.dataset.key); gone(row); }));
+  box.querySelectorAll('[data-wallet-move]').forEach(b => b.addEventListener('click', async () => {
+    const row = b.closest('.sugg'), x = byKey[row.dataset.key];
+    const r = await fetch(`/api/flights/${x.close.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ date: `${x.day} ${x.time || x.close.date.slice(11, 16) || '12:00'}:00`.slice(0, 19) }) });
+    if (!r.ok) return toast('Not moved', 'error');
+    const f = await r.json(), i = allFlights.findIndex(y => y.id === f.id);
+    if (i >= 0) allFlights[i] = f;
+    renderTable(document.getElementById('search').value);
+    redrawMap();
+    toast(`Moved: ${f.flight_number || `${f.from} → ${f.to}`} to ${fmtDate(x.day)}`);
+    gone(row);
+  }));
+  box.querySelectorAll('[data-wallet-add]').forEach(b => b.addEventListener('click', async () => {
+    const row = b.closest('.sugg'), x = byKey[row.dataset.key];
+    if (!x.day) {  // no year on the pass: the flight form, its year left to you
+      showAddKind('flight');
+      document.getElementById('in-from').value = x.from;
+      document.getElementById('in-to').value = x.to;
+      document.getElementById('in-flight-number').value = x.flight_number;
+      return toast(`${x.flight_number} ${x.from} → ${x.to}: its day and year, then Save`);
+    }
+    const flight = { date: `${x.day} ${x.time || '12:00'}:00`, from: x.from, to: x.to, flight_number: x.flight_number, airline: x.org, plane: '', duration: '',
+      seat: x.seat, seat_type: '', class: x.class, booking: x.booking, reason: '', registration: '', trip: '', note: 'From Apple Wallet' };
+    let r = await fetch('/api/flights', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(flight) });
+    if (r.status === 409) r = await fetch('/api/flights', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...flight, force: true }) });
+    if (!r.ok) return toast('Not added', 'error');
+    allFlights.unshift(await r.json());
+    renderTable(document.getElementById('search').value);
+    redrawMap();
+    await dismissKey(x.key);
+    toast(`Added: ${x.flight_number} ${x.from} → ${x.to}, ${fmtDate(x.day)}`);
+    gone(row);
+  }));
+  box.querySelectorAll('[data-wallet-ride]').forEach(b => b.addEventListener('click', async () => {
+    const row = b.closest('.sugg'), x = byKey[row.dataset.key];
+    allTrips.push(await post('/api/ground', { mode: x.mode, from: x.from, to: x.to, date: `${x.day} ${x.time || '12:00'}:00`, source: 'wallet', event_id: x.key }));
+    drawGround();
+    await dismissKey(x.key);
+    toast(`Added: ${x.from} → ${x.to}, ${fmtDate(x.day)}. Its places are looked up in a minute.`);
+    gone(row);
   }));
 }
 

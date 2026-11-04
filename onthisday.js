@@ -1,7 +1,8 @@
 'use strict';
 // On this day: where you were on today's date in the years before, and what you did: the trip it was part of, the
-// towns, flights, trains, buses and ferries, where you slept, sports, photos, the song you played most and the book
-// you finished. For the Trips tab, and (when turned on in the settings) every morning at 08:00 to the alerts channel.
+// towns, flights, trains, buses and ferries, where you slept, sports, photos, the song you played most, the book you
+// finished and the tickets in your Wallet (a concert, a film). For the Trips tab, and (when turned on in the settings)
+// every morning at 08:00 to the alerts channel.
 
 const fs = require('fs');
 
@@ -9,8 +10,9 @@ const SEND_AT = 8 * 60;  // minutes after midnight, local time
 const dayOf = t => new Date(t * 1000).toISOString().slice(0, 10);
 
 // sources: getters for the server's lists (as for trips.js); towns() the town grid, or null without the town list;
-// days(from, to) every place of every day; music(range) the top songs; books(from, to) the books finished
-function create({ towns, cities, days, trips, flights, airports, groundTrips, stays, activities, photos, music = () => null, books = () => [],
+// days(from, to) every place of every day; music(range) the top songs; books(from, to) the books finished;
+// tickets(from, to) the tickets to events
+function create({ towns, cities, days, trips, flights, airports, groundTrips, stays, activities, photos, music = () => null, books = () => [], tickets = () => [],
   enabled = () => false, discord, sentFile, log = console.log }) {
 
   // the date (YYYY-MM-DD) in each year before, newest first: 29 February falls on the 28th in other years
@@ -46,10 +48,11 @@ function create({ towns, cities, days, trips, flights, airports, groundTrips, st
       const shots = (pics.get(d) || []).sort((a, b) => a[1] - b[1]);
       const song = music({ from: d, to: d })?.tracks?.[0] || null;
       const read = books(d, d).map(b => ({ title: b.title, author: b.author || '' }));
-      if (!townList.length && !flown.length && !rode.length && !stay && !sport.length && !shots.length && !read.length) continue;
+      const went = tickets(d, d).map(e => ({ title: e.title, venue: e.venue }));
+      if (!townList.length && !flown.length && !rode.length && !stay && !sport.length && !shots.length && !read.length && !went.length) continue;
       out.push({ day: d, years: +today.slice(0, 4) - +d.slice(0, 4), trip: trip ? { id: trip.id, name: trip.name, countries: trip.countries } : null,
         towns: townList, flights: flown, ground: rode, stay: stay ? { id: stay.id, place: stay.place || '', hotel: stay.hotel || '', type: stay.type || '' } : null,
-        activities: sport, photos: shots.length, photo_ids: pickSpread(shots, 6).map(p => p[0]), song: song && { artist: song.artist, name: song.name }, books: read });
+        activities: sport, photos: shots.length, photo_ids: pickSpread(shots, 6).map(p => p[0]), song: song && { artist: song.artist, name: song.name }, books: read, tickets: went });
     }
     memo = { key, value: out };
     return out;
@@ -73,7 +76,8 @@ function create({ towns, cities, days, trips, flights, airports, groundTrips, st
         ...x.activities.map(a => `🏃 ${a.name}${a.distance ? ` (${a.distance} km)` : ''}`),
         x.photos && `📷 ${x.photos}`,
         x.song && `🎧 ${x.song.artist} – ${x.song.name}`,
-        ...x.books.map(b => `📚 finished ${b.title}`)
+        ...x.books.map(b => `📚 finished ${b.title}`),
+        ...(x.tickets || []).map(e => `🎟️ ${e.title}${e.venue ? ` at ${e.venue}` : ''}`)
       ].filter(Boolean);
       return `• ${x.day.slice(0, 4)} (${x.years} year${x.years !== 1 ? 's' : ''} ago)${where ? `: ${where}` : ''}${bits.length ? ` · ${bits.join(' · ')}` : ''}`;
     };

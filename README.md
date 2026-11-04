@@ -251,6 +251,7 @@ No account is needed for any of these; each is asked at most about once a second
 | `public/placephotos.js`, `imports/photos_place.py` | placing photos with no place by hand, and writing those places into the Photos library |
 | `imports/checkins.py`, `calendar_events.py`, `bank.py`, `ovchipkaart.py`, `spotify.py`, `health.py` | data downloads: check-ins, posts and rides; calendars; bank payments; OV-chipkaart journeys; Spotify's streaming history; Apple Health's workouts and steps |
 | `things.js`, `todotrips.js` | your Things to-dos (read-only), and the trips they mention that nothing else knows |
+| `wallet.js` | your Apple Wallet's passes (read-only): boarding passes, train and bus tickets, tickets to events |
 | `backup.js` | a backup of all imported and added data, and restoring one |
 | `albums.js` | trips the names of your Google Photos albums give, for albums without places |
 | `suggestions.js`, `public/add.js` | the Add tab beyond flights: trains, buses, ferries and stays by hand, and the legs your photos suggest |
@@ -315,6 +316,7 @@ cp default.secret secret
 | `airports_file` | `data/airports.dat` | OpenFlights airport database, downloaded on first run |
 | `csv_backup` | `""` | openflights.org CSV export to import on first run (see [Importing](#importing-from-openflightsorg)) |
 | `ground_file`, `stays_file`, `photos_file`, `timeline_file`, `strava_file`, `strava_token_file` | `data/…` | where the map's other data is kept (see [Data](#data)) |
+| `wallet_dir` | `"auto"` | `"auto"` to read this Mac's Apple Wallet (read-only; iCloud keeps the passes in `~/Library/Passes/Cards`); a folder of passes; `""` for none |
 | `things_db` | `""` | `"auto"` to read your Things 3 to-dos on this Mac (read-only), for the coming trips' checks and the trips your to-dos mention; or the path of its `main.sqlite` |
 | `takeout_photos_dir` | `""` | your Google Takeout's Google Photos folder, for the album suggestions when there is no `data/photo_albums.json` (the Photos library's albums, from `imports/photos.py --albums`; see [Adding by hand, and from your photos](#adding-by-hand-and-from-your-photos)) |
 | `chrome` | found | the Chrome or Chromium that prints the report as a PDF (see [Report (PDF)](#report-pdf)) |
@@ -764,6 +766,7 @@ The easiest way is **⚙️ Settings → Imports**: a row per source (these, and
 | **Bank and card payments** | Revolut: Statement → CSV; ING, ABN AMRO, Rabobank, bunq: *Download transactions* as CSV | `python imports/bank.py ~/Downloads/*.csv` |
 | **Spotify**: every song you played, and the country you played it in | Account → Privacy → *Download your data* → **Extended streaming history** (it comes within 30 days) | `python imports/spotify.py ~/Downloads/my_spotify_data.zip` |
 | **Apple Health**: workouts with their routes, steps | Health app → your picture → *Export All Health Data* | `python imports/health.py ~/Downloads/export.zip` |
+| **Apple Wallet**: boarding passes, train and bus tickets, tickets to events | nothing to download on the Mac that runs Cairn: iCloud keeps every pass there, the expired ones too (`wallet_dir`); from a phone that shares no Wallet with it, a pass → ⋯ → *Share* | Settings → Imports → 🎫 Apple Wallet, the `.pkpass` files |
 | **OV-chipkaart** | ov-chipkaart.nl → Mijn OV-chip → card → *Reishistorie* → CSV (18 months back at most; per card) | `python imports/ovchipkaart.py ~/Downloads/reizen*.csv` (sends to Cairn) |
 
 Add `--send mini:repos/contrail/data/<file>.json` to copy the result to the Mac that runs Cairn. What they give:
@@ -772,6 +775,7 @@ Add `--send mini:repos/contrail/data/<file>.json` to copy the result to the Mac 
 - **Card payments** (`data/transactions.json`, card payments and cash withdrawals only, not transfers or salary): a trip's page adds **Paid by card and cash**, in euros on each day's rate. **+ Add → 💡 To check → Payments abroad no trip explains** lists the payments in a country (from the payment's description, "… MADRID ESP", or its currency) on days nothing else puts you there: trips that may be missing. ✕ one that was a purchase online.
 - **🎧 Spotify** (`data/spotify.json`): each day's country (where the phone or computer was connected from; plays made offline left out) lists **+ Add → 💡 To check → Days abroad on Spotify no trip explains**: days with 3 or more plays in a country nothing else in Cairn puts you in; ✕ one that was a VPN or someone else on your account. Its songs (played 30 s or more) count on towns' and trips' pages on the days Last.fm has none.
 - **❤️ Apple Health** (`data/health.json`): workouts of the iPhone, the Watch and the apps that write to Health, with their routes, in the Sports tab and on the map; one Garmin or Strava has too is left to them (started within ten minutes; or as long and whole quarter hours off, as Garmin Connect writes some in the wrong time zone), and so is everything Garmin Connect wrote to Health. Its steps and floors fill the days Garmin has no steps for.
+- **🎫 Apple Wallet** (read as it is, never written): a boarding pass's barcode is the same for every airline (IATA's): the route, the flight, the seat and the booking code. Those that match a flight Cairn has (the same route a day either side; the few with no year on them by their day of the year) give it its **seat**, cabin and **booking code** in one go from **+ Add → 💡 To check → Your Wallet** (only where the flight has none; `flights.json` copied to `data/backups/` first), shown in the Flights tab. The rest of yours are **Boarding passes with no flight**: Add, ✕ when cancelled, or **Move** when Cairn has the flight a few days off (a wrong day, or a rebooking). Train and bus tickets on days Cairn has no train or bus like them are listed the same way. Passes in a name that is not one of your `passenger_names` (the people you travel with) only match. Tickets to concerts, films, museums and events show on their trip's page (**Tickets**, and the day in Days at a glance) and in On this day.
 - **OV-chipkaart** journeys become trains (a station's name alone) and buses, trams and metros (a stop with its town: "Delft, Station"), counted per route and year: a daily commute is one line with how many times you took it, known to the year, so it makes no day of its own. Sending the file again updates the counts.
 
 ### Fix
@@ -987,12 +991,15 @@ Moving to MongoDB later only needs the data layer in `app.js` (the `flights` arr
 | `GET` | `/api/suggestions/albums/cover?key=` | an album's cover photo, small |
 | `GET` | `/api/curiosities` | the curiosities (`{ "pending": true }` while the first ones are worked out) |
 | `GET` | `/api/trips` | the trips, newest first: `id` (the first day), `start`, `end`, `name`, `days`, `nights`, `countries` (`cc`, `days`), `towns`, counts of `flights`, `ground`, `activities`, `photos`, its `cover` (a photo id or `null`) and `route` (the town of each day, `[lat, lon]`) |
-| `GET` | `/api/trips/:id` | one trip in full: as above plus its `flights`, `ground`, `stays`, `activities`, `photo_ids`, `moves` (`kind` `drive`, `road` or `move`, `km`, `t0`, `t1`, and `path` or `from`/`to`), `roads_pending`, `photos` (`[id, t, lat, lon, video]`), `body` (sleep and resting heart rate on the trip and the month before), `music` and `dayList` (with each day's `body`) |
+| `GET` | `/api/trips/:id` | one trip in full: as above plus its `flights`, `ground`, `stays`, `activities`, `photo_ids`, `moves` (`kind` `drive`, `road` or `move`, `km`, `t0`, `t1`, and `path` or `from`/`to`), `roads_pending`, `photos` (`[id, t, lat, lon, video]`), `body` (sleep and resting heart rate on the trip and the month before), `music`, `books`, `tickets` and `dayList` (with each day's `body`) |
 | `GET` | `/api/settings` | `home_airports`, for the trips on the map, and `home`: your places (`hometown`, `residence`, `work`, each `{ id, name, cc, lat, lon }` or `null`); `commutes`, `onthisday_discord` |
-| `GET` | `/api/onthisday?date=` | the years before on that date (today by default), newest first: `day`, `years`, `trip`, `towns`, `flights`, `ground`, `stay`, `activities`, `photos`, `photo_ids`, `song`, `books` |
+| `GET` | `/api/onthisday?date=` | the years before on that date (today by default), newest first: `day`, `years`, `trip`, `towns`, `flights`, `ground`, `stay`, `activities`, `photos`, `photo_ids`, `song`, `books`, `tickets` |
 | `PUT` | `/api/trips/:id/cover` | `{ photo }`: the trip's cover photo, or `null` for Cairn's own choice |
 | `GET` | `/api/trips/:id/export/:format` | the trip as a file: `kml`, `gpx` or `html` (a page to share) |
 | `GET` | `/api/suggestions/spotify` | days abroad on Spotify no trip explains: `country`, `first`, `last`, `days`, `plays` |
+| `GET` | `/api/suggestions/wallet` | your Wallet against Cairn: `passes`, `matched`, `flights` (boarding passes with no flight: `day`, `time`, `from`, `to`, `flight_number`, `seat`, `booking`, `close`: the flight Cairn has a few days off), `ground` (tickets with no trip), `fill` (`flights`, `seats`, `bookings` the passes would add) |
+| `POST` | `/api/wallet/fill` | the seats, cabins and booking codes of your boarding passes into the flights that have none: `{ flights }` |
+| `GET` | `/api/wallet/tickets?from=&to=` | tickets to events: `day`, `time`, `title`, `venue`, `org`, `at` |
 | `PUT` | `/api/home` | set your places: `{ "hometown": <GeoNames id>, "residence": …, "work": … }`; `null` clears one, a role left out stays |
 | `GET` | `/api/towns?q=` | towns whose name starts with `q`, biggest first (at most 10): `id`, `name`, `cc`, `lat`, `lon`, `pop` |
 | `GET` | `/api/activities` | all sports activities, Garmin's and Strava's, each once (gzipped when asked, `304` when the browser has them) |
