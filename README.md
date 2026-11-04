@@ -29,7 +29,7 @@
 
 ## What is Cairn?
 
-A cairn is a pile of stones that marks where someone has been. **Cairn** does that for your whole travelling life: it gathers what you already have scattered over booking emails, Garmin, Strava, your photo library, Google Maps Timeline, Last.fm, your to-dos and trip docs, and turns it into one map, a page per trip told day by day, a page per town and per famous cycling climb, and statistics you did not know you could have (days by the sea, nights above 2,000 m, the farthest you went each way).
+A cairn is a pile of stones that marks where someone has been. **Cairn** does that for your whole travelling life: it gathers what you already have scattered over booking emails, Garmin, Strava, your photo library, Google Maps Timeline, Last.fm and Spotify, Apple Health, Apple Wallet, your GitHub commits, your to-dos and trip docs, and turns it into one map, a page per trip told day by day, a page per town and per famous cycling climb, and statistics you did not know you could have (days by the sea, nights above 2,000 m, the farthest you went each way).
 
 It runs on your own computer (a Mac mini in a cupboard is ideal). Everything is kept in plain JSON files in `data/`; nothing is uploaded anywhere. It began as **Contrail**, a replacement for [openflights.org](https://openflights.org/); flights are now one layer among many.
 
@@ -43,8 +43,8 @@ Two parts:
 | | |
 |---|---|
 | 🗺️ **One map of everything**<br>Flights on great circles, trains and buses along real tracks, car journeys along the likeliest roads, stays, rental cars, photos (clusters or a heatmap), Timeline, activities and explored tiles, climbs, towns and countries (ISO, sovereign, or the Travelers' Century Club). In 2D, or 3D on a globe with real terrain. | 🧳 **Trips, found by themselves**<br>Runs of days away, from all your data. A page per trip with its map (photo-to-photo moves along the roads, drives while you had a car) and a day-by-day story: flights, trains, rides with their weather, photos, where and how you slept, the song of the day. |
-| 🏙️ **Towns**<br>Every town you have been to, with a page: its map, each visit, the stays, flights, activities, photos and the music you played there. | ⛰️ **Climbs**<br>1,091 famous cycling climbs: which you rode and which way up, your times against your FTP of that day and the record, a coloured profile, the weather and the photos you took on the way up. |
-| 🚴 **Sports and body**<br>Garmin or Strava: Eddington numbers, records, best efforts, explored tiles; sleep and resting heart rate per day; the weather on every ride. | 📊 **Stats and curiosities**<br>Per country and per year (a year in review), days by the sea and in the mountains, extremes, capitals, how far by each means, spending on stays. All of it, trip by trip, as a PDF to keep or print. |
+| 🏙️ **Towns**<br>Every town you have been to, with a page: its map, each visit, the stays, flights, activities, photos, the music you played and the code you wrote there. | ⛰️ **Climbs**<br>1,091 famous cycling climbs: which you rode and which way up, your times against your FTP of that day and the record, a coloured profile, the weather and the photos you took on the way up. |
+| 🚴 **Sports and body**<br>Garmin or Strava: Eddington numbers, records, best efforts, explored tiles; sleep and resting heart rate per day; the weather on every ride. | 📊 **Stats and curiosities**<br>Per country and per year (a year in review), days by the sea and in the mountains, extremes, capitals, how far by each means, days per country and Schengen's 90 in 180, spending on stays, where you wrote code (even in the air). All of it, trip by trip, as a PDF to keep or print. |
 | 📅 **Planning**<br>Coming trips: what is booked, what is missing (a check-in, a bed, the way there), the forecast, climbs and saved places nearby; a morning alert. A wish list of places, climbs and countries. | 🧹 **Your data, kept right**<br>Add what nothing knows (even with only the year), suggestions from photos, albums and to-dos, one-click fixes for duplicates and gaps, backups in one file. |
 
 <details open>
@@ -223,7 +223,7 @@ No account is needed for any of these; each is asked at most about once a second
 - [Project layout](#repository-layout)
 - [Setup](#setup) · [Running Cairn](#running-cairn) · [Running on an always-on Mac](#running-on-an-always-on-mac)
 - [tripmail](#tripmail)
-- [Using Cairn](#using-cairn): [the map](#the-map), [sports](#sports-activities), [coming trips](#coming-trips), [on this day](#on-this-day), [how it looks](#how-it-looks), [replay and export](#replay-and-export), [days per country](#days-per-country-and-schengen), [spending](#spending), [year in review](#year-in-review), [report (PDF)](#report-pdf), [wish list](#wish-list), [fix](#fix), [adding](#adding-by-hand-and-from-your-photos), [backup](#backup)
+- [Using Cairn](#using-cairn): [the map](#the-map), [sports](#sports-activities), [coming trips](#coming-trips), [on this day](#on-this-day), [how it looks](#how-it-looks), [replay and export](#replay-and-export), [days per country](#days-per-country-and-schengen), [where you write code](#where-you-write-code), [data downloads](#more-of-your-life-data-downloads), [spending](#spending), [year in review](#year-in-review), [report (PDF)](#report-pdf), [wish list](#wish-list), [fix](#fix), [adding](#adding-by-hand-and-from-your-photos), [backup](#backup)
 - [Data](#data) · [API](#api) · [Tests](#tests) · [Privacy](#privacy) · [Troubleshooting](#troubleshooting)
 - [Support Cairn](#support-cairn) · [Acknowledgements](#acknowledgements) · [License](#license)
 
@@ -695,6 +695,10 @@ The **Stats** tab ends with curiosities from every day Cairn knows a place for (
 
 The **Stats** tab's **Days per country, year by year**: a grid of the countries (your home countries first, then the 30 you spent most days in) by year, each cell as dark as the days there, with a row of the days abroad. Above it, the Schengen area's 90 days in any 180: the days in its countries other than the ones you live in in the last 180 days, and the most it comes to with what is booked ahead. (It applies to someone from outside the area; a citizen of it has no limit.)
 
+### Where you write code
+
+With your GitHub commits imported (`imports/github.py`, [below](#more-of-your-life-data-downloads)), the **Stats** tab's **Where you write code**: commits by country, town, year, hour and weekday, the trips you coded most on, the farthest from home and the commits made in the air; trip, town and country pages each get their own.
+
 ### On this day
 
 The **Trips** tab shows where you were on today's date in the years before: the towns, the trip it was part of, flights, trains, buses and ferries, where you slept, sports, a few photos, the song you played most and the book you finished. **⚙️ Settings → On this day** sends it every morning at 08:00 to the alerts channel (tripmail's Discord webhook); off unless turned on (kept in `data/home.json`, the day last sent in `data/onthisday_sent.json`).
@@ -805,6 +809,8 @@ Add `--send mini:repos/contrail/data/<file>.json` to copy the result to the Mac 
   Then **where your albums' photos are**: every album's photos with no place of their own go on the map (the 📷 layer, "placed by its album" in their popup) at the town its name gives (a country or region is too vague: those wait for you), or where you put them: **Put it in…** (type a town, pick it), **Not a place**, **Reset**, or **Photos…** to tick some of its photos and put them in another town (an album "Paris, Toulouse, Pyrenees"). Your choices are kept in `data/album_places.json`. An album's dates count as the photos' own unless most of it falls on a day most of several albums fall on (the day Google got them): then its photos keep only the album's year, show in that year and make no day in towns, countries or trips.
 
 **💡 To check** also lists **gaps**: trips abroad with no flight, train, bus, ferry, ride (20 km or more) or rental car around their first or last day (how did you get there or back?), and **quiet stretches** of 30 days or more nothing in Cairn has a place for. Add what is missing, or ✕ (a lift, your own car, a month at home).
+
+With those imports, **💡 To check** also lists the [days abroad on Spotify](#more-of-your-life-data-downloads) no trip explains and **Your Wallet**: seats and booking codes for your flights, and boarding passes and tickets Cairn has no trip for.
 
 On a phone the tabs scroll sideways, the cards stand two abreast and the map's **Period** and **Layers** fold behind a button each.
 
