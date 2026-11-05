@@ -220,9 +220,10 @@ function create({ towns, cities, days, flights, airports, groundTrips, stays, ac
     ev.splice(0, ev.length, ...ev.filter(e => !during(e)).sort((a, b) => a.t - b.t));
     const carOn = t => { const h = carHours.find(([a, b]) => t >= a && t <= b); return h ? h[2] || 'car' : null; };  // 'car' or 'scooter'
     const moves = [];
-    let last = null, left = null;  // left: the last time you were seen at last's place (you left it after that)
+    let last = null, left = null, aboard = false;  // left: the last time you were seen at last's place (you left it after that)
     for (const e of ev) {
-      if (last && last.cover && e.cover === last.cover) { last = e; left = null; continue; }  // drawn by its own line
+      // drawn by its own line; a train, bus or ferry between two drives parts them (no line over the water)
+      if (last && last.cover && e.cover === last.cover) { last = e; left = null; aboard = aboard || e.cover[0] === 'g'; continue; }
       if (last) {
         const km = ground.km(last.at, e.at);
         if (km >= MOVE_KM) {
@@ -235,7 +236,8 @@ function create({ towns, cities, days, flights, airports, groundTrips, stays, ac
           const road = (km >= ROAD_KM && km <= ROAD_MAX_KM && (car || km / hours <= CAR_KMH))
             || (car && km >= HOP_KM && (km / hours >= WALK_KMH || km >= CAR_HOP_KM));
           moves.push({ from: last.at, to: e.at, t0: gone, t1: e.t, km: Math.round(km * 10) / 10, kind: road ? (car ? 'drive' : 'road') : 'move',
-            ...(road && car === 'scooter' && { by: 'scooter' }) });
+            ...(road && car === 'scooter' && { by: 'scooter' }), ...(aboard && { aboard: true }) });
+          aboard = false;
         } else if (!e.cover) { left = e.t; continue; }  // a few steps on: keep the earlier place as where you were
       }
       last = e;
@@ -347,11 +349,11 @@ function create({ towns, cities, days, flights, airports, groundTrips, stays, ac
           for (const m of get(t.id)?.moves || []) {
             if (m.kind !== 'drive') continue;
             const day = dayOf(m.t0 + Math.round(m.from[1] / 15) * 3600), road = m.path ? ground.decode(m.path) : [m.from, m.to], last = mine[mine.length - 1];
-            if (last && last.day === day && last.by === m.by && ground.km(last.to, m.from) <= AT_CAR_KM) {
+            if (last && !m.aboard && last.day === day && last.by === m.by && ground.km(last.to, m.from) <= AT_CAR_KM) {
               Object.assign(last, { to: m.to, km: last.km + m.km, roads: last.roads || !!m.path });
               last.pts.push(...road);
               last.via.push(m.from);
-            } else if (last && last.by === m.by && ground.km(last.to, m.from) <= AT_CAR_KM) {  // on from where the day before's ended (the car slept there)
+            } else if (last && !m.aboard && last.by === m.by && ground.km(last.to, m.from) <= AT_CAR_KM) {  // on from where the day before's ended (the car slept there)
               mine.push({ day, from: last.to, to: m.to, km: m.km, pts: [last.to, ...road], roads: !!m.path, via: [], by: m.by });
             } else mine.push({ day, from: m.from, to: m.to, km: m.km, pts: road, roads: !!m.path, via: [], by: m.by });
           }
