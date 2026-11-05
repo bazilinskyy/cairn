@@ -1344,6 +1344,15 @@ const music = require('./lastfm').create({
 app.get('/api/music/status', (_req, res) => res.json(music.status()));
 app.post('/api/music/sync', (_req, res) => { music.sync(); res.json(music.status()); });
 app.get('/api/music', (req, res) => res.json(music.top({ from: req.query.from || '', to: req.query.to || '' })));
+// for the map: each day's plays in the town you were in that day: [{ day, id, name, cc, lat, lon, n, artists }]
+app.get('/api/music/places', (_req, res) => {
+  const towns = dayTownMap(), out = [];
+  for (const [day, x] of Object.entries(music.byDay())) {
+    const t = towns.get(day);
+    if (t && t.lat != null) out.push({ day, id: t.id, name: t.name, cc: t.cc, lat: t.lat, lon: t.lon, n: x.n, artists: x.artists });
+  }
+  res.json(out);
+});
 
 // --- Books (books.js): your Goodreads library export, each book where you were the day you finished it ---
 
@@ -1951,6 +1960,7 @@ const code = require('./code').create({
   airports: () => airports, home: () => homePlaces().residence || homePlaces().hometown, km: ground.km
 });
 app.get('/api/code', (_req, res) => res.json(code.summary()));
+app.get('/api/code/places', (_req, res) => res.json(code.places()));
 // every night, once you have imported your commits: the new ones (the GitHub CLI signed in on this Mac; its cache in
 // ~/.cache/cairn-github makes it a fetch of each repository)
 setInterval(() => {

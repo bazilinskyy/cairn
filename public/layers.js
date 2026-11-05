@@ -102,7 +102,7 @@ const mapVar = name => toneVar(mapTone(), name);
 // and places that takes seconds. The activities and tiles, painted on canvas, are painted again.
 const THEME_PAIRS = { grey: 'grey-dark', 'grey-dark': 'grey', 'vector-dark': 'vector-positron', 'vector-fiord': 'vector-positron', 'vector-positron': 'vector-dark' };
 const TONE_VARS = ['--accent', '--accent2', '--text', '--text2', '--surface', '--surface2', '--train', '--commute', '--bus', '--ferry', '--hitch', '--checkin', '--stay', '--stay2',
-  '--stay3', '--car', '--drive', '--photo', '--timeline', '--country', '--ride', '--run', '--walk', '--sport', '--tile', '--city', '--home', '--book', '--climb'];
+  '--stay3', '--car', '--drive', '--photo', '--timeline', '--country', '--ride', '--run', '--walk', '--sport', '--tile', '--city', '--home', '--book', '--code', '--music', '--climb'];
 function themeBasemap(from, to) {
   const k = basemapKey(), b = BASEMAPS[k], memo = { ...(prefs.basemapFor || {}), [from]: k };
   let next = memo[to];
@@ -216,6 +216,10 @@ const checkinLayer = L.layerGroup();  // check-ins, posts with a place, reviews 
 let allCheckins = [];
 const bookLayer = L.layerGroup();  // the books you read, where you finished each (Goodreads)
 let allBooks = [];
+const codeLayer = L.layerGroup();  // where you wrote code: your commits by town (GitHub; code.js)
+let allCode = [];
+const musicLayer = L.layerGroup();  // what you played, in the town you were in that day (Last.fm, Spotify)
+let allMusic = [];
 // Activities by type: a legend row each; the activity layer draws the types whose row is on
 const ACT_KINDS = { ride: '🚴 Cycling', run: '🏃 Running', walk: '🥾 Walks & hikes', sport: '🏅 Other sports' };
 const kindLayer = Object.fromEntries(Object.keys(ACT_KINDS).map(k => [k, L.layerGroup()]));
@@ -249,7 +253,8 @@ function extraLayers() {
     ...Object.fromEntries(Object.entries(ACT_KINDS).map(([k, label]) => ['act-' + k, [label, kindLayer[k], '--' + k]])),
     tile: ['🟩 Explored tiles', tileLayer, '--tile', 'area'], climb: ['⛰️ Climbs', climbLayer, '--climb', 'dot'],
     country: ['🌍 Countries', countryLayer, '--country', 'area'], city: ['🏙️ Cities', cityLayer, '--city', 'dot'],
-    checkin: ['📍 Check-ins', checkinLayer, '--checkin', 'dot'], book: ['📚 Books', bookLayer, '--book', 'dot'], home: ['🌱 Your places', homeLayer, '--home', 'dot']
+    checkin: ['📍 Check-ins', checkinLayer, '--checkin', 'dot'], book: ['📚 Books', bookLayer, '--book', 'dot'],
+    code: ['💻 Code', codeLayer, '--code', 'dot'], music: ['🎵 Music', musicLayer, '--music', 'dot'], home: ['🌱 Your places', homeLayer, '--home', 'dot']
   };
 }
 
@@ -267,6 +272,8 @@ function extraCounts() {
     home: Object.values(settings.home || {}).filter(Boolean).length,
     checkin: allCheckins.filter(c => inWin(new Date(c.t * 1000).toISOString())).length,
     book: allBooks.filter(b => b.at && inWin(b.finished)).length,
+    code: allCode.filter(c => inWin(c.day)).reduce((s, c) => s + c.n, 0),
+    music: allMusic.filter(c => inWin(c.day)).reduce((s, c) => s + c.n, 0),
     climb: allClimbs.length ? `${allClimbs.filter(climbDone).length} / ${allClimbs.length}` : 0
   };
 }
@@ -277,6 +284,8 @@ function drawExtras() {
   drawTimeline();
   drawCheckins();
   drawBooks();
+  drawCode();
+  drawMusic();
   drawActivities();
   drawTiles();
   drawCountries();
@@ -564,6 +573,49 @@ function drawBooks() {
       .addTo(bookLayer);
   });
 }
+
+// Commits and music: each town's days in the period shown added up, as a pin per town (its number, the repositories
+// or artists in its popup) or a heatmap, as the button on the map says (prefs.code, prefs.music)
+const TOWN_LAYERS = { code: { label: '💻 Code', mode: 'pins', heat: { 0.3: '#1a237e', 0.6: '#536dfe', 0.85: '#8c9eff', 1: '#ffffff' } },
+  music: { label: '🎵 Music', mode: 'heat', heat: { 0.3: '#880e4f', 0.6: '#f50057', 0.85: '#ff80ab', 1: '#ffffff' } } };
+const townMode = k => prefs[k] || TOWN_LAYERS[k].mode;
+function byTown(list) {  // [{ id, name, cc, lat, lon, n, days, first, last, top: [[name, n]] }]
+  const towns = new Map();
+  list.filter(c => inWin(c.day)).forEach(c => {
+    if (!towns.has(c.id)) towns.set(c.id, { ...c, n: 0, days: 0, first: c.day, last: c.day, top: new Map() });
+    const t = towns.get(c.id);
+    t.n += c.n;
+    t.days++;
+    if (c.day < t.first) t.first = c.day;
+    if (c.day > t.last) t.last = c.day;
+    (c.repos ? Object.entries(c.repos) : c.artists).forEach(([r, k]) => t.top.set(r, (t.top.get(r) || 0) + k));
+  });
+  return [...towns.values()].map(t => ({ ...t, top: [...t.top].sort((a, b) => b[1] - a[1]).slice(0, 5) }));
+}
+function drawTowns(k, layer, list, what, pin) {
+  layer.clearLayers();
+  const towns = byTown(list);
+  if (townMode(k) === 'heat') {
+    loadHeat().then(() => {
+      if (townMode(k) !== 'heat') return;
+      layer.clearLayers();
+      const max = Math.log1p(Math.max(1, ...towns.map(t => t.n)));
+      L.heatLayer(towns.map(t => [t.lat, t.lon, Math.log1p(t.n) / max]), { radius: 20, blur: 24, minOpacity: 0.3, maxZoom: 10, gradient: TOWN_LAYERS[k].heat }).addTo(layer);
+    });
+    return;
+  }
+  towns.forEach(t => {
+    const n = t.n.toLocaleString(), w = 30 + 7 * n.length;
+    const icon = L.divIcon({ className: '', iconSize: [w, 24], iconAnchor: [w / 2, 12], html: `<div class="town-pin ${k}-pin">${pin}<small>${n}</small></div>` });
+    L.marker([t.lat, t.lon], { icon, keyboard: false })
+      .bindPopup(`<b>${pin} ${n} ${what}${t.n > 1 ? 's' : ''} in ${flagOf(t.cc)}${escapeHTML(t.name)}</b><br><small>on ${t.days} day${t.days > 1 ? 's' : ''}, ` +
+        `${fmtDate(t.first)}${t.last !== t.first ? ` – ${fmtDate(t.last)}` : ''}</small>` +
+        t.top.map(([r, c]) => `<br>${escapeHTML(r)} <small>${c.toLocaleString()}</small>`).join(''), { maxWidth: 360 })
+      .addTo(layer);
+  });
+}
+const drawCode = () => drawTowns('code', codeLayer, allCode, 'commit', '💻');
+const drawMusic = () => drawTowns('music', musicLayer, allMusic, 'play', '🎵');
 
 // --- Strava activities and the tiles they explored ---
 // Made for thousands of activities: they load after the rest of the map; each route is decoded once; routes and

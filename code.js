@@ -91,7 +91,20 @@ function create({ read, dayTowns, trips, flights, airports, home = () => null, k
       zones: new Set(list.map(c => c.offset)).size
     };
   }
-  return { placed, summary, between, inTown, inCountry };
+  // each town's commits day by day, for the map (the period shown adds them up): [{ day, id, name, cc, lat, lon, n, repos }]
+  function places() {
+    const m = new Map();
+    for (const c of placed()) {
+      if (!c.town || c.town.lat == null) continue;
+      const k = `${c.day}|${c.town.id}`;
+      if (!m.has(k)) m.set(k, { day: c.day, id: c.town.id, name: c.town.name, cc: c.town.cc, lat: c.town.lat, lon: c.town.lon, n: 0, repos: {} });
+      const v = m.get(k);
+      v.n++;
+      v.repos[c.repo] = (v.repos[c.repo] || 0) + 1;
+    }
+    return [...m.values()];
+  }
+  return { placed, summary, between, inTown, inCountry, places };
 }
 
 module.exports = { create, dayOf };

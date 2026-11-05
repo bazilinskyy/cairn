@@ -126,8 +126,25 @@ function create({ file, keys, more = () => [], log = console.log }) {
     };
   }
 
+  // every day's plays (Spotify's on the days Last.fm has none, as for top): { day: { n, artists: [[name, plays]] } }, the
+  // three artists played most; for the map
+  let dayMemo = { list: null, days: {} };
+  function byDay() {
+    top();
+    if (dayMemo.list === memo.list) return dayMemo.days;
+    const days = {};
+    for (const [t, artist] of memo.list || []) {
+      const d = dayOf(t), x = days[d] || (days[d] = { n: 0, artists: new Map() });
+      x.n++;
+      x.artists.set(artist, (x.artists.get(artist) || 0) + 1);
+    }
+    for (const x of Object.values(days)) x.artists = [...x.artists].sort((a, b) => b[1] - a[1]).slice(0, 3);
+    dayMemo = { list: memo.list, days };
+    return days;
+  }
+
   const status = () => { const d = load(), k = keys(); return { configured: !!(k.key && k.user), user: d.user || k.user || '', scrobbles: d.scrobbles.length, last_sync: d.last_sync || '', error: d.error || '' }; };
-  return { sync, top, status };
+  return { sync, top, byDay, status };
 }
 
 module.exports = { create };

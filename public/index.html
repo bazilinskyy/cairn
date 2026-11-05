@@ -66,6 +66,8 @@
       --city:     #eceff1;
       --home:     #ffb300;
       --book:     #4db6ac;
+      --code:     #7986cb;
+      --music:    #ec407a;
       --climb:    #c0ca33;
     }
 
@@ -75,7 +77,7 @@
       --surface: #111111; --surface2: #222222; --text: #ffffff; --text2: #dddddd; --accent: #00e5ff; --accent2: #d500f9;
       --train: #ffab00; --commute: #d7ccc8; --bus: #76ff03; --ferry: #ea80fc; --hitch: #ff9e80; --checkin: #ffe57f; --stay: #ff4f93; --stay2: #b388ff; --stay3: #ffa040; --car: #ffea00; --drive: #40c4ff; --photo: #18ffff;
       --timeline: #ffffff; --country: #b388ff; --ride: #ff6e40; --run: #b388ff; --walk: #ff80ab; --sport: #ffd740;
-      --tile: #69f0ae; --city: #ffffff; --home: #ffc400; --climb: #eeff41; --book: #64ffda;
+      --tile: #69f0ae; --city: #ffffff; --home: #ffc400; --climb: #eeff41; --book: #64ffda; --code: #8c9eff; --music: #ff80ab;
     }
     .leaflet-pane[data-theme="sat"] > :is(svg, canvas) { filter: drop-shadow(0 0 1.2px rgba(0,0,0,0.95)); }
 
@@ -112,6 +114,8 @@
       --city:      #37474f;
       --home:      #e65100;
       --book:      #00796b;
+      --code:      #3949ab;
+      --music:     #ad1457;
       --climb:     #827717;
     }
 
@@ -178,6 +182,9 @@
       display: flex; align-items: center; justify-content: center; font-size: 15px; box-shadow: 0 1px 4px rgba(0,0,0,0.45); }
     .book-pin { height: 24px; min-width: 24px; padding: 0 4px; border-radius: 12px; background: var(--surface); border: 2px solid var(--book); box-sizing: border-box;
       display: flex; align-items: center; justify-content: center; gap: 2px; font-size: 13px; line-height: 1; }
+    .town-pin { height: 24px; padding: 0 5px; border-radius: 12px; background: var(--surface); border: 2px solid var(--code); box-sizing: border-box;
+      display: flex; align-items: center; justify-content: center; gap: 3px; font-size: 12px; line-height: 1; white-space: nowrap; }
+    .town-pin.music-pin { border-color: var(--music); }
     .import-row { display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; padding: 8px 0; border-top: 1px solid var(--border); }
     .import-row small { display: block; color: var(--text2); font-size: 12px; margin-top: 2px; }
     .import-row .import-last { color: var(--text); }
@@ -1614,10 +1621,12 @@ function initMap() {
     onAdd() {
       const box = L.DomUtil.create('div', 'map-ctrl-row');
       box.innerHTML = '<button id="cluster-toggle" class="map-ctrl-btn" type="button"></button>' +
-        '<button id="photo-mode" class="map-ctrl-btn" type="button"></button>';
+        '<button id="photo-mode" class="map-ctrl-btn" type="button"></button>' +
+        Object.keys(TOWN_LAYERS).map(k => `<button id="${k}-mode" class="map-ctrl-btn" type="button"></button>`).join('');
       L.DomEvent.disableClickPropagation(box);
       box.querySelector('#cluster-toggle').addEventListener('click', toggleCluster);
       box.querySelector('#photo-mode').addEventListener('click', nextPhotoMode);
+      Object.keys(TOWN_LAYERS).forEach(k => box.querySelector(`#${k}-mode`).addEventListener('click', () => nextTownMode(k)));
       return box;
     }
   });
@@ -1642,6 +1651,7 @@ function initMap() {
       const box = L.DomUtil.create('div', 'map-legend foldable');
       box.id = 'map-legend';
       L.DomEvent.disableClickPropagation(box);
+      L.DomEvent.disableScrollPropagation(box);  // the wheel scrolls the legend, not the map's zoom
       box.addEventListener('click', e => {
         if (e.target.closest('.panel-toggle')) box.classList.toggle('open');  // on a phone
         const f = e.target.closest('.fold');
@@ -1935,6 +1945,24 @@ function showPhotoMode() {
   btn.textContent = `📷 Photos: ${PHOTO_MODES[now][0]}`;
   btn.title = `${PHOTO_MODES[now][1]}. Click for: ${PHOTO_MODES[next][1].toLowerCase()}`;
   btn.hidden = !map.hasLayer(photoLayer);
+  showTownModes();
+}
+
+// Commits and music as pins or a heatmap (layers.js TOWN_LAYERS): a click takes the other
+function nextTownMode(k) {
+  savePrefs({ [k]: townMode(k) === 'heat' ? 'pins' : 'heat' });
+  k === 'code' ? drawCode() : drawMusic();
+  showTownModes();
+}
+function showTownModes() {
+  Object.entries(TOWN_LAYERS).forEach(([k, { label }]) => {
+    const btn = document.getElementById(`${k}-mode`), layer = k === 'code' ? codeLayer : musicLayer;
+    if (!btn) return;
+    const heat = townMode(k) === 'heat';
+    btn.textContent = `${label}: ${heat ? 'heatmap' : 'pins'}`;
+    btn.title = heat ? 'Where most, as a heatmap. Click for a pin per town with its number' : 'A pin per town with its number. Click for a heatmap';
+    btn.hidden = !map.hasLayer(layer);
+  });
 }
 
 // --- Stats ---
@@ -2275,6 +2303,8 @@ async function init() {
     optional('/api/activities/status', {}), optional('/api/checkins', [])
   ]);
   allBooks = await optional('/api/books', []);
+  allCode = await optional('/api/code/places', []);
+  allMusic = await optional('/api/music/places', []);
   computeJourneys();
 
   initMap();
