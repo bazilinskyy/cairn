@@ -2075,7 +2075,7 @@ async function renderCountryStats(fetchAgain = true) {
     : c[k] ? c[k].toLocaleString() : '';
   const table = document.getElementById('country-stats');
   table.innerHTML = '<thead><tr>' + cols.map(([k, label]) => `<th data-sort="${k}" class="${k === key ? 'sorted' : ''}">${label}${k === key ? (dir < 0 ? ' ↓' : ' ↑') : ''}</th>`).join('') +
-    '</tr></thead><tbody>' + rows.map(c => '<tr><th>' + (/^[A-Z]{2}$/.test(c.country) ? countryLink(c.country, flagOf(c.country) + escapeHTML(name(c))) : placeFlag(c) + escapeHTML(name(c))) + '</th>' +
+    '</tr></thead><tbody>' + rows.map(c => '<tr><th>' + countryLink(c.country, (/^[A-Z]{2}$/.test(c.country) ? flagOf(c.country) : placeFlag(c)) + escapeHTML(name(c))) + '</th>' +
       cols.slice(1).map(([k]) => `<td>${cell(c, k)}</td>`).join('') + '</tr>').join('') + '</tbody>';
   table.querySelectorAll('th[data-sort]').forEach(th => th.addEventListener('click', () => {
     const k = th.dataset.sort;

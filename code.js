@@ -40,7 +40,9 @@ function create({ read, dayTowns, trips, flights, airports, home = () => null, k
     return { ...s, byDay };
   }
   const inTown = id => sum(placed().filter(c => c.town?.id === id));
-  const inCountry = cc => { const list = placed().filter(c => c.town?.cc === cc), s = sum(list); return s && { ...s, towns: top(list.map(c => ({ ...c, name: c.town.name })), 'name', 5) }; };
+  // in a country, or in a place as fn(town) says (a country of another list: the Canary Islands)
+  const inPlace = fn => { const list = placed().filter(c => c.town && fn(c.town)), s = sum(list); return s && { ...s, towns: top(list.map(c => ({ ...c, name: c.town.name })), 'name', 5) }; };
+  const inCountry = cc => inPlace(t => t.cc === cc);
 
   // the flights' hours in the air (take-off in its airport's time, plus the duration): [{ f, from, to }] in unix
   function airborne() {
@@ -104,7 +106,7 @@ function create({ read, dayTowns, trips, flights, airports, home = () => null, k
     }
     return [...m.values()];
   }
-  return { placed, summary, between, inTown, inCountry, places };
+  return { placed, summary, between, inTown, inCountry, inPlace, places };
 }
 
 module.exports = { create, dayOf };

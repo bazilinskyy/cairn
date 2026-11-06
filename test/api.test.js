@@ -332,6 +332,15 @@ test('check-ins count for their town; payments abroad that no trip explains are 
   fs.rmSync(path.join(dir, 'data', 'transactions.json'));
 });
 
+test('a country page counts as the chosen list does: under the TCC a stay on Tenerife is the Canary Islands\' page', async () => {
+  const stay = await (await call('POST', '/api/stays', { code: 'TF3', what: 'stay', place: 'Adeje', start: '2026-11-17', end: '2026-11-19', lat: 28.12, lon: -16.73 })).json();
+  const iso = await (await call('GET', '/api/country/ES')).json(), tcc = await (await call('GET', '/api/country/ES?scheme=tcc')).json();
+  assert.deepStrictEqual([iso.id, iso.name, iso.days], ['ES', 'Spain', 3]);
+  assert.deepStrictEqual([tcc.scheme, tcc.name, tcc.cc, tcc.days, tcc.visits.length], ['tcc', 'Canary Islands', 'ES', 3, 1]);
+  assert.strictEqual((await (await call('GET', `/api/country/${tcc.id}?scheme=tcc`)).json()).name, 'Canary Islands', 'by its own id too');
+  await call('DELETE', `/api/stays/${stay.id}`);
+});
+
 test('a country you are booked to go to is not one you have been to, until the day comes', async () => {
   const stay = await (await call('POST', '/api/stays', { code: 'TF2', what: 'stay', place: 'Adeje', start: '2031-05-01', end: '2031-05-03', lat: 28.12, lon: -16.73 })).json();
   const places = (await (await call('GET', '/api/regions?scheme=iso')).json()).places.map(p => p.name);

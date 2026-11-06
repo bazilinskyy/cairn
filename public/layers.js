@@ -1070,7 +1070,7 @@ function drawCountries() {
       .bindPopup(`<b>🌍 ${flag}${escapeHTML(c.name)}</b><br><small>${c.region ? escapeHTML(c.region.toLowerCase().replace(/\b\w/g, l => l.toUpperCase())) + '<br>' : ''}` +
         `${c.days} day${c.days !== 1 ? 's' : ''}${win.from || win.to ? ' in this period' : ''}, first ${fmtDate(c.first)}` +
         `${c.last !== c.first ? ', last ' + fmtDate(c.last) : ''}<br>${COUNTRY_LISTS[prefs.countries]}: ${visitedCount} of ${countryTotal}</small>` +
-        (/^[A-Z]{2}$/.test(c.id) ? `<br><a href="#country=${c.id}" class="popup-link" onclick="event.preventDefault(); openCountry('${c.id}')">Country page →</a>` : ''))
+        `<br><a href="#country=${c.id}" class="popup-link" onclick="event.preventDefault(); openCountry('${c.id}')">Country page →</a>`)
       .addTo(countryLayer);
   });
   countryLayer.eachLayer(l => l.bringToBack());

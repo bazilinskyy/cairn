@@ -2,7 +2,9 @@
 // A country's page: opened from a country on the map, the Stats tab's table, a town or a trip (or #country=<ISO code>),
 // with its flag (flagcdn.com), its days and visits, its towns, the trips that went there, flights in and out, trains,
 // buses and ferries, stays, the famous climbs in it you rode, and the music you played there; a map of its outline with
-// all of these on it, as on a town's page. All time (the server's /api/country/:cc). Uses the page's and layers.js's globals.
+// all of these on it, as on a town's page. All time (the server's /api/country/:cc), counted as the country list chosen
+// for the map counts them (prefs.countries: under the Travelers' Century Club, Okinawa is a page of its own). Uses the
+// page's and layers.js's globals.
 
 let countryShown = null, countryMap = null;
 const countryNames = (() => { try { return new Intl.DisplayNames(['en'], { type: 'region' }); } catch (_) { return null; } })();
@@ -10,10 +12,10 @@ const countryName = cc => { try { return countryNames?.of(cc) || cc; } catch (_)
 const countryLink = (cc, text) => `<a href="#country=${cc}" class="sp-link inline" onclick="event.preventDefault(); openCountry('${cc}')">${text || `${flagOf(cc)}${escapeHTML(countryName(cc))}`}</a>`;
 
 let countryAsked = 0;
-async function openCountry(cc) {
+async function openCountry(cc) {  // an ISO code, or a place id of the chosen list
   cc = String(cc || '').toUpperCase();
   const asked = ++countryAsked;
-  const d = await fetch(`/api/country/${cc}`).then(r => (r.ok ? r.json() : null)).catch(() => null);
+  const d = await fetch(`/api/country/${cc}?scheme=${prefs.countries || 'iso'}`).then(r => (r.ok ? r.json() : null)).catch(() => null);
   if (asked !== countryAsked) return;  // another was asked for meanwhile
   if (!d) return toast(`No page for ${cc}`, 'error');
   countryShown = d;
@@ -35,8 +37,8 @@ function renderCountry() {
   const d = countryShown;
   const plural = (n, w) => `${n.toLocaleString()} ${w}${n !== 1 ? 's' : ''}`;
   const range = (a, b) => (b && b !== a ? `${fmtDate(a)} – ${fmtDate(b)}` : fmtDate(a));
-  document.getElementById('country-title').innerHTML = `<img class="page-flag" src="https://flagcdn.com/h40/${d.cc.toLowerCase()}.png" alt="" ` +
-    `onerror="this.remove()">${escapeHTML(d.name || countryName(d.cc))}`;
+  document.getElementById('country-title').innerHTML = (d.cc ? `<img class="page-flag" src="https://flagcdn.com/h40/${d.cc.toLowerCase()}.png" alt="" onerror="this.remove()">` : '') +
+    escapeHTML(d.name || countryName(d.cc));
   document.getElementById('country-sub').textContent = d.days ? `first ${fmtDate(d.first)}, last ${fmtDate(d.last)} · all time` : 'no days there yet';
   const card = (label, value, sub = '') => (!value || value === '0' ? '' : `<div class="stat-card"><div class="label">${label}</div><div class="value">${value}</div>${sub ? `<div class="sub">${sub}</div>` : ''}</div>`);
   const section = (title, body, note = '') => `<div class="chart-section"><h3>${title}</h3><div class="sp-scroll">${body}</div>${note ? `<p class="sp-note">${note}</p>` : ''}</div>`;
@@ -138,7 +140,8 @@ function drawCountryMap(d) {
     L.circleMarker([s.lat, s.lon], { radius: 6 * st.r, color: '#fff', weight: 1.5, fillColor: col(s.what === 'car' ? 'car' : 'stay'), fillOpacity: 0.9 })
       .bindPopup(`<b>${s.what === 'car' ? '🚗' : '🏨'} ${escapeHTML(s.hotel || s.type || s.place || '')}</b><br><small>${fmtDate(s.start)}` +
         `${s.end && s.end !== s.start ? ' – ' + fmtDate(s.end) : ''} · ${escapeHTML(s.provider || '')}</small>`)));
-  layer('⛰️ Climbs', allClimbs.filter(c => c.country === d.cc).map(c => {
+  const climbsHere = new Set(d.climbs.ids || []);
+  layer('⛰️ Climbs', allClimbs.filter(c => climbsHere.has(c.id)).map(c => {
     const done = c.times > 0;  // all time, as the page
     return L.circleMarker([c.lat, c.lon], { radius: (done ? 6 : 4) * st.r, color: done ? '#fff' : col('climb'), weight: 1.5, fillColor: col('climb'), fillOpacity: done ? 0.95 : 0 })
       .bindPopup(`<b>⛰️ ${escapeHTML(c.name)}</b><br><small>${done ? `climbed ${c.times}×` : 'not climbed yet'}</small>` +
@@ -164,6 +167,6 @@ window.addEventListener('load', () => {
   document.querySelectorAll('.tab[data-tab]').forEach(b => b.addEventListener('click', () => {
     if (location.hash.startsWith('#country=')) history.replaceState(null, '', location.pathname + location.search);
   }));
-  const m = /^#country=([A-Za-z]{2})$/.exec(location.hash);
+  const m = /^#country=([A-Za-z]{2}|\d+)$/.exec(location.hash);
   if (m) setTimeout(() => openCountry(m[1]), 300);
 });

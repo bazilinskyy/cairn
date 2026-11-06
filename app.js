@@ -1176,36 +1176,47 @@ app.get('/api/regions', async (req, res) => {
 
 // One country (ISO code), for its page: its days and visits, its towns, the trips that went there, flights in and
 // out, trains, buses and ferries, stays, sports, photos, the famous climbs in it you rode, music, and its outline
+// (?scheme=: as that list counts countries, iso, un or tcc; :cc its place's id, or an ISO code: then that list's place
+// with most of your days in that country, Japan rather than Okinawa)
 app.get('/api/country/:cc', async (req, res) => {
-  const cc = String(req.params.cc || '').toUpperCase();
-  if (!/^[A-Z]{2}$/.test(cc)) return res.status(400).json({ error: 'a two-letter country code' });
+  const scheme = regions.SCHEMES.includes(req.query.scheme) ? req.query.scheme : 'iso';
+  let id = String(req.params.cc || '');
+  if (/^[a-z]{2}$/i.test(id)) id = id.toUpperCase();
+  else if (!/^\d+$/.test(id)) return res.status(400).json({ error: "a two-letter country code or a list's place id" });
   const away = awayNights(stays);
   try { await regions.ready(); } catch (e) { return res.status(503).json({ error: `no country map: ${e.message}` }); }
   loadTowns();
   const placeOf = at => {
     if (!at || at[0] == null) return null;
-    const k = (+at[0]).toFixed(2) + ',' + (+at[1]).toFixed(2);
-    if (!isoMemo.has(k)) isoMemo.set(k, regions.placeNow('iso', +at[0], +at[1]));
+    const k = scheme + ':' + (+at[0]).toFixed(2) + ',' + (+at[1]).toFixed(2);
+    if (!isoMemo.has(k)) isoMemo.set(k, regions.placeNow(scheme, +at[0], +at[1]));
     return isoMemo.get(k);
   };
-  const here = at => placeOf(at)?.id === cc;
-  const points = placesBeen('', '').filter(p => here(p.at));
-  const place = points.length ? placeOf(points[0].at) : null;
+  const been = placesBeen('', '');
+  if (scheme !== 'iso' && /^[A-Z]{2}$/.test(id)) {
+    const days = new Map();
+    been.forEach(p => { const pl = placeOf(p.at); if (pl?.cc === id) days.set(String(pl.id), (days.get(String(pl.id)) || 0) + 1); });
+    const most = [...days].sort((a, b) => b[1] - a[1])[0];
+    if (most) id = most[0];
+  }
+  const here = at => String(placeOf(at)?.id) === id;
+  const points = been.filter(p => here(p.at));
+  const place = points.length ? placeOf(points[0].at) : null, cc = place?.cc || (/^[A-Z]{2}$/.test(id) ? id : '');
   const days = [...new Set(points.map(p => p.day))].sort(), visits = [];
   days.forEach(d => {
     const v = visits[visits.length - 1];
     if (v && (Date.parse(d) - Date.parse(v.end)) / 864e5 <= 1) { v.end = d; v.days++; } else visits.push({ start: d, end: d, days: 1 });
   });
   const ap = code => airports[code] && [airports[code].lat, airports[code].lon];
-  const shape = points.length ? (await regions.visited('iso', [points[0]])).places[0]?.shape || null : null;
-  const climbsHere = climbs.list().filter(c => c.country === cc);
+  const shape = points.length ? (await regions.visited(scheme, [points[0]])).places[0]?.shape || null : null;
+  const climbsHere = climbs.list().filter(c => c.country === cc && (scheme === 'iso' || here([c.lat, c.lon])));
   const acts = activities.list().filter(a => a.at && here(a.at));
   const photosHere = datedPhotos().filter(p => here([p[2], p[3]]));
   res.json({
-    cc, name: place?.name || cc, shape, days: days.length, first: days[0], last: days[days.length - 1], visits: visits.reverse(),
+    id, scheme, cc, name: place?.name || cc, shape, days: days.length, first: days[0], last: days[days.length - 1], visits: visits.reverse(),
     towns: towns ? cities.rank(towns, points).filter(t => t.country === cc).slice(0, 60) : [],
-    trips: tripStore.list().filter(t => t.countries.some(c => c.cc === cc))
-      .map(t => ({ id: t.id, name: t.name, start: t.start, end: t.end, days: t.days, here: t.countries.find(c => c.cc === cc).days, countries: t.countries })),
+    trips: tripStore.list().map(t => ({ t, n: days.filter(d => d >= t.start && d <= t.end).length })).filter(x => x.n)
+      .map(({ t, n }) => ({ id: t.id, name: t.name, start: t.start, end: t.end, days: t.days, here: n, countries: t.countries })),
     flights: flights.map(f => ({ f, into: here(ap(f.to)), out: here(ap(f.from)) })).filter(x => x.into || x.out)
       .map(({ f, into }) => ({ date: f.date, flight_number: f.flight_number, airline: f.airline, from: f.from, to: f.to,
         from_city: airports[f.from]?.city, to_city: airports[f.to]?.city, direction: into ? 'in' : 'out' })).sort((a, b) => b.date.localeCompare(a.date)),
@@ -1215,8 +1226,8 @@ app.get('/api/country/:cc', async (req, res) => {
       hotel: s.hotel, type: s.type, provider: s.provider, away: away.get(s)?.nights })).sort((a, b) => b.start.localeCompare(a.start)),
     activities: { count: acts.length, km: Math.round(acts.reduce((n, a) => n + (a.distance || 0), 0)), ids: acts.map(a => a.id) },
     photos: photosHere.length, photo_ids: photosHere.map(p => p[0]),
-    climbs: { total: climbsHere.length, done: climbsHere.filter(c => c.times).map(c => ({ id: c.id, name: c.name, ele: c.ele, times: c.times })) },
-    code: code.inCountry(cc),
+    climbs: { total: climbsHere.length, ids: climbsHere.map(c => c.id), done: climbsHere.filter(c => c.times).map(c => ({ id: c.id, name: c.name, ele: c.ele, times: c.times })) },
+    code: scheme === 'iso' ? code.inCountry(cc) : code.inPlace(t => here([t.lat, t.lon])),
     music: music.top({ days: new Set(days) })
   });
 });
