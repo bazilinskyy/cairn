@@ -39,6 +39,16 @@ test('a day over the border is no trip; a night in a stay there is', () => {
   assert.deepStrictEqual([t[0].start, t[0].end, t[0].nights], ['2026-05-02', '2026-05-03', 1]);
 });
 
+test('a rest day with nothing to show does not part a trip; a day seen at home does', () => {
+  const at = (day, lat, lon) => ({ at: [lat, lon], day });
+  const lisbon = ['2026-05-01', '2026-05-02', '2026-05-04', '2026-05-05'].map(d => at(d, 38.72, -9.14));   // nothing on the 3rd
+  assert.deepStrictEqual(store({ points: lisbon }).list().map(t => [t.start, t.end, t.days]), [['2026-05-01', '2026-05-05', 5]]);
+  const home = [...lisbon, at('2026-05-03', 51.44, 5.48)];   // back in Eindhoven that day
+  assert.strictEqual(store({ points: home }).list().length, 0, 'two runs of two days: no trip either');
+  const longer = [...home, ...['2026-05-06', '2026-05-07'].map(d => at(d, 38.72, -9.14))];
+  assert.deepStrictEqual(store({ points: longer }).list().map(t => [t.start, t.end]), [['2026-05-04', '2026-05-07']]);
+});
+
 test('local clock times are read with a zone guessed from the longitude', () => {
   assert.strictEqual(trips.localToUnix('2026-11-16 10:00', 0), Date.parse('2026-11-16T10:00:00Z') / 1000);
   assert.strictEqual(trips.localToUnix('2026-11-16 10:00', 120), Date.parse('2026-11-16T02:00:00Z') / 1000);

@@ -14,7 +14,7 @@ const { awayNights } = require('./stats');
 
 const OSRM = 'https://router.project-osrm.org/route/v1/driving/';
 const WORK = /conferen|congress|symposi|workshop|summit|seminar|colloqui|summer school|winter school|meeting|kick-?off|defen[cs]e|viva|keynote|invited talk|panel|committee|review|project|hackathon|expo\b|trade fair|training|course\b|lecture|visit to|site visit|retreat|plenary/i;
-const MIN_DAYS = 3, MAX_FLOWN_DAYS = 90, MOVE_KM = 1, ROAD_KM = 10, HOP_KM = 2, CAR_HOP_KM = 5, WALK_KMH = 7, PICKUP_KM = 30, AT_CAR_KM = 5, ROAD_MAX_KM = 900, CAR_KMH = 140, FERRY_KM = 20, ROAD_V = 2;
+const MIN_DAYS = 3, MAX_REST_DAYS = 2, MAX_FLOWN_DAYS = 90, MOVE_KM = 1, ROAD_KM = 10, HOP_KM = 2, CAR_HOP_KM = 5, WALK_KMH = 7, PICKUP_KM = 30, AT_CAR_KM = 5, ROAD_MAX_KM = 900, CAR_KMH = 140, FERRY_KM = 20, ROAD_V = 2;
 const regionName = (() => {
   try { const n = new Intl.DisplayNames(['en'], { type: 'region' }); return cc => { try { return n.of(cc); } catch (_) { return cc; } }; } catch (_) { return cc => cc; }
 })();
@@ -54,7 +54,9 @@ function create({ towns, cities, days, flights, airports, groundTrips, stays, ac
     const grid = towns();
     if (!grid) return [];
     const fl = flights(), gt = groundTrips(), st = stays(), acts = activities(), ph = photos();
-    const key = [fl.length, gt.length, st.length, acts.length, ph.length, acts[0]?.id, st[st.length - 1]?.id, (calendar() || []).length].join('|');
+    // (a stay's or a trip's dates changed, as well as how many there are)
+    const sig = list => { let h = 0; for (const x of list) for (const v of [x.start, x.end, x.date, x.lat]) { const t = String(v ?? ''); for (let i = 0; i < t.length; i++) h = (h * 31 + t.charCodeAt(i)) | 0; } return h; };
+    const key = [fl.length, gt.length, st.length, acts.length, ph.length, acts[0]?.id, st[st.length - 1]?.id, (calendar() || []).length, sig(st), sig(gt), sig(fl)].join('|');
     if (memo.key === key) return memo.list;
     const home = homeCountries(grid), ap = airports();
     const cache = new Map(), townOf = (at, city) => {
@@ -64,12 +66,12 @@ function create({ towns, cities, days, flights, airports, groundTrips, stays, ac
     };
     const away = new Map();  // day -> { cc -> points }
     const mark = (d, cc) => { if (!away.has(d)) away.set(d, new Map()); if (cc) away.get(d).set(cc, (away.get(d).get(cc) || 0) + 1); };
-    const pts = days('', '');
+    const pts = days('', ''), atHome = new Set();  // days something puts you in a home country
     for (const p of pts) {
       const t = p.at && townOf(p.at, p.city);
-      if (t && !home.has(t.cc)) mark(p.day, t.cc);
+      if (t && !home.has(t.cc)) mark(p.day, t.cc); else if (t) atHome.add(p.day);
     }
-    for (const p of ph) if (p[2] != null) { const t = townOf([p[2], p[3]]); if (t && !home.has(t.cc)) mark(dayOf(p[1]), t.cc); }
+    for (const p of ph) if (p[2] != null) { const t = townOf([p[2], p[3]]); if (t && !home.has(t.cc)) mark(dayOf(p[1]), t.cc); else if (t) atHome.add(dayOf(p[1])); }
     const nights = new Set();
     for (const s of st) {
       if (s.what === 'car' || !s.start) continue;
@@ -94,11 +96,23 @@ function create({ towns, cities, days, flights, airports, groundTrips, stays, ac
     const flownOn = perDay(fl.map(f => (f.date || '').slice(0, 10))), rodeOn = perDay(gt.map(t => (t.date || '').slice(0, 10)));
     const activeOn = perDay(acts.map(a => (a.date || '').slice(0, 10))), shotOn = perDay(ph.map(p => dayOf(p[1])));
     const count = (m, r) => r.days.reduce((n, d) => n + (m.get(d) || 0), 0);
+    // a rest day or two with nothing to show (no photo, no ride) in the same country does not end a trip: unless
+    // something puts you at home then, or a flight brought you home
+    const sorted = [...away.keys()].sort(), ccOf = d => [...(away.get(d) || new Map()).keys()];
+    const ccNear = (i, step) => { for (let j = i, n = 0; j >= 0 && j < sorted.length && n < 4; j += step, n++) if (ccOf(sorted[j]).length) return ccOf(sorted[j]); return []; };
+    const homeLanding = new Set(fl.filter(f => homeAp.has(f.to)).map(f => (f.date || '').slice(0, 10)));
+    const rest = (r, i) => {
+      const gap = [];
+      for (let d = addDays(r.end, 1); d < sorted[i]; d = addDays(d, 1)) gap.push(d);
+      if (gap.length > MAX_REST_DAYS || [r.end, ...gap].some(d => atHome.has(d) || homeLanding.has(d))) return null;
+      const before = ccNear(i - 1, -1), after = ccNear(i, 1);
+      return before.some(c => after.includes(c)) ? gap : null;
+    };
     const runs = [];
-    for (const d of [...away.keys()].sort()) {
-      const r = runs[runs.length - 1];
-      if (r && addDays(r.end, 1) >= d) r.end = d, r.days.push(d); else runs.push({ start: d, end: d, days: [d] });
-    }
+    sorted.forEach((d, i) => {
+      const r = runs[runs.length - 1], gap = r && addDays(r.end, 1) < d && rest(r, i);
+      if (r && (addDays(r.end, 1) >= d || gap)) r.end = d, r.days.push(...(gap || []), d); else runs.push({ start: d, end: d, days: [d] });
+    });
     const out = runs.filter(r => r.days.length >= MIN_DAYS || r.days.some(d => nights.has(d) || travel.has(d))).map(r => {
       const cc = new Map();
       r.days.forEach(d => (away.get(d) || new Map()).forEach((n, c) => cc.set(c, (cc.get(c) || 0) + 1)));
