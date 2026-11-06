@@ -326,6 +326,7 @@
     .pp-day-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 6px; }
     .pp-day-head small { color: var(--text2); }
     .pp-here { padding: 2px 10px; font-size: 12px; }
+    .pp-remove { margin-top: 6px; }
     .pp-thumbs { display: flex; flex-wrap: wrap; gap: 4px; }
     .pp-ph { position: relative; width: 104px; height: 104px; border-radius: 6px; overflow: hidden; cursor: pointer; background: var(--surface2, #222); outline: 3px solid transparent; outline-offset: -3px; }
     .pp-ph img { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; }
@@ -886,7 +887,7 @@
         <button class="btn btn-ghost" onclick="document.querySelector('.tab[data-tab=&quot;trips&quot;]').click()">← Trips</button>
         <h2>Place photos</h2>
       </div>
-      <p class="sp-note" style="margin: -12px 0 16px">Your photos with no place: select them, then place them in a town or drag them onto the map.</p>
+      <p class="sp-note" style="margin: -12px 0 16px">Your photos with no place: select them, then place them in a town, drag them onto the map, or remove them from Cairn.</p>
       <div id="pp-body"></div>
     </div>
   </div>

@@ -658,6 +658,8 @@ app.get('/api/photos', (_req, res) => res.json(readImport(PHOTOS_FILE, [])));
 // the photo index, with the photos you placed by hand (#place-photos, below) and those of Google Photos albums that
 // have no place of their own at the album's (albums.js)
 const PHOTO_PLACES = path.join(DATA_DIR, 'photo_places.json'), PHOTO_UNPLACED = path.join(DATA_DIR, 'photo_unplaced.json');
+// the photos with no place you took out of Cairn (#place-photos): { file: { t, name, at } }; left alone in Apple Photos
+const PHOTO_REMOVED = path.join(DATA_DIR, 'photo_removed.json');
 let placedMemo = { places: null, albums: null, out: [] };
 function placedPhotos() {
   const places = readImport(PHOTO_PLACES, {}), al = typeof albums !== 'undefined' ? albums.photoEntries() : [];
@@ -745,7 +747,8 @@ function autoPlaces() {
     for (let i = 1; i <= NO_DATA_DAYS && after === null; i++) if (where.has(addDays(d, i))) after = oneTown(addDays(d, i)) || false;
     return before && after && before.id === after.id ? { ...before, between: true } : null;
   };
-  const all = [...unplacedById()].filter(([, [t, , , al]]) => t && !(al || []).some(a => /^To delete/.test(a)));
+  const removed = readImport(PHOTO_REMOVED, {});
+  const all = [...unplacedById()].filter(([, [t, file, , al]]) => t && !removed[file] && !(al || []).some(a => /^To delete/.test(a)));
   const rows = all.filter(([, [, file]]) => !places[file]);
   const times = all.map(([, r]) => r[0]).sort((a, b) => a - b), burst = new Set();  // all of them, placed or not
   for (let i = 0, j = 0; j < times.length; j++) {
@@ -799,17 +802,17 @@ app.post('/api/photos/auto', (req, res) => {
 // [{ id, t, name, albums: [index], video, near }], the ones not placed yet, by time; the albums' names; and per day
 // where Cairn has you that day (the town most of the day's places are in), to place a day's photos there in one go
 app.get('/api/photos/unplaced', (_req, res) => {
-  const places = readImport(PHOTO_PLACES, {}), names = [], index = new Map(), photos = [], days = {};
+  const places = readImport(PHOTO_PLACES, {}), removed = readImport(PHOTO_REMOVED, {}), names = [], index = new Map(), photos = [], days = {};
   const where = dayTownMap();
   for (const [id, [t, file, name, albumList, video]] of unplacedById()) {
-    if (places[file] || (albumList || []).some(a => /^To delete/.test(a))) continue;  // nor the copies waiting to be deleted
+    if (places[file] || removed[file] || (albumList || []).some(a => /^To delete/.test(a))) continue;  // nor the copies waiting to be deleted
     const albumIdx = (albumList || []).map(a => { if (!index.has(a)) { index.set(a, names.length); names.push(a); } return index.get(a); });
     photos.push({ id, t, name, albums: albumIdx, video: video ? 1 : 0, near: nearSpot(t) });
     const day = t ? new Date(t * 1000).toISOString().slice(0, 10) : '';
     if (day && !(day in days)) days[day] = where.get(day) || null;
   }
   photos.sort((a, b) => (a.t || 0) - (b.t || 0));
-  res.json({ photos, albums: names, days, placed: Object.keys(places).length });
+  res.json({ photos, albums: names, days, placed: Object.keys(places).length, removed: Object.keys(removed).length });
 });
 app.get('/api/photos/unplaced/:id/:size(thumb|full)', async (req, res) => {
   const row = unplacedById().get(req.params.id);
@@ -839,6 +842,23 @@ app.post('/api/photos/place', (req, res) => {
   fs.writeFileSync(PHOTO_PLACES, JSON.stringify(places));
   if (!undo) writePlacesSoon();
   res.json({ placed: undo ? 0 : n, removed: undo ? n : 0 });
+});
+// { ids }: these photos out of Cairn, not to be placed (a screenshot, a scan, a photo of nothing); Apple Photos keeps
+// them as they are. { ids, undo: true } brings them back; { all: true, undo: true } brings back every one
+app.post('/api/photos/remove', (req, res) => {
+  const { ids, undo, all } = req.body || {};
+  const removed = { ...readImport(PHOTO_REMOVED, {}) }, rows = unplacedById();
+  let n = 0;
+  if (undo && all) { n = Object.keys(removed).length; fs.writeFileSync(PHOTO_REMOVED, '{}'); return res.json({ removed: 0, back: n }); }
+  if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'ids required' });
+  for (const id of ids) {
+    const row = rows.get(id);
+    if (!row) continue;
+    if (undo) { if (removed[row[1]]) { delete removed[row[1]]; n++; } continue; }
+    if (!removed[row[1]]) { removed[row[1]] = { t: row[0], name: row[2], at: new Date().toISOString() }; n++; }
+  }
+  fs.writeFileSync(PHOTO_REMOVED, JSON.stringify(removed));
+  res.json({ removed: undo ? 0 : n, back: undo ? n : 0 });
 });
 // imports/photos_place.py, a while after the last change, one run at a time; a photo it set is marked written
 let placesTimer = null, placesRunning = false;
@@ -1592,7 +1612,7 @@ const backups = require('./backup').create({
     ['suggestions.dismissed.json', path.join(DATA_DIR, 'suggestions.dismissed.json')], ['saved_places.json', path.join(DATA_DIR, 'saved_places.json')],
     ['tripdoc_rows.json', path.join(DATA_DIR, 'tripdoc_rows.json')], ['albums.json', path.join(DATA_DIR, 'albums.json')],
     ['home.json', path.join(DATA_DIR, 'home.json')], ['album_places.json', path.join(DATA_DIR, 'album_places.json')],
-    ['photo_places.json', PHOTO_PLACES],
+    ['photo_places.json', PHOTO_PLACES], ['photo_removed.json', PHOTO_REMOVED],
     ['checkins.json', path.join(DATA_DIR, 'checkins.json')], ['calendar.json', path.join(DATA_DIR, 'calendar.json')],
     ['spotify.json', SPOTIFY_FILE], ['health.json', HEALTH_FILE], ['trip_covers.json', path.join(DATA_DIR, 'trip_covers.json')],
     ['github.json', path.join(DATA_DIR, 'github.json')],

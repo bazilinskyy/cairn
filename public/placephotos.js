@@ -2,8 +2,8 @@
 // Placing photos by hand (#place-photos): the library's photos with no place (/api/photos/unplaced), by day, with the
 // albums they are in. Select one or many (a click, shift-click for a run, a day's or an album's at once), then place them
 // in a town (search, or the town Cairn has you in that day), drag them onto the map at the exact spot, or put each at the
-// spot of a photo with a place taken within half an hour of it (📍 on the photo: a camera beside the phone). Each placing
-// can be undone. Uses the page's globals (escapeHTML, fmtDate, BASEMAPS, prefs, toneMap, toast).
+// spot of a photo with a place taken within half an hour of it (📍 on the photo: a camera beside the phone), or take them
+// out of Cairn instead (a screenshot, a scan: nothing to place; Apple Photos keeps them). Each can be undone. Uses the page's globals (escapeHTML, fmtDate, BASEMAPS, prefs, toneMap, toast).
 
 const PP_DAYS = 40;  // days drawn at a time
 let pp = null;       // { photos, albums, days, shown (filtered list), selected: Set, last: index, map, markers, undo: [] }
@@ -40,6 +40,7 @@ async function openPlacePhotos() {
         <div class="chart-section pp-panel">
           <div id="pp-sel">Nothing selected</div>
           <div id="pp-nearsel"></div>
+          <div id="pp-removesel"></div>
           <input id="pp-town" type="search" placeholder="Place them in a town…" autocomplete="off" aria-label="Town">
           <div id="pp-towns"></div>
           <p class="sp-note">Or drag photos onto the map to place them at that exact spot. Dragging a selected photo moves
@@ -48,6 +49,8 @@ async function openPlacePhotos() {
           <div id="pp-undo"></div>
           <p class="sp-note">Places are kept in Cairn at once and written into Apple Photos on this Mac in the background.
             ${d.placed ? `${d.placed.toLocaleString()} placed so far.` : ''}</p>
+          ${d.removed ? `<p class="sp-note">${d.removed.toLocaleString()} taken out of Cairn so far (still in Apple Photos).
+            <button class="btn btn-ghost" onclick="ppRemoveAllBack()">Bring them all back</button></p>` : ''}
         </div>
       </div>
     </div>`;
@@ -148,6 +151,8 @@ function ppCount() {
   document.getElementById('pp-sel').innerHTML = n ? `<b>${n.toLocaleString()} selected</b>` : 'Nothing selected: click photos, shift-click for a run, or tick a day';
   document.getElementById('pp-nearsel').innerHTML = near ? `<button class="btn btn-ghost" onclick="ppPlaceNear(pp.photos.filter(p => p.near && pp.selected.has(p.id)).map(p => p.id))"
     title="Each where a photo with a place was taken within half an hour of it">📍 Place ${near === n ? (n > 1 ? 'them' : 'it') : `${near.toLocaleString()} of them`} at nearby photos' spots</button>` : '';
+  document.getElementById('pp-removesel').innerHTML = n ? `<button class="btn btn-ghost pp-remove" onclick="ppRemove([...pp.selected])"
+    title="Not placed anywhere and no longer listed here; Apple Photos keeps ${n > 1 ? 'them' : 'it'} as ${n > 1 ? 'they are' : 'it is'}">🗑 Remove ${n > 1 ? 'them' : 'it'} from Cairn</button>` : '';
 }
 function ppNearText([, , min]) {
   return min === 0 ? 'A photo with a place was taken the same minute' : `A photo with a place was taken ${Math.abs(min)} min ${min > 0 ? 'after' : 'before'}`;
@@ -204,11 +209,28 @@ async function ppPlaceNear(ids) {
   ppPlaced(ids, "at nearby photos' spots", marker);
   toast(`Placed ${r.placed} photo${r.placed !== 1 ? 's' : ''} at nearby photos' spots`);
 }
-function ppPlaced(ids, name, marker) {
+// out of Cairn, not placed: gone from the list, a line to undo it
+async function ppRemove(ids) {
+  if (!ids.length) return;
+  const r = await fetch('/api/photos/remove', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) })
+    .then(x => (x.ok ? x.json() : null)).catch(() => null);
+  if (!r) return toast('Could not remove them', 'error');
+  ppPlaced(ids, 'removed from Cairn', null, 'remove');
+  toast(`Removed ${ids.length} photo${ids.length > 1 ? 's' : ''} from Cairn (still in Apple Photos)`);
+}
+async function ppRemoveAllBack() {
+  const r = await fetch('/api/photos/remove', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ all: true, undo: true }) })
+    .then(x => (x.ok ? x.json() : null)).catch(() => null);
+  if (!r) return toast('Could not bring them back', 'error');
+  toast(`Brought back ${r.back.toLocaleString()} photos`);
+  pp.undo = pp.undo.filter(u => u.kind !== 'remove');
+  openPlacePhotos();
+}
+function ppPlaced(ids, name, marker, kind = 'place') {
   const gone = new Set(ids), photos = pp.photos.filter(p => gone.has(p.id));
   pp.photos = pp.photos.filter(p => !gone.has(p.id));
   ids.forEach(id => pp.selected.delete(id));
-  pp.undo.unshift({ ids, photos, name, marker });
+  pp.undo.unshift({ ids, photos, name, marker, kind });
   pp.undo = pp.undo.slice(0, 10);
   const keep = new Set(pp.shown.map(p => p.id));
   pp.shown = pp.photos.filter(p => keep.has(p.id));
@@ -219,11 +241,11 @@ function ppPlaced(ids, name, marker) {
 async function ppUndo(i) {
   const u = pp.undo[i];
   if (!u) return;
-  const r = await fetch('/api/photos/place', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: u.ids, undo: true }) })
-    .then(x => (x.ok ? x.json() : null)).catch(() => null);
+  const r = await fetch(u.kind === 'remove' ? '/api/photos/remove' : '/api/photos/place', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids: u.ids, undo: true }) }).then(x => (x.ok ? x.json() : null)).catch(() => null);
   if (!r) return toast('Could not undo', 'error');
   pp.photos = [...pp.photos, ...u.photos].sort((a, b) => (a.t || 0) - (b.t || 0));
-  pp.markers.removeLayer(u.marker);
+  if (u.marker) pp.markers.removeLayer(u.marker);
   pp.undo.splice(i, 1);
   ppFilter();
   ppUndoBar();
@@ -231,7 +253,7 @@ async function ppUndo(i) {
 
 function ppUndoBar() {
   const box = document.getElementById('pp-undo');
-  if (box) box.innerHTML = pp.undo.length ? '<p><b>Placed just now</b></p>' + pp.undo.map((u, i) =>
+  if (box) box.innerHTML = pp.undo.length ? '<p><b>Just now</b></p>' + pp.undo.map((u, i) =>
     `<p><small>${u.ids.length} photo${u.ids.length > 1 ? 's' : ''} · ${escapeHTML(u.name)}</small> <button class="btn btn-ghost" onclick="ppUndo(${i})">Undo</button></p>`).join('') : '';
 }
 
@@ -244,7 +266,7 @@ function ppMap() {
   toneMap(pp.map);
   addBasemap(pp.map);
   pp.markers = L.layerGroup().addTo(pp.map);
-  pp.undo.forEach(u => u.marker.addTo(pp.markers));
+  pp.undo.forEach(u => u.marker && u.marker.addTo(pp.markers));
   el.addEventListener('dragover', e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; el.classList.add('pp-drop'); });
   el.addEventListener('dragleave', () => el.classList.remove('pp-drop'));
   el.addEventListener('drop', e => {

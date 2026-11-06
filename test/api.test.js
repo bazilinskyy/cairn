@@ -391,6 +391,26 @@ test('photos with no place: listed with their albums, placed by hand (on the map
   fs.rmSync(path.join(dir, 'data', 'photo_places.json'));
 });
 
+test('photos with no place taken out of Cairn: not listed, not placed by Cairn itself, and brought back', async () => {
+  const lib = '/Pictures/Photos Library.photoslibrary/originals/4/', t = Date.UTC(2019, 4, 10, 12) / 1000;
+  fs.writeFileSync(path.join(dir, 'data', 'photo_points.json'), JSON.stringify([[t + 600, 45.07, 7.69, '/photos/phone.jpg']]));
+  fs.writeFileSync(path.join(dir, 'data', 'photo_unplaced.json'), JSON.stringify([
+    [t, lib + 'D1B2C3D4-0000-0000-0000-000000000001.jpeg', 'Screenshot.png', [], 0],
+    [t + 60, lib + 'D1B2C3D4-0000-0000-0000-000000000002.jpeg', 'DSC_2.jpg', [], 0]]));
+  let d = await (await call('GET', '/api/photos/unplaced')).json();
+  const shot = d.photos.find(p => p.name === 'Screenshot.png').id;
+  assert.strictEqual((await call('POST', '/api/photos/remove', {})).status, 400);
+  assert.deepStrictEqual(await (await call('POST', '/api/photos/remove', { ids: [shot] })).json(), { removed: 1, back: 0 });
+  d = await (await call('GET', '/api/photos/unplaced')).json();
+  assert.deepStrictEqual([d.photos.map(p => p.name), d.removed], [['DSC_2.jpg'], 1]);
+  assert.strictEqual((await (await call('GET', '/api/photos/auto')).json()).total, 1);  // only the one still there
+  assert.deepStrictEqual(await (await call('POST', '/api/photos/remove', { ids: [shot], undo: true })).json(), { removed: 0, back: 1 });
+  assert.strictEqual((await (await call('GET', '/api/photos/unplaced')).json()).photos.length, 2);
+  await call('POST', '/api/photos/remove', { ids: d.photos.map(p => p.id).concat(shot) });
+  assert.deepStrictEqual(await (await call('POST', '/api/photos/remove', { all: true, undo: true })).json(), { removed: 0, back: 2 });
+  ['photo_points.json', 'photo_unplaced.json', 'photo_removed.json'].forEach(f => fs.rmSync(path.join(dir, 'data', f)));
+});
+
 test('a photo with no place taken near in time to one with a place: that spot offered, and placed there in one go', async () => {
   const lib = '/Pictures/Photos Library.photoslibrary/originals/2/', t = Date.UTC(2019, 4, 10, 12) / 1000;
   fs.writeFileSync(path.join(dir, 'data', 'photo_points.json'), JSON.stringify([[t + 600, 45.07, 7.69, '/photos/phone.jpg']]));
