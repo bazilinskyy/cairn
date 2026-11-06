@@ -862,6 +862,7 @@ app.post('/api/photos/remove', (req, res) => {
 });
 // imports/photos_place.py, a while after the last change, one run at a time; a photo it set is marked written
 let placesTimer = null, placesRunning = false;
+const PLACES_STALL_MS = 5 * 60e3;
 let placesStatus = null;  // how the last write into Photos went, for the health page: { at, ok, error?, written? }
 const placesFailed = error => {
   placesRunning = false;
@@ -879,11 +880,16 @@ function writePlaces() {
   placesRunning = true;
   const uv = config.uv || path.join(require('os').homedir(), '.local/bin/uv');
   const child = require('child_process').spawn(uv, ['run', '-q', '--with', 'osxphotos', '--with', 'pyobjc<13', 'python', path.join(__dirname, 'imports', 'photos_place.py'), PHOTO_PLACES]);
-  let out = '', err = '', failed = false;
-  child.stdout.on('data', d => { out += d; });
+  let out = '', err = '', failed = false, stall = null;
+  // Photos that does not answer (started under the lock screen, it waits for ever): stopped after PLACES_STALL_MS with
+  // nothing written, and tried again later
+  const watch = () => { clearTimeout(stall); stall = setTimeout(() => { failed = true; child.kill(); placesFailed('Photos did not answer (started while the screen was locked?)'); }, PLACES_STALL_MS); };
+  watch();
+  child.stdout.on('data', d => { out += d; watch(); });
   child.stderr.on('data', d => { err += d; });
-  child.on('error', e => { failed = true; placesFailed(e.message); });
+  child.on('error', e => { clearTimeout(stall); failed = true; placesFailed(e.message); });
   child.on('close', code => {
+    clearTimeout(stall);
     if (failed) return;
     placesRunning = false;
     const done = new Set(), lines = out.split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch (_) { return {}; } });

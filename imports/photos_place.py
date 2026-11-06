@@ -20,7 +20,7 @@ LIBRARY = re.compile(r"\.photoslibrary/originals/[0-9A-F]/([0-9A-F-]{36})\.[^/]+
 
 def busy():
     """Another job driving Photos: two at once make AppleScript hang."""
-    r = subprocess.run(["pgrep", "-f", "osxphotos import|photos-after.py|photos-laptop-import"], capture_output=True, text=True)
+    r = subprocess.run(["pgrep", "-f", "osxphotos import|photos-after.py|photos-laptop-import|photos_dedupe.py --apply"], capture_output=True, text=True)
     return bool(r.stdout.strip())
 
 
