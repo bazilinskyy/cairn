@@ -20,6 +20,7 @@
   <script src="city.js"></script>
   <script src="airport.js"></script>
   <script src="country.js"></script>
+  <script src="activity.js"></script>
   <script src="trips.js"></script>
   <script src="replay.js"></script>
   <script src="curiosities.js"></script>
@@ -185,6 +186,14 @@
     .town-pin { height: 24px; padding: 0 5px; border-radius: 12px; background: var(--surface); border: 2px solid var(--code); box-sizing: border-box;
       display: flex; align-items: center; justify-content: center; gap: 3px; font-size: 12px; line-height: 1; white-space: nowrap; }
     .town-pin.music-pin { border-color: var(--music); }
+    #map.over-route { cursor: pointer; }
+    .act-profile svg { width: 100%; height: auto; display: block; cursor: crosshair; }
+    .act-profile .act-label { font-size: 12px; fill: var(--text2); }
+    .act-profile .act-axis { stroke: var(--border); stroke-width: 1; }
+    .act-profile .act-cross { stroke: var(--text); stroke-width: 1; stroke-dasharray: 3 3; }
+    .act-read { font-size: 13px; color: var(--text2); margin-top: 6px; min-height: 18px; font-variant-numeric: tabular-nums; }
+    .act-photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 6px; }
+    .act-photos img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 6px; display: block; }
     .import-row { display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; padding: 8px 0; border-top: 1px solid var(--border); }
     .import-row small { display: block; color: var(--text2); font-size: 12px; margin-top: 2px; }
     .import-row .import-last { color: var(--text); }
@@ -953,6 +962,19 @@
       </div>
       <p class="sp-note" id="country-sub" style="margin: -12px 0 20px"></p>
       <div id="country-body"></div>
+    </div>
+  </div>
+
+  <!-- ACTIVITY PAGE (activity.js), opened from a ride's or a run's name in its popup -->
+  <div id="tab-activity" class="tab-content">
+    <div class="stats-page">
+      <div class="sp-head">
+        <button class="btn btn-ghost" onclick="closeActivity()">← Map</button>
+        <h2 id="activity-title"></h2>
+        <button class="btn btn-ghost" onclick="closeActivity(true)">Show on the map</button>
+      </div>
+      <p class="sp-note" id="activity-sub" style="margin: -12px 0 20px"></p>
+      <div id="activity-body"></div>
     </div>
   </div>
 

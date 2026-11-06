@@ -598,6 +598,8 @@ function drawTowns(k, layer, list, what, pin) {
   if (townMode(k) === 'heat') {
     loadHeat().then(() => {
       if (townMode(k) !== 'heat') return;
+      // not on a map out of sight (another page open: no size to paint on); when it shows
+      if (!map.getSize().x) return map.once('resize', () => drawTowns(k, layer, list, what, pin));
       layer.clearLayers();
       const max = Math.log1p(Math.max(1, ...towns.map(t => t.n)));
       L.heatLayer(towns.map(t => [t.lat, t.lon, Math.log1p(t.n) / max]), { radius: 20, blur: 24, minOpacity: 0.3, maxZoom: 10, gradient: TOWN_LAYERS[k].heat }).addTo(layer);
@@ -781,12 +783,26 @@ function initExtraPanes() {
   addLocateControl();
   add3DControl();
   map.on('click', e => setTimeout(() => { if (Date.now() - lastPopup > 150) openActivityAt(e.latlng); }, 0));
+  map.on('mousemove', hoverActivities);
 }
 
-// The route nearest a click, within 6 pixels
+// The route nearest a click, within 12 pixels (16 on a touch screen: a finger is broad); the pointer a hand over one
 function openActivityAt(ll) {
-  if (!map.hasLayer(activityLayer) || !actShown.length) return;
-  const z = map.getZoom(), cx = pxX(ll.lng, z), cy = pxY(ll.lat, z), tol = 6, deg = tol / (256 * 2 ** z) * 360;
+  const best = activityNear(ll);
+  if (best) activityPopup(best, ll);
+}
+let hoverAsked = false;
+function hoverActivities(e) {
+  if (hoverAsked) return;
+  hoverAsked = true;
+  requestAnimationFrame(() => {
+    hoverAsked = false;
+    map.getContainer().classList.toggle('over-route', !!activityNear(e.latlng));
+  });
+}
+function activityNear(ll) {
+  if (!map.hasLayer(activityLayer) || !actShown.length) return null;
+  const z = map.getZoom(), cx = pxX(ll.lng, z), cy = pxY(ll.lat, z), tol = matchMedia('(pointer: coarse)').matches ? 16 : 12, deg = tol / (256 * 2 ** z) * 360;
   let best = null, bestD = tol;
   for (const a of actShown) {
     const [s, w, n, e] = a.bbox;
@@ -800,7 +816,7 @@ function openActivityAt(ll) {
       px = qx; py = qy;
     }
   }
-  if (best) activityPopup(best, ll);
+  return best;
 }
 
 // The activity's popup, and its route drawn over all the others (with a casing in the text colour) while it is open
@@ -817,9 +833,10 @@ function activityPopup(a, ll) {
     const el = document.querySelector('.leaflet-popup .act-weather');
     if (el && w[a.id]) el.innerHTML = '<br>' + weatherText(w[a.id]);
   });
-  L.popup({ maxWidth: 260 }).setLatLng(ll).setContent(`<b>${sportEmoji[a.kind]} ${escapeHTML(a.name)}</b><br>` +
+  L.popup({ maxWidth: 260 }).setLatLng(ll).setContent(`<b>${sportEmoji[a.kind]} <a href="#activity=${a.id}" class="popup-link" onclick="event.preventDefault(); openActivity('${a.id}')">${escapeHTML(a.name)}</a></b><br>` +
     `<small>${escapeHTML(a.sport)} · ${fmtDate(a.date)} · ${fmtDist(a.distance, 1)}` +
-    `${a.elevation ? ` · ↑${fmtHeight(a.elevation)}` : ''}</small><small class="act-weather">${allWeather?.[a.id] ? '<br>' + weatherText(allWeather[a.id]) : ''}</small>`).on('remove', () => {
+    `${a.elevation ? ` · ↑${fmtHeight(a.elevation)}` : ''}</small><small class="act-weather">${allWeather?.[a.id] ? '<br>' + weatherText(allWeather[a.id]) : ''}</small>` +
+    `<br><a href="#activity=${a.id}" class="popup-link" onclick="event.preventDefault(); openActivity('${a.id}')">Open its page →</a>`).on('remove', () => {
     if (activityHighlight) map.removeLayer(activityHighlight);
     activityHighlight = null;
   }).openOn(map);

@@ -914,6 +914,16 @@ const climbs = require('./climbs').create({
   towns: loadTowns
 });
 app.get('/api/climbs', (_req, res) => res.json(climbs.list()));
+// One activity in full, for its page (activitypage.js)
+const activityPage = require('./activitypage').create({
+  list: () => activities.list(), track: require('./efforts').tracks(path.join(DATA_DIR, 'tracks')), weather: () => weather.all(),
+  climbs: () => climbs.list(), photos: () => datedPhotos(), plays: (from, to) => music.between(from, to),
+  townAt: (lat, lon) => (loadTowns() ? cities.townAt(towns, lat, lon) : null), trips: () => tripStore.list(), day: d => wellnessDays()[d] || null
+});
+app.get('/api/activity/:id', (req, res) => {
+  const a = activityPage.get(req.params.id);
+  a ? res.json(a) : res.status(404).json({ error: 'no such activity' });
+});
 // A ride to a climb's top and back (a GPX file for the bike computer): ?from=lat,lon (a stay), &name= its name. The
 // route is FOSSGIS's bicycle routing on OpenStreetMap; it does not know which side of the climb is the famous one
 const bikeRoutes = new Map();

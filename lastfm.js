@@ -144,7 +144,12 @@ function create({ file, keys, more = () => [], log = console.log }) {
   }
 
   const status = () => { const d = load(), k = keys(); return { configured: !!(k.key && k.user), user: d.user || k.user || '', scrobbles: d.scrobbles.length, last_sync: d.last_sync || '', error: d.error || '' }; };
-  return { sync, top, byDay, status };
+  // the plays between two times (unix seconds), as they are kept: [[unix, artist, track]]
+  function between(from, to) {
+    top();
+    return (memo.list || []).filter(s => s[0] >= from && s[0] <= to);
+  }
+  return { sync, top, byDay, between, status };
 }
 
 module.exports = { create };

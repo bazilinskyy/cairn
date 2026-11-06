@@ -28,7 +28,7 @@ before(async () => {
   fs.copyFileSync(path.join(ROOT, 'activities.js'), path.join(dir, 'activities.js'));
   fs.copyFileSync(path.join(ROOT, 'regions.js'), path.join(dir, 'regions.js'));
   fs.copyFileSync(path.join(ROOT, 'country-lists.json'), path.join(dir, 'country-lists.json'));
-  ['climbs.js', 'ascents.js', 'efforts.js', 'climbs.json', 'climbs_extra.json', 'photos.js', 'climb_records.json', 'trips.js', 'weather.js', 'stats.js', 'lastfm.js', 'suggestions.js', 'backup.js', 'albums.js', 'things.js', 'todotrips.js', 'prep.js', 'spending.js', 'review.js', 'bases.js', 'books.js', 'uploads.js', 'report.js', 'onthisday.js', 'tripexport.js', 'wallet.js', 'code.js'].forEach(f => fs.copyFileSync(path.join(ROOT, f), path.join(dir, f)));
+  ['climbs.js', 'ascents.js', 'efforts.js', 'climbs.json', 'climbs_extra.json', 'photos.js', 'climb_records.json', 'trips.js', 'weather.js', 'stats.js', 'lastfm.js', 'suggestions.js', 'backup.js', 'albums.js', 'things.js', 'todotrips.js', 'prep.js', 'spending.js', 'review.js', 'bases.js', 'books.js', 'uploads.js', 'report.js', 'onthisday.js', 'tripexport.js', 'wallet.js', 'code.js', 'activitypage.js'].forEach(f => fs.copyFileSync(path.join(ROOT, f), path.join(dir, f)));
   fs.copyFileSync(path.join(ROOT, 'default.config'), path.join(dir, 'default.config'));
   fs.cpSync(path.join(ROOT, 'public'), path.join(dir, 'public'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'data'));
