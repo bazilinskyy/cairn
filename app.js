@@ -1006,6 +1006,10 @@ function placesAndDays(from, to, { stays: withStays = true } = {}) {
   if (!m || m.refs.some((r, i) => r !== refs[i])) placesMemo.set(withStays, m = { refs, list: allPlacesAndDays(withStays) });
   return from || to ? m.list.filter(p => (!from || p.day >= from) && (!to || p.day <= to)) : m.list.slice();
 }
+// the places of the days that have been, for where you have been (countries, towns, their visits): a coming trip's
+// booked days count once they come
+// (CAIRN_TODAY: another day as today, for the tests)
+const placesBeen = (from, to) => { const now = process.env.CAIRN_TODAY || new Date().toISOString().slice(0, 10); return placesAndDays(from, !to || to > now ? now : to); };
 // Unix seconds of a local time ("2017-02-12 06:25") in a time zone (an airport's); null without a time or zone
 // Each flight's time in the air, [unix take-off, unix landing, [lat, lon] of the airports], a quarter of an hour short at
 // each end (taxiing): photos then were taken from the plane
@@ -1120,7 +1124,7 @@ function countryStats({ scheme = null, from = '', to = '' } = {}) {
     return all[id] = all[id] || { country: id, name: scheme ? place.name : undefined, cc: scheme ? place.cc || (/^[A-Z]{2}$/.test(place.id) ? place.id : undefined) : place.cc, days: new Set(), towns: new Set(), nights: 0,
       flights: 0, train: 0, bus: 0, ferry: 0, hitch: 0, drive: 0, cars: 0, activities: 0, km: 0, photos: 0 };
   };
-  placesAndDays(from, to).forEach(p => {
+  placesBeen(from, to).forEach(p => {
     const v = of(p.at, p.city), t = townOf(p.at, p.city);
     if (v) { v.days.add(p.day); if (t) v.towns.add(t.id); }
   });
@@ -1159,7 +1163,7 @@ function countryStats({ scheme = null, from = '', to = '' } = {}) {
 app.get('/api/regions', async (req, res) => {
   const scheme = regions.SCHEMES.includes(req.query.scheme) ? req.query.scheme : 'iso';
   try {
-    const json = Buffer.from(JSON.stringify(await regions.visited(scheme, placesAndDays(req.query.from || '', req.query.to || ''))));
+    const json = Buffer.from(JSON.stringify(await regions.visited(scheme, placesBeen(req.query.from || '', req.query.to || ''))));
     res.set('Vary', 'Accept-Encoding');
     if (/\bgzip\b/.test(req.headers['accept-encoding'] || '')) return res.set({ 'Content-Encoding': 'gzip', 'Content-Type': 'application/json' }).send(zlib.gzipSync(json));
     res.type('json').send(json);
@@ -1183,7 +1187,7 @@ app.get('/api/country/:cc', async (req, res) => {
     return isoMemo.get(k);
   };
   const here = at => placeOf(at)?.id === cc;
-  const points = placesAndDays('', '').filter(p => here(p.at));
+  const points = placesBeen('', '').filter(p => here(p.at));
   const place = points.length ? placeOf(points[0].at) : null;
   const days = [...new Set(points.map(p => p.day))].sort(), visits = [];
   days.forEach(d => {
@@ -1252,7 +1256,7 @@ app.get('/api/city/:id', (req, res) => {
   const from = req.query.from || '', to = req.query.to || '';
   const inPeriod = d => d && (!from || d >= from) && (!to || d <= to);
   const here = (at, city) => !!at && at[0] != null && townOfAt([+at[0], +at[1]], city) === town;
-  const days = [...new Set(placesAndDays(from, to).filter(p => here(p.at, p.city)).map(p => p.day))].sort();
+  const days = [...new Set(placesBeen(from, to).filter(p => here(p.at, p.city)).map(p => p.day))].sort();
   const visits = [];
   days.forEach(d => {
     const v = visits[visits.length - 1];
@@ -2190,7 +2194,7 @@ app.get('/api/trips/:id/export/:format(kml|gpx|html)', (req, res) => {
 app.get('/api/cities', (req, res) => {
   loadTowns();
   if (!towns) return res.json([]);
-  res.json(cities.rank(towns, placesAndDays(req.query.from || '', req.query.to || '')));
+  res.json(cities.rank(towns, placesBeen(req.query.from || '', req.query.to || '')));
 });
 
 // Your places: the town you grew up in, the one you live in and the one you work in (data/home.json), each a GeoNames

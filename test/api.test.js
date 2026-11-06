@@ -47,7 +47,7 @@ before(async () => {
   fs.writeFileSync(path.join(dir, 'config'), JSON.stringify({ port: PORT, ground_lookups: false, photos_write_back: false, wallet_dir: path.join(dir, 'passes') }));
   fs.writeFileSync(path.join(dir, 'secret'), '{}');
   server = spawn(process.execPath, ['app.js'], {
-    cwd: dir, env: { ...process.env, NODE_PATH: path.join(ROOT, 'node_modules') }, stdio: 'ignore',
+    cwd: dir, env: { ...process.env, NODE_PATH: path.join(ROOT, 'node_modules'), CAIRN_TODAY: '2030-01-01' }, stdio: 'ignore',  // the fixtures' days have been
   });
   for (let i = 0; i < 300; i++) {  // up to 30 s: a busy machine starts it slowly
     try { await fetch(`${BASE}/api/flights`); return; } catch (_) { await new Promise(r => setTimeout(r, 100)); }
@@ -330,6 +330,14 @@ test('check-ins count for their town; payments abroad that no trip explains are 
   assert.deepStrictEqual((await (await call('GET', '/api/suggestions/payments')).json()).map(r => r.country), ['NL']);
   fs.rmSync(path.join(dir, 'data', 'checkins.json'));
   fs.rmSync(path.join(dir, 'data', 'transactions.json'));
+});
+
+test('a country you are booked to go to is not one you have been to, until the day comes', async () => {
+  const stay = await (await call('POST', '/api/stays', { code: 'TF2', what: 'stay', place: 'Adeje', start: '2031-05-01', end: '2031-05-03', lat: 28.12, lon: -16.73 })).json();
+  const places = (await (await call('GET', '/api/regions?scheme=iso')).json()).places.map(p => p.name);
+  const countries = (await (await call('GET', '/api/countries')).json()).map(c => c.cc);
+  assert.ok(!places.includes('Spain') && !countries.includes('ES'), `${places} / ${countries}`);
+  await call('DELETE', `/api/stays/${stay.id}`);
 });
 
 test('photos taken from a plane do not count as places you went', async () => {
