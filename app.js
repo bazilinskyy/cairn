@@ -1063,9 +1063,11 @@ function allPlacesAndDays(withStays) {
   });
   // photos: each from the photo index, where and when it was taken (once per place and day); without the index, the
   // older photo places file. Not those taken from a plane (between a flight's take-off and landing, over 100 km from
-  // both airports): they show what you flew over, not where you went
-  const flying = flyingSpans();
-  const inAir = (t, p) => flying.some(([a, b, x, y]) => t > a && t < b && ground.km(p, x) > 100 && ground.km(p, y) > 100);
+  // both airports, or nearer but in neither airport's country: an island passed on the way down): they show what you
+  // flew over, not where you went
+  const flying = flyingSpans(), ccOf = at => townOfAt(at)?.cc;
+  const inAir = (t, p) => flying.some(([a, b, x, y]) => t > a && t < b && ((ground.km(p, x) > 100 && ground.km(p, y) > 100)
+    || (ground.km(p, x) > 10 && ground.km(p, y) > 10 && ccOf(p) && ccOf(p) !== ccOf(x) && ccOf(p) !== ccOf(y))));
   const shot = datedPhotos();
   if (shot.length) {
     const seen = new Set();
