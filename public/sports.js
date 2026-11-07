@@ -423,7 +423,7 @@ function renderHistograms(list, kinds) {
 
 // --- tables ---
 
-const linkTo = a => `<a href="#" class="sp-link" data-activity="${a.id}" title="Show on the map">${escapeHTML(a.name || a.sport)}</a>`;
+const linkTo = a => `<a href="#activity=${a.id}" class="sp-link" data-activity="${a.id}" title="Its page">${escapeHTML(a.name || a.sport)}</a>`;
 
 function biggestPeriod(list, keyOf, label) {
   const sums = {};
@@ -524,7 +524,7 @@ function hookTips(box) {
 function hookLinks(id) {
   document.getElementById(id).querySelectorAll('[data-activity]').forEach(el => el.addEventListener('click', e => {
     e.preventDefault();
-    showActivityOnMap(+el.dataset.activity);
+    openActivity(el.dataset.activity);
   }));
 }
 

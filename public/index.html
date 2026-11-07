@@ -19,6 +19,7 @@
   <script src="sports.js"></script>
   <script src="city.js"></script>
   <script src="airport.js"></script>
+  <script src="airline.js"></script>
   <script src="country.js"></script>
   <script src="activity.js"></script>
   <script src="trips.js"></script>
@@ -327,6 +328,13 @@
     .pp-day-head small { color: var(--text2); }
     .pp-here { padding: 2px 10px; font-size: 12px; }
     .pp-remove { margin-top: 6px; }
+    .airline-title { display: flex; align-items: center; gap: 12px; }
+    .airline-logo { background: #fff; border-radius: 8px; padding: 4px 10px; display: inline-flex; }
+    .airline-logo img { height: 36px; width: auto; display: block; }
+    .airline-bar { height: 10px; border-radius: 0 4px 4px 0; background: var(--accent); min-width: 4px; }
+    .airline-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 0 16px; }
+    .base-map { height: 240px; margin-top: 8px; border-radius: 8px; }
+    .base-spot { display: block; margin-top: 4px; }
     .pp-thumbs { display: flex; flex-wrap: wrap; gap: 4px; }
     .pp-ph { position: relative; width: 104px; height: 104px; border-radius: 6px; overflow: hidden; cursor: pointer; background: var(--surface2, #222); outline: 3px solid transparent; outline-offset: -3px; }
     .pp-ph img { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; }
@@ -577,7 +585,7 @@
     .pic-icon { display: flex; width: 56px; height: 40px; align-items: center; justify-content: center; font-size: 24px; background: var(--surface2); border-radius: 6px; }
     .sugg.album .pics img { width: 56px; height: 56px; }
     .album-fields { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
-    .album-fields input { background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; color: var(--text); font-size: 12px; flex: 1 1 120px; min-width: 0; }
+    .album-fields input, .album-fields select { background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; color: var(--text); font-size: 12px; flex: 1 1 120px; min-width: 0; }
     .album-fields input[type="number"] { flex: 0 0 70px; }
     .sugg .acts label { font-size: 12px; display: flex; gap: 4px; align-items: center; }
     .add-page .subtitle { color: var(--text2); margin-bottom: 28px; font-size: 13px; }
@@ -931,7 +939,7 @@
   <div id="tab-city" class="tab-content">
     <div class="stats-page">
       <div class="sp-head">
-        <button class="btn btn-ghost" onclick="closeCityReport()">← Map</button>
+        <button class="btn btn-ghost back-tab" onclick="closeCityReport()">← Map</button>
         <h2 id="city-title"></h2>
         <button class="btn btn-ghost" onclick="closeCityReport(true)">Show on the map</button>
       </div>
@@ -944,7 +952,7 @@
   <div id="tab-airport" class="tab-content">
     <div class="stats-page">
       <div class="sp-head">
-        <button class="btn btn-ghost" onclick="closeAirport()">← Map</button>
+        <button class="btn btn-ghost back-tab" onclick="closeAirport()">← Map</button>
         <h2 id="airport-title"></h2>
         <button class="btn btn-ghost" onclick="closeAirport(true)">Show on the map</button>
       </div>
@@ -953,11 +961,23 @@
     </div>
   </div>
 
+  <!-- AIRLINE PAGE (airline.js), opened from an airline's name in the Flights list, the Stats tab or a page -->
+  <div id="tab-airline" class="tab-content">
+    <div class="stats-page">
+      <div class="sp-head">
+        <button class="btn btn-ghost back-tab" onclick="closeAirline()">← Map</button>
+        <h2 id="airline-title" class="airline-title"></h2>
+      </div>
+      <p class="sp-note" id="airline-sub" style="margin: -12px 0 20px"></p>
+      <div id="airline-body"></div>
+    </div>
+  </div>
+
   <!-- COUNTRY PAGE (country.js), opened from a country on the map, the Stats tab or a page -->
   <div id="tab-country" class="tab-content">
     <div class="stats-page">
       <div class="sp-head">
-        <button class="btn btn-ghost" onclick="closeCountry()">← Map</button>
+        <button class="btn btn-ghost back-tab" onclick="closeCountry()">← Map</button>
         <h2 id="country-title"></h2>
         <button class="btn btn-ghost" onclick="closeCountry(true)">Show on the map</button>
       </div>
@@ -970,7 +990,7 @@
   <div id="tab-activity" class="tab-content">
     <div class="stats-page">
       <div class="sp-head">
-        <button class="btn btn-ghost" onclick="closeActivity()">← Map</button>
+        <button class="btn btn-ghost back-tab" onclick="closeActivity()">← Map</button>
         <h2 id="activity-title"></h2>
         <button class="btn btn-ghost" onclick="closeActivity(true)">Show on the map</button>
       </div>
@@ -1032,6 +1052,7 @@
         <button class="btn btn-ghost" data-add="stay">🏨 Stay</button>
         <button class="btn btn-ghost" data-add="suggest">💡 To check</button>
         <button class="btn btn-ghost" data-add="health">🩺 Fix</button>
+        <a href="#place-photos" class="btn btn-ghost" onclick="event.preventDefault(); openPlacePhotos()" title="Your photos with no place, to place by hand">📍 Place photos</a>
       </div>
       <div id="add-other"></div>
       <div id="add-flight">
@@ -1261,17 +1282,39 @@ let sortCol = 'date', sortDir = -1; // -1 = desc
 
 // --- Tabs ---
 
+// each tab has its own address (/stats, /sports, ...: app.js serves the page there too), so a link shows where you
+// are and opens there; a page over a tab keeps its #part (/trips#trip=...). Back goes to the tab before.
+const tabPath = tab => (tab === 'map' ? '/' : '/' + tab);
+const tabOfPath = () => { const t = location.pathname.replace(/^\/|\/$/g, ''); return document.querySelector(`.tab[data-tab="${t}"]`) ? t : 'map'; };
+let tabFromHistory = false;
 document.querySelectorAll('.tab[data-tab]').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.tab[data-tab]').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
     btn.classList.add('active');
     document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+    if (!tabFromHistory && location.pathname !== tabPath(btn.dataset.tab)) history.pushState(null, '', tabPath(btn.dataset.tab));
     if (btn.dataset.tab === 'map' && map) setTimeout(() => map.invalidateSize(), 50);
     if (btn.dataset.tab === 'sports') renderSports();
     if (btn.dataset.tab === 'stats') renderCuriosities();
   });
 });
+function showTabOfPath() {
+  const tab = tabOfPath(), btn = document.querySelector(`.tab[data-tab="${tab}"]`);
+  if (btn.classList.contains('active')) return;  // the same tab: a page over it (a trip, Place photos) stays open
+  tabFromHistory = true;
+  btn.click();
+  tabFromHistory = false;
+}
+// a page's ← button goes back to the tab it was opened from: named after it
+function labelBackButtons() {
+  const t = document.querySelector(`.tab[data-tab="${tabOfPath()}"]`);
+  document.querySelectorAll('.back-tab').forEach(b => { b.textContent = '← ' + t.textContent.replace(/^\+\s*/, '').trim(); });
+}
+document.querySelectorAll('.tab[data-tab]').forEach(b => b.addEventListener('click', labelBackButtons));
+labelBackButtons();
+window.addEventListener('popstate', showTabOfPath);  // Back and Forward between tabs (a #part alone changes no tab)
+if (tabOfPath() !== 'map') setTimeout(showTabOfPath, 0);
 
 // --- TripIt iCal ---
 
@@ -2048,7 +2091,7 @@ function renderStats() {
   document.getElementById('top-airlines').innerHTML = topAirlines.map(([name, n], i) => `
     <div class="top-list-row">
       <span class="rank">${i + 1}</span>
-      <span class="name">${escapeHTML(name)}</span>
+      <span class="name">${airlineLink(name)}</span>
       <span class="count">${n}</span>
     </div>`).join('');
 
@@ -2175,7 +2218,7 @@ function renderTable(filter = '') {
       </td>
       <td class="dim">${escapeHTML(f.flight_number || '—')}</td>
       <td class="dim"${f.booking ? ` title="Booking ${escapeHTML(f.booking)}"` : ''}>${escapeHTML(f.seat || '—')}${f.class && f.class !== 'Y' ? ` <small>${{ F: 'first', C: 'business', P: 'premium' }[f.class] || ''}</small>` : ''}</td>
-      <td>${escapeHTML(f.airline || '—')}</td>
+      <td>${f.airline ? airlineLink(f.airline) : '—'}</td>
       <td class="dim">${f.distance ? fmtDist(f.distance) : '—'}</td>
       <td class="dim">${escapeHTML(f.duration || '—')}</td>
       <td class="dim">${escapeHTML(f.plane || '—')}</td>

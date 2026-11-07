@@ -304,7 +304,7 @@ function renderTrip() {
   }
   if (d.flights.length) {
     html += section('Flights', table(['When', 'Flight', 'Route', DU()], d.flights.map(f =>
-      `<tr><th>${fmtDate(f.date)}</th><td><b>${escapeHTML(f.flight_number || '')}</b><small>${escapeHTML(f.airline || '')}</small></td>` +
+      `<tr><th>${fmtDate(f.date)}</th><td><b>${escapeHTML(f.flight_number || '')}</b><small>${airlineLink(f.airline)}</small></td>` +
       `<td>${escapeHTML(f.from_city || f.from)} (${escapeHTML(f.from)}) → ${escapeHTML(f.to_city || f.to)} (${escapeHTML(f.to)})</td><td>${f.distance ? Math.round(dist(f.distance)).toLocaleString() : ''}</td></tr>`)));
   }
   if (d.ground.length) {
@@ -476,7 +476,7 @@ function drawTripMap(d, keepView = false) {
     for (let i = 0; i < a.pts.length; i += 2) pts.push([a.pts[i], a.pts[i + 1]]);
     L.polyline(pts, { color: col(a.kind || 'sport'), weight: 2.5 * st.w, opacity: Math.min(1, 0.85 * st.o) })
       .bindPopup(`<b>${escapeHTML(a.name || a.sport || '')}</b><br><small>${fmtDate(a.date)}</small><br>` +
-        `<a href="#" onclick="event.preventDefault(); showActivityOnMap(${a.id})">Show on the big map →</a>`).addTo(tripMap);
+        `<a href="#activity=${a.id}" class="popup-link" onclick="event.preventDefault(); openActivity('${a.id}')">Open its page →</a>`).addTo(tripMap);
     bounds.push(pts[0], pts[pts.length - 1]); local.push(pts[0], pts[pts.length - 1]);
   });
   d.stays.filter(s => s.lat != null).forEach(s => {

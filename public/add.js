@@ -7,8 +7,14 @@ let addKind = 'flight';
 const rand = () => Math.random().toString(36).slice(2, 10);
 const MODES = { train: '🚆 Train', bus: '🚌 Bus', ferry: '⛴️ Ferry', hitch: '👍 Hitchhiking', drive: '🚙 By car' };
 
+// the Add page's part in its address: /add?stay, /add?fix, ... (a flight is /add)
+const ADD_PATHS = { ground: 'travel', stay: 'stay', suggest: 'check', health: 'fix' };
 function showAddKind(kind) {
   addKind = kind;
+  if (location.pathname === '/add') {
+    const search = ADD_PATHS[kind] ? '?' + ADD_PATHS[kind] : '';
+    if (location.search !== search) history.replaceState(null, '', '/add' + search + location.hash);
+  }
   document.querySelectorAll('.add-kinds [data-add]').forEach(b => b.className = `btn ${b.dataset.add === kind ? 'btn-primary' : 'btn-ghost'}`);
   document.getElementById('add-flight').hidden = kind !== 'flight';
   document.querySelector('.add-page').classList.toggle('wide', kind === 'suggest' || kind === 'health');
@@ -77,11 +83,15 @@ function hookGroundForm() {
   });
 }
 
+// the kinds of stay to pick from (stats.js stayKind reads them from the type: "friends" is a friend's place); the
+// hosting sites also go in as the provider
+const STAY_WHAT = ['hotel', 'hostel', 'flat', 'friends', 'family', 'camping', 'Couchsurfing', 'BeWelcome', 'Trustroots'];
+const HOSTING = ['Couchsurfing', 'BeWelcome', 'Trustroots'];
 function stayForm() {
   return `<div class="form-step"><h3>A stay</h3>` +
     `<div class="form-row">${field('Where (town)', '<input id="s-place" placeholder="St Petersburg" autocomplete="off">')}${field('Country', '<input id="s-country" placeholder="optional" autocomplete="off">', 'flex:0 0 160px')}</div>` +
     `<div class="form-row">${field('From', '<input id="s-start" type="date">')}${field('Until', '<input id="s-end" type="date">')}</div>` +
-    `<div class="form-row">${field('What', '<select id="s-type"><option>hotel</option><option>hostel</option><option>flat</option><option>friends</option><option>family</option><option>camping</option><option>Couchsurfing</option><option>BeWelcome</option><option>Trustroots</option><option>other</option></select>', 'flex:0 0 160px')}` +
+    `<div class="form-row">${field('What', `<select id="s-type">${STAY_WHAT.map(o => `<option>${o}</option>`).join('')}<option>other</option></select>`, 'flex:0 0 160px')}` +
     field('Name', '<input id="s-hotel" placeholder="optional" autocomplete="off">') + '</div>' +
     `<div class="form-actions"><button class="btn btn-primary" id="s-save">Add</button></div></div>`;
 }
@@ -90,7 +100,7 @@ function hookStayForm() {
     const $ = id => document.getElementById(id).value.trim();
     if (!$('s-place') || !$('s-start')) return toast('Where and from when are needed', 'error');
     const s = { code: 'manual-' + rand(), what: 'stay', place: $('s-place'), country: $('s-country'), start: $('s-start'), end: $('s-end') || $('s-start'),
-      type: $('s-type') === 'other' ? '' : $('s-type'), hotel: $('s-hotel'), provider: ['Couchsurfing', 'BeWelcome', 'Trustroots'].includes($('s-type')) ? $('s-type') : '', price: '', source: 'manual' };
+      type: $('s-type') === 'other' ? '' : $('s-type'), hotel: $('s-hotel'), provider: HOSTING.includes($('s-type')) ? $('s-type') : '', price: '', source: 'manual' };
     const saved = await fetch('/api/stays', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(s) }).then(r => r.json());
     allStays.push(saved);
     toast(`Added: ${s.place}, ${s.start}. Its place is looked up in a minute.`);
@@ -513,12 +523,15 @@ async function renderHealth() {
       (d.twice.length > HEALTH_PAGE ? `<small class="sp-note">… and ${d.twice.length - HEALTH_PAGE} more after these.</small>` : '') + '</div>';
   const bases = d.bases || [];
   if (bases.length) html += `<h3 class="sugg-title">Nights with no stay, where your runs and rides start (${bases.length})</h3><p class="subtitle">A run, walk or ride that starts and ends at one spot mostly starts where you slept, and a ride from one place to another (a bike tour) leaves one bed in the morning and reaches the next. ` +
-    `Add the stay (name the place or hotel if you like), or ✕ when you did not sleep there.</p>` +
+    `Add the stay (name the place or hotel, and what it was: a friend's place, a hostel, … if you like; 📍 to drag it to where you slept), or ✕ when you did not sleep there.</p>` +
     `<div class="sugg-group">${bases.slice(0, HEALTH_PAGE).map(x => `<div class="sugg" data-key="${escapeHTML(x.key)}"><div class="pics"><span class="pic-icon">🏃</span></div>` +
       `<div><b>${escapeHTML(x.place || `${x.lat.toFixed(3)}, ${x.lon.toFixed(3)}`)}</b><small>${tripRange(x.start, x.end)} · ${x.nights} night${x.nights > 1 ? 's' : ''} · ` +
       `${x.loops} ${x.loops > 1 ? 'loops start' : 'loop starts'} here${x.names.length ? ` (${x.names.map(escapeHTML).join(', ')})` : ''}</small>` +
-      `<div class="album-fields"><input data-f="place" value="${escapeHTML(x.place)}" placeholder="Town" aria-label="Place"><input data-f="hotel" placeholder="Hotel (if you know it)" aria-label="Hotel"></div></div>` +
-      `<div class="acts"><button class="btn btn-primary" data-base>Add stay</button><button class="btn btn-ghost" data-fine="${escapeHTML(x.key)}" title="Not a stay">✕</button></div></div>`).join('')}` +
+      `<div class="album-fields"><input data-f="place" value="${escapeHTML(x.place)}" placeholder="Town" aria-label="Place"><input data-f="hotel" placeholder="Name (if you know it)" aria-label="Hotel">` +
+      `<select data-f="what" aria-label="What"><option value="">what: not known</option>${STAY_WHAT.map(o => `<option>${o}</option>`).join('')}</select></div>` +
+      `<div class="base-map" hidden></div><small class="base-spot" hidden></small></div>` +
+      `<div class="acts"><button class="btn btn-primary" data-base>Add stay</button><button class="btn btn-ghost" data-spot title="Put it where you slept: drag the marker, or click the map">📍</button>` +
+      `<button class="btn btn-ghost" data-fine="${escapeHTML(x.key)}" title="Not a stay">✕</button></div></div>`).join('')}` +
       (bases.length > HEALTH_PAGE ? `<small class="sp-note">… and ${bases.length - HEALTH_PAGE} more after these.</small>` : '') + '</div>';
   if (d.unplaced.length) html += `<h3 class="sugg-title">Not on the map: no place found (${d.unplaced.length})</h3><div class="sugg-group">${d.unplaced.map(x =>
     `<div class="sugg" data-key="health|unplaced|${x.kind}|${x.id}" data-kind="${x.kind}" data-id="${x.id}"><div class="pics"><span class="pic-icon">${x.kind === 'stay' ? '🏨' : '🚌'}</span></div>` +
@@ -574,11 +587,33 @@ async function renderHealth() {
     gone(row);
   }));
   const baseOf = Object.fromEntries(bases.map(x => [x.key, x]));
+  // 📍: a small map at where the loops start, its marker dragged (or the map clicked) to where you slept
+  box.querySelectorAll('[data-spot]').forEach(b => b.addEventListener('click', () => {
+    const row = b.closest('[data-key]'), x = baseOf[row.dataset.key], el = row.querySelector('.base-map'), note = row.querySelector('.base-spot');
+    if (row.spotMap) { row.spotMap.remove(); row.spotMap = null; el.hidden = true; return; }
+    el.hidden = false;
+    el.dataset.basemap = BASEMAPS[prefs.basemap] ? prefs.basemap : 'auto';
+    const at = row.spot || [x.lat, x.lon], m = L.map(el, { zoomControl: true }).setView(at, 15);
+    toneMap(m);
+    addBasemap(m);
+    const pin = L.marker(at, { draggable: true }).addTo(m);
+    const set = ll => {
+      row.spot = [Math.round(ll.lat * 1e6) / 1e6, Math.round(ll.lng * 1e6) / 1e6];
+      pin.setLatLng(ll);
+      note.hidden = false;
+      note.textContent = `Where you slept: ${row.spot[0].toFixed(5)}, ${row.spot[1].toFixed(5)} (${Math.round(L.latLng(x.lat, x.lon).distanceTo(ll))} m from where the loops start)`;
+    };
+    pin.on('dragend', () => set(pin.getLatLng()));
+    m.on('click', e => set(e.latlng));
+    row.spotMap = m;
+    setTimeout(() => m.invalidateSize(), 50);
+  }));
   box.querySelectorAll('[data-base]').forEach(b => b.addEventListener('click', async () => {
     const row = b.closest('[data-key]'), x = baseOf[row.dataset.key], f = k => row.querySelector(`[data-f="${k}"]`)?.value.trim();
-    const place = f('place') || x.place || `${x.lat.toFixed(3)}, ${x.lon.toFixed(3)}`;
+    const place = f('place') || x.place || `${x.lat.toFixed(3)}, ${x.lon.toFixed(3)}`, what = f('what'), [lat, lon] = row.spot || [x.lat, x.lon];
+    const found = `where your runs and rides started (${x.loops})${row.spot ? '; the spot set by hand' : ''}`;
     allStays.push(await post('/api/stays', { code: `runs-${x.start}-${x.lat.toFixed(3)},${x.lon.toFixed(3)}`, what: 'stay', place, hotel: f('hotel') || '',
-      start: x.start, end: x.end, lat: x.lat, lon: x.lon, source: 'activities', provider: '', type: `where your runs and rides started (${x.loops})` }));
+      start: x.start, end: x.end, lat, lon, source: 'activities', provider: HOSTING.includes(what) ? what : '', type: what ? `${what}; ${found}` : found }));
     toast(`Added: ${place}, ${tripRange(x.start, x.end)}`);
     gone(row);
   }));
@@ -605,4 +640,11 @@ async function renderHealth() {
 
 window.addEventListener('load', () => {
   document.querySelectorAll('.add-kinds [data-add]').forEach(b => b.addEventListener('click', () => showAddKind(b.dataset.add)));
+  // the tab opened again: its address names the part shown; /add?fix opened from a link: that part
+  document.querySelector('.tab[data-tab="add"]').addEventListener('click', () => setTimeout(() => {
+    const search = ADD_PATHS[addKind] ? '?' + ADD_PATHS[addKind] : '';
+    if (location.pathname === '/add' && location.search !== search) history.replaceState(null, '', '/add' + search + location.hash);
+  }, 0));
+  const asked = Object.keys(ADD_PATHS).find(k => location.pathname === '/add' && location.search === '?' + ADD_PATHS[k]);
+  if (asked) showAddKind(asked);
 });

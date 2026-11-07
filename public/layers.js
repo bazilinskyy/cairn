@@ -367,7 +367,7 @@ function drawClimbs() {
   // the ones not done first, so the done ones are drawn over them
   [...allClimbs].sort((a, b) => climbDone(a) - climbDone(b)).forEach(c => {
     const done = climbDone(c);
-    const link = r => `<a href="#" onclick="event.preventDefault(); showActivityOnMap(${r.id})">${fmtDate(r.date)}</a>`;
+    const link = r => `<a href="#activity=${r.id}" class="popup-link" onclick="event.preventDefault(); openActivity('${r.id}')">${fmtDate(r.date)}</a>`;
     const ridden = list => list.filter(r => inWin(r.date));
     // each way up: ✓ with the rides up it, or ✗; then ways up that are not among them ("via Sault")
     const ways = (c.ascents || []).map(a => {

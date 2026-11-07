@@ -395,6 +395,8 @@ app.use((req, res, next) => {
 });
 app.use(express.json({ limit: '10mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
+// each tab has its own address (public/index.html): the page itself there too, so a link to /sports opens Sports
+app.get(['/stats', '/sports', '/trips', '/flights', '/add'], (_req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 app.get('/api/flights', (_req, res) => {
   res.json(flights);
@@ -405,6 +407,65 @@ app.get('/api/airports', (_req, res) => {
   const result = {};
   used.forEach(iata => { if (airports[iata]) result[iata] = airports[iata]; });
   res.json(result);
+});
+
+// The airlines you flew (an airline's page, public/airline.js): { name: { iata, icao, callsign, country, active } },
+// the codes from OpenFlights' airlines.dat (next to airports.dat) by the airline's name, else the two-letter code most
+// of its flight numbers start with
+let airlineList = null;
+function loadAirlineList() {
+  if (airlineList) return airlineList;
+  airlineList = { byName: new Map(), byCode: new Map() };
+  const file = path.join(path.dirname(path.resolve(__dirname, config.airports_file || 'data/airports.dat')), 'airlines.dat');
+  if (!fs.existsSync(file)) return airlineList;
+  for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
+    const f = (line.match(/("([^"]|"")*"|[^,]*)(,|$)/g) || []).map(x => x.replace(/,$/, '').replace(/^"|"$/g, '').replace(/""/g, '"'));
+    if (f.length < 8) continue;
+    const a = { name: f[1], iata: /^[A-Z0-9]{2}$/.test(f[3]) ? f[3] : '', icao: /^[A-Z]{3}$/.test(f[4]) ? f[4] : '', callsign: f[5] === '\\N' ? '' : f[5],
+      country: f[6] === '\\N' ? '' : f[6], active: f[7] === 'Y' };
+    const better = (old, b) => !old || (b.active && !old.active) || (b.iata && !old.iata && b.active === old.active);
+    const k = a.name.toLowerCase();
+    if (better(airlineList.byName.get(k), a)) airlineList.byName.set(k, a);
+    if (a.iata && better(airlineList.byCode.get(a.iata), a)) airlineList.byCode.set(a.iata, a);
+  }
+  return airlineList;
+}
+app.get('/api/airlines', (_req, res) => {
+  const list = loadAirlineList(), codes = new Map();
+  flights.forEach(f => {
+    const m = /^([A-Z0-9]{2})\s?\d/.exec(f.flight_number || '');
+    if (!f.airline || !m) return;
+    const c = codes.get(f.airline) || new Map();
+    c.set(m[1], (c.get(m[1]) || 0) + 1);
+    codes.set(f.airline, c);
+  });
+  const out = {};
+  new Set(flights.map(f => f.airline).filter(Boolean)).forEach(name => {
+    const voted = [...(codes.get(name) || [])].sort((a, b) => b[1] - a[1])[0]?.[0];
+    const a = list.byName.get(name.toLowerCase()) || (voted && list.byCode.get(voted)) || {};
+    out[name] = { iata: voted || a.iata || '', icao: a.icao || '', callsign: a.callsign || '', country: a.country || '', active: a.active ?? null };
+  });
+  res.json(out);
+});
+// an airline's logo by its two-letter code, from pics.avs.io once and kept in data/airline_logos (a miss is not asked
+// again for a month)
+const LOGOS = path.join(DATA_DIR, 'airline_logos');
+app.get('/api/airline-logo/:code', async (req, res) => {
+  const code = String(req.params.code).toUpperCase();
+  if (!/^[A-Z0-9]{2}$/.test(code)) return res.status(400).end();
+  const file = path.join(LOGOS, `${code}.png`), miss = path.join(LOGOS, `${code}.none`);
+  if (fs.existsSync(file)) return res.set('Cache-Control', 'max-age=604800').type('png').sendFile(file);
+  if (fs.existsSync(miss) && Date.now() - fs.statSync(miss).mtimeMs < 30 * 864e5) return res.status(404).end();
+  fs.mkdirSync(LOGOS, { recursive: true });
+  try {
+    const r = await fetch(`https://pics.avs.io/240/80/${code}.png`, { signal: AbortSignal.timeout(15000) });
+    if (!r.ok || !/^image\//.test(r.headers.get('content-type') || '')) throw new Error(`HTTP ${r.status}`);
+    fs.writeFileSync(file, Buffer.from(await r.arrayBuffer()));
+    res.set('Cache-Control', 'max-age=604800').type('png').sendFile(file);
+  } catch (_) {
+    fs.writeFileSync(miss, '');
+    res.status(404).end();
+  }
 });
 
 app.post('/api/flights/lookup', async (req, res) => {

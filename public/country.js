@@ -29,7 +29,7 @@ async function openCountry(cc) {  // an ISO code, or a place id of the chosen li
 
 function closeCountry(toCountry = false) {
   history.replaceState(null, '', location.pathname + location.search);
-  document.querySelector('.tab[data-tab="map"]').click();
+  document.querySelector(`.tab[data-tab="${toCountry ? 'map' : tabOfPath()}"]`).click();  // else the tab it was opened from
   if (toCountry && countryShown?.shape) setTimeout(() => map.fitBounds(L.geoJSON(countryShown.shape).getBounds(), { padding: [20, 20] }), 80);
 }
 
@@ -71,7 +71,7 @@ function renderCountry() {
   }
   if (d.flights.length) {
     html += section('Flights', table('<th>When</th><th>Flight</th><th>Route</th><th></th>', d.flights.map(f =>
-      `<tr><th>${fmtDate(f.date)}</th><td><b>${escapeHTML(f.flight_number || '')}</b><small>${escapeHTML(f.airline || '')}</small></td>` +
+      `<tr><th>${fmtDate(f.date)}</th><td><b>${escapeHTML(f.flight_number || '')}</b><small>${airlineLink(f.airline)}</small></td>` +
       `<td>${airportLink(f.from)} → ${airportLink(f.to)}<small>${escapeHTML(f.from_city || '')} → ${escapeHTML(f.to_city || '')}</small></td><td>${f.direction}</td></tr>`)));
   }
   if (d.ground.length) {
@@ -121,7 +121,7 @@ function drawCountryMap(d) {
     const pts = [];
     for (let i = 0; i < a.pts.length; i += 2) pts.push([a.pts[i], a.pts[i + 1]]);
     return L.polyline(pts, { color: col(a.kind || 'sport'), weight: 2 * st.w, opacity: Math.min(1, 0.7 * st.o) })
-      .bindPopup(`<b>${escapeHTML(a.name || a.sport || '')}</b><br><small>${fmtDate(a.date)}</small><br><a href="#" onclick="event.preventDefault(); showActivityOnMap(${a.id})">Show on the big map →</a>`);
+      .bindPopup(`<b>${escapeHTML(a.name || a.sport || '')}</b><br><small>${fmtDate(a.date)}</small><br><a href="#activity=${a.id}" class="popup-link" onclick="event.preventDefault(); openActivity('${a.id}')">Open its page →</a>`);
   }));
   const ground = new Set(d.ground.map(g => g.id));
   layer('🚆 Trains, buses, ferries', allTrips.filter(g => ground.has(g.id) && g.from_lat != null && g.to_lat != null).map(g =>

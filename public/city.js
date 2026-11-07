@@ -21,7 +21,7 @@ async function openCityReport(id) {
 
 function closeCityReport(toTown = false) {
   history.replaceState(null, '', location.pathname + location.search);
-  document.querySelector('.tab[data-tab="map"]').click();
+  document.querySelector(`.tab[data-tab="${toTown ? 'map' : tabOfPath()}"]`).click();  // else the tab it was opened from
   if (toTown && cityShown) setTimeout(() => map.setView([cityShown.town.lat, cityShown.town.lon], 12), 80);
 }
 
@@ -80,7 +80,7 @@ function renderCityReport() {
   }
   if (d.flights.length) {
     html += section('Flights', table(['When', 'Flight', 'Route', ''], d.flights.map(f =>
-      `<tr><th>${fmtDate(f.date)}</th><td><b>${escapeHTML(f.flight_number || '')}</b><small>${escapeHTML(f.airline || '')}</small></td>` +
+      `<tr><th>${fmtDate(f.date)}</th><td><b>${escapeHTML(f.flight_number || '')}</b><small>${airlineLink(f.airline)}</small></td>` +
       `<td>${escapeHTML(f.from_city || f.from)} (${escapeHTML(f.from)}) → ${escapeHTML(f.to_city || f.to)} (${escapeHTML(f.to)})</td>` +
       `<td>${f.direction === 'in' ? 'arrived' : 'left'}</td></tr>`)));
   }
@@ -145,7 +145,7 @@ function drawCityMap(d) {
     const pts = [];
     for (let i = 0; i < a.pts.length; i += 2) pts.push([a.pts[i], a.pts[i + 1]]);
     L.polyline(pts, { color: col(a.kind || 'sport'), weight: 2.5 * st.w, opacity: Math.min(1, 0.75 * st.o) })
-      .bindPopup(`<b>${escapeHTML(a.name || a.sport || '')}</b><br><small>${fmtDate(a.date)}</small><br><a href="#" onclick="event.preventDefault(); showActivityOnMap(${a.id})">Show on the big map →</a>`).addTo(cityMap);
+      .bindPopup(`<b>${escapeHTML(a.name || a.sport || '')}</b><br><small>${fmtDate(a.date)}</small><br><a href="#activity=${a.id}" class="popup-link" onclick="event.preventDefault(); openActivity('${a.id}')">Open its page →</a>`).addTo(cityMap);
   });
   const ground = new Set(d.ground.map(g => g.id));
   allTrips.filter(g => ground.has(g.id) && g.from_lat != null && g.to_lat != null).forEach(g => {

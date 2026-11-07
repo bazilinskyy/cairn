@@ -33,6 +33,7 @@ before(async () => {
   fs.cpSync(path.join(ROOT, 'public'), path.join(dir, 'public'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'data'));
   fs.writeFileSync(path.join(dir, 'data', 'airports.dat'), AIRPORTS);
+  fs.writeFileSync(path.join(dir, 'data', 'airlines.dat'), '137,"Air France",\\N,"AF","AFR","AIRFRANS","France","Y"\n3090,"KLM Royal Dutch Airlines","KLM","KL","KLM","KLM","Netherlands","Y"\n');
   fs.writeFileSync(path.join(dir, 'data', 'flights.json'), JSON.stringify([
     { id: 1, date: '2026-11-16 16:10:00', from: 'AMS', to: 'LIS', flight_number: 'KL1234', airline: 'KLM', distance: 1, duration: '02:55' },
     { id: 2, date: '2026-11-20 10:00:00', from: 'LIS', to: 'AMS', flight_number: 'KL1235', airline: 'KLM', distance: 1, duration: '02:45' },
@@ -84,6 +85,21 @@ test('DELETE removes the flight', async () => {
   assert.strictEqual(all.length, 1);
   const onDisk = JSON.parse(fs.readFileSync(path.join(dir, 'data', 'flights.json'), 'utf8'));
   assert.strictEqual(onDisk.length, 1);
+});
+
+test('each tab has its own address: the page there too, an unknown one is not found', async () => {
+  for (const p of ['/', '/stats', '/sports', '/trips', '/flights', '/add?fix']) {
+    const res = await call('GET', p);
+    assert.strictEqual(res.status, 200, p);
+    assert.match(await res.text(), /data-tab="sports"/, p);
+  }
+  assert.strictEqual((await call('GET', '/nowhere')).status, 404);
+});
+
+test('the airlines flown: their codes from the flight numbers, the rest from airlines.dat by the code', async () => {
+  const d = await (await call('GET', '/api/airlines')).json();
+  assert.deepStrictEqual(d.KLM, { iata: 'KL', icao: 'KLM', callsign: 'KLM', country: 'Netherlands', active: true });
+  assert.strictEqual((await call('GET', '/api/airline-logo/not-a-code')).status, 400);
 });
 
 test('unknown id gives 404', async () => {

@@ -91,7 +91,7 @@ async function openYear(y) {
   if (d.climbs.length) html += section('Climbs', `<p>${d.climbs.map(c => `${c.firstTime ? '🆕 ' : ''}<a href="#" class="sp-link inline" onclick="event.preventDefault(); openClimb('${c.id}')">${escapeHTML(c.name)}</a>${c.ele ? ` <small>${fmtHeight(c.ele)}</small>` : ''}`).join(' · ')}</p>`);
   if (d.music?.plays) html += musicSection(d.music, 'The year in music', `What you played on Last.fm in ${y}`);
   if (d.rides) html += section('Ride weather', `<p>${[['Hottest', d.rides.hottest, w => fmtTemp(w.tmax)], ['Coldest', d.rides.coldest, w => fmtTemp(w.tmin)], ['Wettest', d.rides.wettest, w => `${w.rain} mm`]]
-    .filter(([, w]) => w).map(([label, w, v]) => `<b>${label}:</b> ${v(w)}, <a href="#" class="sp-link inline" onclick="event.preventDefault(); showActivityOnMap(${w.id})">${escapeHTML(w.name)}</a> (${fmtDate(w.date)})`).join(' · ')}</p>`);
+    .filter(([, w]) => w).map(([label, w, v]) => `<b>${label}:</b> ${v(w)}, <a href="#activity=${w.id}" class="sp-link inline" onclick="event.preventDefault(); openActivity('${w.id}')">${escapeHTML(w.name)}</a> (${fmtDate(w.date)})`).join(' · ')}</p>`);
   body.innerHTML = html;
 }
 

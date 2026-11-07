@@ -19,7 +19,7 @@ function openAirport(iata) {
 
 function closeAirport(toAirport = false) {
   history.replaceState(null, '', location.pathname + location.search);
-  document.querySelector('.tab[data-tab="map"]').click();
+  document.querySelector(`.tab[data-tab="${toAirport ? 'map' : tabOfPath()}"]`).click();  // else the tab it was opened from
   const ap = allAirports[airportShown];
   if (toAirport && ap) setTimeout(() => map.setView([ap.lat, ap.lon], 10), 80);
 }
@@ -63,9 +63,9 @@ function renderAirport() {
           `<td data-v="${e.n}">${e.n}<small>${e.out} out, ${e.n - e.out} in</small></td><td data-v="${Date.parse(e.last) || ''}">${e.last ? fmtDate(e.last) : ''}</td></tr>`;
       })), 'Click a heading to sort.');
     html += section('Airlines', table('<th data-sort="text">Airline</th><th data-sort="num" class="sort-desc" aria-sort="descending">Flights</th>',
-      [...airlines].sort((a, b) => b[1] - a[1]).map(([a, n]) => `<tr><td data-v="${escapeHTML(a)}">${escapeHTML(a)}</td><td data-v="${n}">${n}</td></tr>`)));
+      [...airlines].sort((a, b) => b[1] - a[1]).map(([a, n]) => `<tr><td data-v="${escapeHTML(a)}">${a === 'Unknown' ? a : airlineLink(a)}</td><td data-v="${n}">${n}</td></tr>`)));
     html += section('Flights', table('<th>When</th><th>Flight</th><th>Route</th><th></th>', flights.map(f =>
-      `<tr><th>${fmtDate(f.date)}</th><td><b>${escapeHTML(f.flight_number || '')}</b><small>${escapeHTML(f.airline || '')}</small></td>` +
+      `<tr><th>${fmtDate(f.date)}</th><td><b>${escapeHTML(f.flight_number || '')}</b><small>${airlineLink(f.airline)}</small></td>` +
       `<td>${airportLink(f.from)} → ${airportLink(f.to)}<small>${escapeHTML(allAirports[f.from]?.city || '')} → ${escapeHTML(allAirports[f.to]?.city || '')}</small></td>` +
       `<td>${f.from === iata ? 'out' : 'in'}</td></tr>`)));
   }

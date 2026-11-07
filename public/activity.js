@@ -25,7 +25,7 @@ async function openActivity(id) {
 function closeActivity(toMap = false) {
   history.replaceState(null, '', location.pathname + location.search);
   const id = activityShown?.id;
-  document.querySelector('.tab[data-tab="map"]').click();
+  document.querySelector(`.tab[data-tab="${toMap ? 'map' : tabOfPath()}"]`).click();  // else the tab it was opened from
   if (toMap && id) showActivityOnMap(Number(id));
 }
 

@@ -19,7 +19,7 @@ async function renderCuriosities() {
   const town = p => (p?.id ? `<a href="#" class="sp-link" onclick="event.preventDefault(); openCityReport(${p.id})">${escapeHTML(p.town)}</a>` : escapeHTML(p?.town || ''));
   const where = p => `${p.town ? `${flagOf(p.country)}${town(p)}` : `${p.lat.toFixed(2)}°, ${p.lon.toFixed(2)}°`}, ${fmtDate(p.day)}`;
   const card = (label, value, sub = '') => `<div class="stat-card"><div class="label">${label}</div><div class="value">${value}</div>${sub ? `<div class="sub">${sub}</div>` : ''}</div>`;
-  const act = a => `<a href="#" class="sp-link" onclick="event.preventDefault(); showActivityOnMap(${a.id})">${escapeHTML(a.name || '')}</a>, ${fmtDate(a.date)}`;
+  const act = a => `<a href="#activity=${a.id}" class="sp-link" onclick="event.preventDefault(); openActivity('${a.id}')">${escapeHTML(a.name || '')}</a>, ${fmtDate(a.date)}`;
   const hm = s => `${Math.floor(s / 3600)}:${String(Math.round(s % 3600 / 60)).padStart(2, '0')}`;
   const h = c.heights, x = c.extremes, d = c.distance;
 
