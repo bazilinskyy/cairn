@@ -14,7 +14,8 @@ from sources this run did not read is kept (Facebook today, Uber next week). Sta
 you were tagged in have a name and a time but no position: their names are looked up with Photon (photon.komoot.io, one
 a second, near the Facebook post with a place closest in time; kept in data/place_lookups.json, so a second run asks
 nothing again), and a day whose tagged places are over 500 km apart (old photos tagged in one go) is left out;
---no-lookups leaves them all out and uses no network.
+--no-lookups leaves them all out and uses no network. A place a download or a lookup has wrong is put right in
+data/checkin_fixes.json, {"name": [lat, lon]}, kept for the next run.
 """
 import argparse
 import csv
@@ -159,13 +160,33 @@ def from_tagged(data):
 
 
 def photon(name, near):
-    """The place Photon gives for a name, near [lat, lon] when given: (lat, lon) or None."""
-    q = {"q": name, "limit": "1", **({"lat": f"{near[0]:.3f}", "lon": f"{near[1]:.3f}"} if near else {})}
-    req = urllib.request.Request("https://photon.komoot.io/api/?" + urllib.parse.urlencode(q),
-                                 headers={"User-Agent": "cairn (personal travel log; https://github.com/bazilinskyy/cairn)"})
-    with urllib.request.urlopen(req, timeout=30) as r:
-        f = (json.loads(r.read()).get("features") or [None])[0]
+    """The place Photon gives for a name, near [lat, lon] when given: (lat, lon) or None. A town's or city's name
+    ("Madrid, Spain") first among towns and cities: else being near the post closest in time finds a street of that
+    name ("Plaça de la Vila de Madrid" in Barcelona); anything else ("Edinburgh Castle") as before."""
+    def ask(extra):
+        q = [("q", name), ("limit", "1"), *((("lat", f"{near[0]:.3f}"), ("lon", f"{near[1]:.3f}")) if near else ()), *extra]
+        req = urllib.request.Request("https://photon.komoot.io/api/?" + urllib.parse.urlencode(q),
+                                     headers={"User-Agent": "cairn (personal travel log; https://github.com/bazilinskyy/cairn)"})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return (json.loads(r.read()).get("features") or [None])[0]
+    f = ask([("osm_tag", "place")])
+    if not f or f["properties"].get("osm_value") not in ("city", "town", "village"):
+        time.sleep(1.1)
+        f = ask([])
     return (f["geometry"]["coordinates"][1], f["geometry"]["coordinates"][0]) if f else None
+
+
+def corrected(found, fixes_file):
+    """Places put right by hand (data/checkin_fixes.json: {name: [lat, lon]}), for one a download or a lookup has
+    wrong: a city's own Facebook place 40 km out of town"""
+    try:
+        fixes = json.loads(fixes_file.read_text())
+    except (OSError, ValueError):
+        return found
+    for c in found:
+        if c.get("name") in fixes:
+            c["lat"], c["lon"] = fixes[c["name"]]
+    return found
 
 
 def place_tagged(tagged, placed, cache_file):
@@ -332,6 +353,7 @@ def main(argv=None):
     ap.add_argument("--no-lookups", action="store_true", help="leave out Facebook's tagged places (no network)")
     args = ap.parse_args(argv)
     found, sources = read(args.paths, None if args.no_lookups else Path(args.out).parent / "place_lookups.json")
+    found = corrected(found, Path(args.out).parent / "checkin_fixes.json")
     out = Path(args.out)
     try:
         kept = [c for c in json.loads(out.read_text()) if c.get("source") not in sources]

@@ -5,7 +5,7 @@
 
 let addKind = 'flight';
 const rand = () => Math.random().toString(36).slice(2, 10);
-const MODES = { train: '🚆 Train', bus: '🚌 Bus', ferry: '⛴️ Ferry', hitch: '👍 Hitchhiking', drive: '🚙 By car' };
+const MODES = { train: '🚆 Train', bus: '🚌 Bus', ferry: '⛴️ Ferry', hitch: '👍 Hitchhiking', drive: '🚙 By car', cable: '🚡 Cable car' };
 
 // the Add page's part in its address: /add?stay, /add?fix, ... (a flight is /add)
 const ADD_PATHS = { ground: 'travel', stay: 'stay', suggest: 'check', health: 'fix' };

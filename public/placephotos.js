@@ -12,7 +12,9 @@ async function openPlacePhotos() {
   document.querySelectorAll('.tab[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === 'trips'));
   document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
   document.getElementById('tab-place-photos').classList.add('active');
-  if (location.hash !== '#place-photos') history.replaceState(null, '', '#place-photos');
+  // #place-photos=nothing / =unlikely / =found: the page with that Google filter chosen (the monthly reminder's link)
+  const asked = (/^#place-photos=(nothing|unlikely|found)$/.exec(location.hash) || [])[1] || '';
+  if (!location.hash.startsWith('#place-photos')) history.replaceState(null, '', '#place-photos');
   const box = document.getElementById('pp-body');
   box.innerHTML = '<p class="sp-note">Gathering your photos with no place…</p>';
   const d = await fetch('/api/photos/unplaced').then(r => (r.ok ? r.json() : null)).catch(() => null);
@@ -30,6 +32,12 @@ async function openPlacePhotos() {
         d.albums.map((a, i) => [a, i]).filter(([, i]) => albumCount.get(i)).sort((x, y) => x[0].localeCompare(y[0]))
           .map(([a, i]) => `<option value="${i}">${escapeHTML(a)} (${albumCount.get(i)})</option>`).join('')}</select>
       <select id="pp-year" aria-label="Year"><option value="">All years</option>${years.map(y => `<option>${y}</option>`).join('')}<option value="0">No date</option></select>
+      <select id="pp-google" aria-label="Google" title="What Google's landmark detection made of them (once a month, on the 2nd)">
+        <option value="">Google: all</option>
+        <option value="nothing">Google found nothing (${d.photos.filter(p => p.google === 'none').length.toLocaleString()})</option>
+        <option value="unlikely">Unlikely landmarks, not asked yet (${d.photos.filter(p => p.unlikely).length.toLocaleString()})</option>
+        <option value="found">Google found a landmark, not placed (${d.photos.filter(p => p.google === 'found').length.toLocaleString()})</option>
+      </select>
       <label class="pp-nearonly" title="Taken within half an hour of a photo with a place"><input type="checkbox" id="pp-nearonly"> Only 📍 near a photo with a place (<span id="pp-nearcount"></span>)</label>
       <button class="btn btn-ghost" onclick="ppSelectShown()">Select all shown</button>
       <button class="btn btn-ghost" onclick="ppClear()">Clear</button>
@@ -54,7 +62,9 @@ async function openPlacePhotos() {
         </div>
       </div>
     </div>`;
-  document.getElementById('pp-album').onchange = document.getElementById('pp-year').onchange = document.getElementById('pp-nearonly').onchange = () => { pp.limit = PP_DAYS; ppFilter(); };
+  document.getElementById('pp-google').value = asked;
+  document.getElementById('pp-album').onchange = document.getElementById('pp-year').onchange = document.getElementById('pp-nearonly').onchange =
+    document.getElementById('pp-google').onchange = () => { pp.limit = PP_DAYS; ppFilter(); };
   let timer = null;
   document.getElementById('pp-town').oninput = e => { clearTimeout(timer); timer = setTimeout(() => ppTowns(e.target.value), 250); };
   ppMap();
@@ -85,7 +95,9 @@ async function ppAutoGo(undo) {
 // the photos the filters leave, and the grid of them by day
 function ppFilter() {
   const album = document.getElementById('pp-album').value, year = document.getElementById('pp-year').value, nearOnly = document.getElementById('pp-nearonly').checked;
-  pp.shown = pp.photos.filter(p => (album === '' || (album === 'none' ? !p.albums.length : p.albums.includes(+album))) && (!nearOnly || p.near)
+  const google = document.getElementById('pp-google').value;
+  const byGoogle = p => !google || (google === 'nothing' ? p.google === 'none' : google === 'found' ? p.google === 'found' : !!p.unlikely);
+  pp.shown = pp.photos.filter(p => (album === '' || (album === 'none' ? !p.albums.length : p.albums.includes(+album))) && (!nearOnly || p.near) && byGoogle(p)
     && (year === '' || (year === '0' ? !p.t : p.t && new Date(p.t * 1000).getUTCFullYear() === +year)));
   pp.last = -1;
   ppDraw();
@@ -282,8 +294,8 @@ function ppMap() {
 
 window.addEventListener('load', () => {
   document.querySelectorAll('.tab[data-tab]').forEach(b => b.addEventListener('click', () => {
-    if (location.hash === '#place-photos') history.replaceState(null, '', location.pathname + location.search);
+    if (location.hash.startsWith('#place-photos')) history.replaceState(null, '', location.pathname + location.search);
   }));
-  if (location.hash === '#place-photos') setTimeout(openPlacePhotos, 500);
+  if (location.hash.startsWith('#place-photos')) setTimeout(openPlacePhotos, 500);
 });
-window.addEventListener('hashchange', () => { if (location.hash === '#place-photos') openPlacePhotos(); });  // the link opened in a page already open
+window.addEventListener('hashchange', () => { if (location.hash.startsWith('#place-photos')) openPlacePhotos(); });  // the link opened in a page already open

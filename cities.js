@@ -36,17 +36,24 @@ function load(file) {
 // The town a place belongs to: the one that pulls hardest, population over distance squared, within 25 km
 // (Veldhoven's station is Veldhoven, not Eindhoven next door; a hamlet next to a city goes to the city)
 const DEG_KM = 111.2;  // km in a degree of latitude: a box around the place, before the exact distance
+// Only towns of the country the nearest town is in: a village by a border is not the big town across it, 20 km
+// away in the next country
 function townAt(grid, lat, lon) {
-  let best = null, pull = 0;
   const dLat = REACH_KM / DEG_KM, dLon = REACH_KM / (DEG_KM * Math.max(0.01, Math.cos(lat * Math.PI / 180)));
+  const near = [];
   for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
     for (const t of grid.get((Math.floor(lat) + dy) + ',' + (Math.floor(lon) + dx)) || []) {
       if (Math.abs(t.lat - lat) > dLat || Math.abs(t.lon - lon) > dLon) continue;
       const d = km([lat, lon], [t.lat, t.lon]);
-      if (d > REACH_KM) continue;
-      const p = t.pop / (d + 2) ** 2;
-      if (p > pull) { pull = p; best = t; }
+      if (d <= REACH_KM) near.push([t, d]);
     }
+  }
+  if (!near.length) return null;
+  const cc = near.reduce((a, b) => (b[1] < a[1] ? b : a))[0].cc;
+  let best = null, pull = 0;
+  for (const [t, d] of near) {
+    const p = t.pop / (d + 2) ** 2;
+    if (t.cc === cc && p > pull) { pull = p; best = t; }
   }
   return best;
 }

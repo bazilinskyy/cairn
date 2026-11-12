@@ -46,7 +46,7 @@ function colours3d() {
     base: baseTone(),
     country: { 'fill-color': col('country') },
     acts: { 'line-color': ['match', ['get', 'kind'], 'ride', col('ride'), 'run', col('run'), 'walk', col('walk'), col('sport')] },
-    ground: { 'line-color': ['match', ['get', 'mode'], 'train', col('train'), 'commute', col('commute'), 'bus', col('bus'), 'hitch', col('hitch'), 'drive', col('drive'), col('ferry')] },
+    ground: { 'line-color': ['match', ['get', 'mode'], 'train', col('train'), 'commute', col('commute'), 'bus', col('bus'), 'hitch', col('hitch'), 'drive', col('drive'), 'cable', col('cable'), col('ferry')] },
     flightLines: { 'line-color': col('accent') },
     climbLines: { 'line-color': col('climb') },
     stays: { 'circle-color': ['match', ['get', 'shade'], 'car', col('car'), 'stay2', col('stay2'), 'stay3', col('stay3'), col('stay')],
@@ -67,7 +67,7 @@ const line = (latlons, props = {}) => ({ type: 'Feature', properties: props, geo
 
 const LAYERS3D = {  // key in the 2D legend -> what it is, and its 2D layer
   flight: () => routeLayer, train: () => groundLayer.train, commute: () => groundLayer.commute, bus: () => groundLayer.bus, ferry: () => groundLayer.ferry,
-  hitch: () => groundLayer.hitch, drive: () => groundLayer.drive, car: () => carLayer, scooter: () => scooterLayer, photo: () => photoLayer, ride: () => kindLayer.ride, run: () => kindLayer.run,
+  hitch: () => groundLayer.hitch, drive: () => groundLayer.drive, cable: () => groundLayer.cable, car: () => carLayer, scooter: () => scooterLayer, photo: () => photoLayer, ride: () => kindLayer.ride, run: () => kindLayer.run,
   walk: () => kindLayer.walk, sport: () => kindLayer.sport, climb: () => climbLayer, country: () => countryLayer, city: () => cityLayer
 };
 // stays: one switch here for the kinds of bed the 2D legend lists apart; on while any of its rows is
@@ -246,7 +246,7 @@ function refresh3D() {
 function draw3dPanel() {
   const box = document.getElementById('map3d-panel');
   const trip = document.getElementById('p-trip');
-  const labels = { flight: '✈️ Flights', train: '🚆 Trains', commute: '🔁 Commutes', bus: '🚌 Buses', ferry: '⛴️ Ferries', hitch: '👍 Hitchhiking', drive: '🚙 By car', stay: '🏨 Stays', car: '🚗 Rental cars', scooter: '🛵 Scooters',
+  const labels = { flight: '✈️ Flights', train: '🚆 Trains', commute: '🔁 Commutes', bus: '🚌 Buses', ferry: '⛴️ Ferries', hitch: '👍 Hitchhiking', drive: '🚙 By car', cable: '🚡 Cable cars', stay: '🏨 Stays', car: '🚗 Rental cars', scooter: '🛵 Scooters',
     photo: '📷 Photos', ride: '🚴 Cycling', run: '🏃 Running', walk: '🥾 Walks & hikes', sport: '🏅 Other sports', climb: '⛰️ Climbs',
     country: '🌍 Countries', city: '🏙️ Cities' };
   box.innerHTML = `<button class="btn btn-primary map3d-back" onclick="close3D()" title="Back to the 2D map (Esc)">← 2D map</button>` +

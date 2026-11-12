@@ -21,13 +21,13 @@ const dayShort = d => (d ? `${+d.slice(8, 10)} ${MONTHS[+d.slice(5, 7) - 1]}` : 
 const range = (a, b) => (!b || a === b ? day(a) : a.slice(0, 4) === b.slice(0, 4) ? `${dayShort(a)} – ${day(b)}` : `${day(a)} – ${day(b)}`);
 const plural = (n, one, many = one + 's') => `${num(n)} ${n === 1 ? one : many}`;
 const MODES = { flight: ['✈️', 'Flights'], train: ['🚆', 'Trains'], bus: ['🚌', 'Buses'], ferry: ['⛴️', 'Ferries'], drive: ['🚗', 'Driving'],
-  hitch: ['👍', 'Hitchhiking'], commute: ['🚉', 'Commuting'], ride: ['🚴', 'Rides'], run: ['🏃', 'Runs'], walk: ['🥾', 'Walks and hikes'],
+  hitch: ['👍', 'Hitchhiking'], cable: ['🚡', 'Cable cars'], commute: ['🚉', 'Commuting'], ride: ['🚴', 'Rides'], run: ['🏃', 'Runs'], walk: ['🥾', 'Walks and hikes'],
   sport: ['🏅', 'Other sports'] };
 const modeIcon = m => (MODES[m] || ['🛤️'])[0];
 const sportKind = s => (/Ride|Velomobile|Handcycle/.test(s || '') ? 'ride' : /Run/.test(s || '') ? 'run' : /Walk|Hike/.test(s || '') ? 'walk'
   : /Swim/.test(s || '') ? 'swim' : 'sport');
 const SPORTS = { ride: ['🚴', 'ride'], run: ['🏃', 'run'], walk: ['🥾', 'walk or hike', 'walks and hikes'], swim: ['🏊', 'swim', 'swims'], sport: ['🏅', 'other activity', 'other activities'] };
-const COLORS = { flight: '#2f6fd6', train: '#1f9d55', bus: '#d97706', ferry: '#0e9fb3', drive: '#c2410c', hitch: '#7c3aed' };
+const COLORS = { flight: '#2f6fd6', train: '#1f9d55', bus: '#d97706', ferry: '#0e9fb3', drive: '#c2410c', hitch: '#7c3aed', cable: '#9e9d24' };
 
 // --- the coast, for the sketches: its lines with their boxes, read once ---
 function coastLines(file) {

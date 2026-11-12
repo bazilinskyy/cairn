@@ -63,7 +63,7 @@ function replayStory(d, w, h) {
   allTrips.filter(g => gids.has(String(g.id)) && g.from_lat != null && g.to_lat != null).forEach(g => {
     const pts = g.path ? decodePath(g.path) : [[+g.from_lat, +g.from_lon], [+g.to_lat, +g.to_lon]], t0 = localUnix(g.date, +g.from_lon);
     const t1 = g.arrival ? localUnix(g.arrival, +g.to_lon) : t0 + lineKm(pts) / 60 * 3600;
-    items.push({ kind: ['train', 'bus', 'ferry', 'hitch', 'drive'].includes(g.mode) ? g.mode : 'bus', t0, t1: Math.max(t1, t0 + 600), pts, km: lineKm(pts), label: `${g.from} → ${g.to}` });
+    items.push({ kind: ['train', 'bus', 'ferry', 'hitch', 'drive', 'cable'].includes(g.mode) ? g.mode : 'bus', t0, t1: Math.max(t1, t0 + 600), pts, km: lineKm(pts), label: `${g.from} → ${g.to}` });
   });
   d.moves.forEach(m => {
     const pts = m.path ? decodePath(m.path) : [m.from, m.to];

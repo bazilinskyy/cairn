@@ -502,6 +502,35 @@ async function railOverpass(a, b, old = false, longest = 0) {
   return pts;
 }
 
+// A train's way with straight jumps in it: a timetable's shape missing between two of its stops (a night train, 87 km
+// between two of its stops), or tracks the railway map lacks (135 km on a line it does not have): each jump over RAIL_GAP_KM filled with
+// the railway between its two ends, where one is found and is not far round (RAIL_GAP_ROUND times the jump); the rest
+// stays straight. { pts, filled, left }
+const RAIL_GAP_KM = 20, RAIL_GAP_ROUND = 2.5, RAIL_GAP_V = 1;  // RAIL_GAP_V: trains drawn before the gaps were filled, once more
+// The same for a bus's timetable shape that only joins its stops (a long-distance coach: 219 km straight):
+// each jump over ROAD_GAP_KM along the roads instead (ROAD_GAP_V: buses drawn before, once more)
+const ROAD_GAP_KM = 15, ROAD_GAP_ROUND = 2.5, ROAD_GAP_V = 1;
+const jumps = (pts, over) => pts.slice(1).filter((q, i) => km(pts[i], q) > over).length;
+const railJumps = pts => jumps(pts, RAIL_GAP_KM);
+const roadJumps = pts => jumps(pts, ROAD_GAP_KM);
+async function fillGaps(pts, over, round, fillOne) {
+  const out = [pts[0]];
+  let filled = 0, left = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const p = pts[i - 1], q = pts[i], d = km(p, q);
+    if (d > over) {
+      const fill = await fillOne(p, q);  // a service that is down throws: the whole trip tried again later
+      if (fill && pathKm(fill) <= round * d) { out.push(...fill.slice(1, -1)); filled++; } else left++;
+    }
+    out.push(q);
+  }
+  return { pts: out, filled, left };
+}
+const fillRailGaps = (pts, old = false) => fillGaps(pts, RAIL_GAP_KM, RAIL_GAP_ROUND, (p, q) => railOverpass(p, q, old));
+const fillRoadGaps = pts => fillGaps(pts, ROAD_GAP_KM, ROAD_GAP_ROUND, (p, q) => osrm(p, q));
+// the buses whose shape comes from a timetable (the road router's own long straight pieces are ferries and motorways)
+const roadGappy = (trip, source) => ['bus', 'hitch'].includes(trip.mode) && source === 'transitous';
+
 // The tracks as a graph: each node's position and neighbours (with the km between), and the size of the network
 // (connected part) each node is in
 function railGraph(elements) {
@@ -944,7 +973,20 @@ async function route(trip, clues = null) {
     trip.ports = !!pr;
   }
   const a = at(trip, 'from'), b = at(trip, 'to');
-  let pts = await transitous(a, b, trip.mode, trip.date), source = 'transitous', sa = null, sb = null;
+  if (trip.mode === 'cable') {  // a cable car hangs straight between its stations: nothing to look up
+    trip.path = encode([a, b]);
+    trip.distance = Math.round(km(a, b) * 10) / 10;
+    trip.path_source = 'cable';
+    return;
+  }
+  // a bus, a lift or a car through the towns you named: that way, before today's timetables (a tour coach of 2008
+  // went along the motorway, not the bus line of today through Hamburg)
+  let pts = null, source = null, sa = null, sb = null;
+  if (trip.stops_at?.length && ['bus', 'hitch', 'drive'].includes(trip.mode)) {
+    pts = await osrmStops([a, ...trip.stops_at, b]);
+    if (pts) source = 'stops';
+  }
+  if (!pts) { pts = await transitous(a, b, trip.mode, trip.date); source = 'transitous'; }
   if (!pts && STATION_TAGS[trip.mode]) {
     [sa, sb] = [await nearestOf(STATION_TAGS[trip.mode], a), await nearestOf(STATION_TAGS[trip.mode], b)];
     if (!(sa && sb && km(sa, a) < 15 && km(sb, b) < 15)) sa = sb = null;
@@ -1002,6 +1044,10 @@ async function route(trip, clues = null) {
     }
   }
   if (pts && trip.mode === 'ferry') pts = toPorts(pts, a, b);
+  if (pts && trip.mode === 'train' && source !== 'road' && railJumps(pts)) pts = (await fillRailGaps(pts, (trip.date || '') < RAIL_OLD)).pts;
+  if (pts && trip.mode === 'train') trip.gaps_v = RAIL_GAP_V;
+  if (pts && roadGappy(trip, source) && roadJumps(pts)) pts = (await fillRoadGaps(pts)).pts;
+  if (pts && ['bus', 'hitch'].includes(trip.mode)) trip.road_gaps_v = ROAD_GAP_V;
   if (pts) {
     trip.path = encode(simplify(pts));
     trip.distance = Math.round(pathKm(pts));
@@ -1062,6 +1108,32 @@ async function enrich(store, log = console.log) {
         if (trip.path_source === 'road') trip.road_tries = (trip.road_tries || 0) + 1;
         await route(trip, store.clues);
         store.save();
+      }
+      if (trip.mode === 'train' && trip.path && trip.path_source !== 'road' && (trip.gaps_v || 0) < RAIL_GAP_V) {
+        const pts = decode(trip.path);
+        if (railJumps(pts)) {
+          const r = await fillRailGaps(pts, (trip.date || '') < RAIL_OLD);
+          if (r.filled) {
+            trip.path = encode(simplify(r.pts));
+            trip.distance = Math.round(pathKm(r.pts));
+            log(`[ground] ${trip.date} ${trip.from} - ${trip.to}: ${r.filled} straight piece(s) put on the railway, ${r.left} left`);
+          }
+          trip.gaps_v = RAIL_GAP_V;
+          store.save();
+        } else trip.gaps_v = RAIL_GAP_V;  // nothing to fill: saved with the next change
+      }
+      if (trip.path && roadGappy(trip, trip.path_source) && (trip.road_gaps_v || 0) < ROAD_GAP_V) {
+        const pts = decode(trip.path);
+        if (roadJumps(pts)) {
+          const r = await fillRoadGaps(pts);
+          if (r.filled) {
+            trip.path = encode(simplify(r.pts));
+            trip.distance = Math.round(pathKm(r.pts));
+            log(`[ground] ${trip.date} ${trip.from} - ${trip.to}: ${r.filled} straight piece(s) put on the road, ${r.left} left`);
+          }
+          trip.road_gaps_v = ROAD_GAP_V;
+          store.save();
+        } else trip.road_gaps_v = ROAD_GAP_V;
       }
     } catch (e) {
       if (/brouter\.de|overpass/.test(e.message)) {  // the railway guess: this train waits, the rest go on

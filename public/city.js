@@ -150,7 +150,7 @@ function drawCityMap(d) {
   const ground = new Set(d.ground.map(g => g.id));
   allTrips.filter(g => ground.has(g.id) && g.from_lat != null && g.to_lat != null).forEach(g => {
     L.polyline(g.path ? decodePath(g.path) : [[g.from_lat, g.from_lon], [g.to_lat, g.to_lon]],
-      { color: col(g.mode in { train: 1, bus: 1, ferry: 1, hitch: 1 } ? g.mode : 'bus'), weight: 3 * st.w, opacity: 0.85, dashArray: g.path ? null : '6 6' })
+      { color: col(g.mode in { train: 1, bus: 1, ferry: 1, hitch: 1, cable: 1 } ? g.mode : 'bus'), weight: 3 * st.w, opacity: 0.85, dashArray: g.path ? null : '6 6' })
       .bindPopup(`<b>${(groundModes[g.mode] || '🚌').split(' ')[0]} ${escapeHTML(g.from)} → ${escapeHTML(g.to)}</b><br><small>${fmtDate(g.date)}</small>`).addTo(cityMap);
   });
   const stays = new Set(d.stays.map(s => s.id));

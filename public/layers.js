@@ -101,7 +101,7 @@ const mapVar = name => toneVar(mapTone(), name);
 // it is, each colour from the old tone's variable to the new one's. Not drawn again: with tens of thousands of photos
 // and places that takes seconds. The activities and tiles, painted on canvas, are painted again.
 const THEME_PAIRS = { grey: 'grey-dark', 'grey-dark': 'grey', 'vector-dark': 'vector-positron', 'vector-fiord': 'vector-positron', 'vector-positron': 'vector-dark' };
-const TONE_VARS = ['--accent', '--accent2', '--text', '--text2', '--surface', '--surface2', '--train', '--commute', '--bus', '--ferry', '--hitch', '--checkin', '--stay', '--stay2',
+const TONE_VARS = ['--accent', '--accent2', '--text', '--text2', '--surface', '--surface2', '--train', '--commute', '--bus', '--ferry', '--hitch', '--cable', '--checkin', '--stay', '--stay2',
   '--stay3', '--car', '--drive', '--photo', '--timeline', '--country', '--ride', '--run', '--walk', '--sport', '--tile', '--city', '--home', '--book', '--code', '--music', '--climb'];
 function themeBasemap(from, to) {
   const k = basemapKey(), b = BASEMAPS[k], memo = { ...(prefs.basemapFor || {}), [from]: k };
@@ -249,11 +249,11 @@ function extraLayers() {
   return {
     ...Object.fromEntries(Object.entries(STAY_KINDS).map(([k, [, label, color, ring]]) => ['stay-' + k, [label, stayLayers[k], color, ring ? 'ring' : 'dot']])),
     car: ['🚗 Cars', carLayer, '--car', 'dot'], scooter: ['🛵 Scooters', scooterLayer, '--car', 'ring'],
-    photo: ['📷 Photos', photoLayer, '--photo', 'dot'], timeline: ['🧭 Timeline', timelineLayer, '--timeline', 'dot'],
     ...Object.fromEntries(Object.entries(ACT_KINDS).map(([k, label]) => ['act-' + k, [label, kindLayer[k], '--' + k]])),
     tile: ['🟩 Explored tiles', tileLayer, '--tile', 'area'], climb: ['⛰️ Climbs', climbLayer, '--climb', 'dot'],
     country: ['🌍 Countries', countryLayer, '--country', 'area'], city: ['🏙️ Cities', cityLayer, '--city', 'dot'],
-    checkin: ['📍 Check-ins', checkinLayer, '--checkin', 'dot'], book: ['📚 Books', bookLayer, '--book', 'dot'],
+    checkin: ['📍 Check-ins', checkinLayer, '--checkin', 'dot'],
+    photo: ['📷 Photos', photoLayer, '--photo', 'dot'], timeline: ['🧭 Timeline', timelineLayer, '--timeline', 'dot'], book: ['📚 Books', bookLayer, '--book', 'dot'],
     code: ['💻 Code', codeLayer, '--code', 'dot'], music: ['🎵 Music', musicLayer, '--music', 'dot'], home: ['🌱 Your places', homeLayer, '--home', 'dot']
   };
 }
@@ -547,7 +547,8 @@ function drawCheckins() {
     const when = new Date(c.t * 1000);
     L.circleMarker([c.lat, c.lon], { renderer: canvasRenderer, radius: 4, color: mapVar('--surface'), weight: 1, fillColor: color, fillOpacity: 0.9 })
       .bindPopup(`<b>${CHECKIN_ICON[c.source] || '📍'} ${escapeHTML(c.name || (c.kind === 'ride' ? 'Ride' : 'Here'))}</b><br><small>${escapeHTML(c.source)} ${escapeHTML(c.kind || '')} · ` +
-        `${fmtDate(when.toISOString())} ${when.toISOString().slice(11, 16)} UTC</small>`)
+        `${fmtDate(when.toISOString())} ${when.toISOString().slice(11, 16)} UTC</small>` +
+        (c.batch ? '<br><small>Posted with other places in one go, later: not counted for that day</small>' : ''))
       .addTo(checkinLayer);
   });
 }

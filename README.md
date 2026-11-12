@@ -61,7 +61,7 @@ Two parts:
 | ![A trip day by day: rides with their weather, trains, where you slept, sleep and heart rate](docs/trip-story.jpg)<br><sub>A trip day by day</sub> | ![A year in review](docs/year.jpg)<br><sub>A year in review</sub> |
 | ![A town's page with its own map and photos](docs/city.jpg)<br><sub>A town's page</sub> | ![A country's page: its flag, its map with everything there, its towns](docs/country.jpg)<br><sub>A country's page</sub> |
 | ![A climb's page: the ways up, your ride up coloured by gradient, your times against your FTP, a top climber and the record](docs/climb.jpg)<br><sub>A climb's page: its ways up, your times, the record</sub> | ![Where you slept: the stays alone, by kind of bed (hotels, hostels, Airbnb, friends' places, Couchsurfing, camping)](docs/map-stays.jpg)<br><sub>Where you slept, by kind of bed</sub> |
-| ![What you spent: on stays, and by card and cash, per year, country, town and trip](docs/spending.jpg)<br><sub>What you spent: stays, card and cash</sub> | ![Placing photos that have no place: by day, in a town or on the map, or by Cairn itself](docs/place-photos.jpg)<br><sub>Placing photos that have no place</sub> |
+| ![What you spent: on stays, and by card and cash, per year, country, town and trip](docs/spending.jpg)<br><sub>What you spent: stays, card and cash</sub> | ![Placing photos that have no place: by day, in a town or on the map, or by Cairn itself](docs/place-photos.jpg)<br><sub>Placing photos that have no place</sub><br><br>![An airline's page: its logo and codes, a map of its routes, your flights, distance and hours in the air with it](docs/airline.jpg)<br><sub>An airline's page</sub> |
 
 <p align="center"><img src="docs/replay.jpg" alt="A trip's replay: the trip drawn on the map day by day, a photo where it was taken" width="900"><br><sub>A trip's replay, to watch or save as a video</sub></p>
 
@@ -161,7 +161,7 @@ flowchart TB
   a["🚴 Activities<br>where each started"] --> pd
   p["📷 Photos<br>where and when each was taken"] --> pd
   t["🧭 Timeline<br>each visit, every day of it"] --> pd
-  pd(("A place<br>on a day")) --> town["🏙️ Its town<br>GeoNames towns over 1,000 people:<br>the one that pulls hardest,<br>population over distance², within 25 km"]
+  pd(("A place<br>on a day")) --> town["🏙️ Its town<br>GeoNames towns over 1,000 people:<br>the one that pulls hardest,<br>population over distance², within 25 km,<br>in the nearest town's country"]
   town --> cities["Cities<br>days there, separate visits,<br>first and last day"]
   town --> countries["🌍 Countries<br>the town's state or province (Natural Earth)<br>in the list you chose: ISO, sovereign, TCC"]
   pd --> away{"A day away?<br>outside your home countries,<br>or a night in a stay"}
@@ -171,6 +171,8 @@ flowchart TB
   trip --> moves["Moves between photos, activities and stays<br>with nothing of yours connecting them:<br>10 km or more along the roads (OSRM),<br>a drive while you had a car"]
   pd --> curio["📊 Curiosities<br>by the sea (Natural Earth coast),<br>heights (AWS Terrain Tiles),<br>extremes, capitals, distances"]
 ```
+
+Not every place counts for its day. Check-ins posted in one go (three or more within an hour, over 300 km apart: a list of the places you had been, added later) and photos that cannot have been where they are at their time (over 100 km from the photo just before or after, faster than a plane: scans and old photos placed by hand, which keep the day they were scanned) are on the map but give no place for their day.
 
 The same days feed **where you were on any day** (your stay that night, else the end of that day's last flight or ride, else Timeline or photos), the **suggestions** (photos that jump between towns with nothing connecting them, albums whose names give a place and year, "trip to …" to-dos with no trace) and **coming trips** (each night needs a bed, each journey a check-in).
 
@@ -187,6 +189,8 @@ flowchart LR
   br & osrm --> track2["A best guess, said so"]
   br -->|"no railway"| straight["A straight line, dashed"]
 ```
+
+A **🚡 cable car** needs no lookup: it is a straight line between its two stations. A timetable's track can have straight pieces where its shape only joins the stops: a train's piece over 20 km is put on the railway between its two ends (a long night train's missing stretch, a line the railway map lacks), a bus's or a lift's over 15 km on the roads (a coach whose timetable only joins its stops), when that way is not more than two and a half times the straight piece. Trips drawn before this are done once more in the background.
 
 A railway guess may be at most about twice the straight distance, or as far as the train could go in its own hours (from its departure and arrival times) when that is more: a line round the mountains between two valleys.
 
@@ -213,6 +217,8 @@ No account is needed for any of these; each is asked at most about once a second
 |---|---|
 | Every hour | tripmail reads new booking emails; Cairn looks up places and tracks of new trips |
 | 02:30 | Garmin: new activities, timed tracks, FTP and weight, sleep and resting heart rate |
+| 03:30 | The photo index from Photos (where and when, the albums, the photos with no place) and the calendars' events (`imports/nightly.sh`, LaunchAgent `nl.tue.cairn-nightly`) |
+| 2nd of the month, 04:20 | Google's landmark detection for photos with no place, 950 at most (`nl.tue.cairn-landmarks`) |
 | 07:30 | Coming trips: what is missing and not a to-do yet goes to the alerts channel |
 | Every 6 hours | New Last.fm scrobbles; weather for rides now in Open-Meteo's history |
 | In the background | Climbs' ways up, trips' road routes, heights, album places, euro rates: each once |
@@ -572,7 +578,7 @@ Each tab has its own address, to share or bookmark: `/stats`, `/sports`, `/trips
 ### The map
 
 The legend at the top right shows or hides each layer, with how many it holds in the period shown:
-- **Flights** (with their airports), **trains**, **🔁 commutes** (the trains between where you live and work; left out everywhere when the settings say not to count them), **buses**, **ferries**, hitchhiking and **🚙 car journeys**. Lines show as a line in the legend, markers as a dot, areas as a square.
+- **Flights** (with their airports), **trains**, **🔁 commutes** (the trains between where you live and work; left out everywhere when the settings say not to count them), **buses**, **ferries**, hitchhiking, **🚙 car journeys** and **🚡 cable cars**: in the legend all under one **🚦 Transport** heading with the rental cars and scooters, folded like Stays and Activities (▸ shows each, its box turns them all on or off). Lines show as a line in the legend, markers as a dot, areas as a square.
 - **Stays** (bigger for more nights), a group in the legend with a row per kind of bed, in three shades of one family: pink for hotels and other, and (a ring) friends' places and family; violet for hostels, and (a ring) Couchsurfing and BeWelcome; amber for Airbnb, and (a ring) camping. A filled dot is a bed you paid for, a ring a free one. The group's box turns them all on or off; and **rental cars** (yellow, at the pick-up place). tripmail sends every hotel, hostel, Airbnb and rental car booking it reads to Cairn, which finds the place with Photon and keeps it.
 - **Photos**: where your photos were taken, about 1 km per dot, bigger for more photos. From `imports/photos.py` (below).
 - **Timeline**: the places and daily paths of Google Maps Timeline. From `imports/timeline.py` (below).
@@ -632,7 +638,7 @@ Photos that are in the library more than once, byte for byte the same file (an e
 
 Photos whose dates are not when they were taken (an album uploaded to Facebook in one go) cannot be placed by their day, but they often show where they were. `imports/photos_recognise.py SPEC` places an album's photos in the towns of its trip: the spec lists each town with the day you were there and what can be seen there ("the Colosseum", "an aquarium with a manatee"); CLIP (open_clip, on this machine) compares each photo with those, and as the album keeps the order the photos were taken in, a photo of a meal or a hostel bed takes the town of the photos around it. `--sheets DIR` or `--all FILE` gives contact sheets to check by eye, `--fix` what you saw there (`{"30-41": "Milan"}`), `--apply` places them, at noon of each town's day so they count for the right day.
 
-`imports/photos_landmarks.py` asks Google's Cloud Vision API which landmark a photo shows, with its latitude and longitude, for photos with no place anywhere. Within the free 1,000 a month: at most 950 go in a calendar month (counted in `data/vision_usage.json`), each photo once (the answers are kept in `data/photo_landmarks.json`), those CLIP finds most likely to show a landmark first (`--rank`, `data/photo_landmark_rank.json`). A photo is placed at its landmark when Google's score is at least 0.5 and its time is when it was taken, by the rule Cairn uses for placing photos itself; the others' landmarks are kept but not placed, as they would count for the wrong day. It needs a key, `"google_vision_key"` in `config` (a Google Cloud project with billing on and the Cloud Vision API enabled; the key best restricted to that API). On the always-on Mac the LaunchAgent `nl.tue.cairn-landmarks` runs it on the 2nd of each month (log `~/Library/Logs/cairn-landmarks.log`); `--dry-run` says what it would send, `--place-only` places again from the answers kept.
+`imports/photos_landmarks.py` asks Google's Cloud Vision API which landmark a photo shows, with its latitude and longitude, for photos with no place anywhere. Within the free 1,000 a month: at most 950 go in a calendar month (counted in `data/vision_usage.json`), each photo once (the answers are kept in `data/photo_landmarks.json`), those CLIP finds most likely to show a landmark first (`--rank`, `data/photo_landmark_rank.json`). A photo is placed at its landmark when Google's score is at least 0.5 and its time is when it was taken, by the rule Cairn uses for placing photos itself; the others' landmarks are kept but not placed, as they would count for the wrong day. It needs a key, `"google_vision_key"` in `config` (a Google Cloud project with billing on and the Cloud Vision API enabled; the key best restricted to that API). On the always-on Mac the LaunchAgent `nl.tue.cairn-landmarks` runs it on the 2nd of each month (log `~/Library/Logs/cairn-landmarks.log`); `--dry-run` says what it would send, `--place-only` places again from the answers kept. On **📍 Place photos** a filter shows those Google found nothing in, the unlikely ones (CLIP's rank under 0.2, not sent yet) or those it found a landmark in but did not place (`#place-photos=nothing`, `=unlikely`, `=found` open it so): the ones left to place by hand after each month's run.
 
 Both place photos as Cairn's own guesses (`"auto": "image"` and `"landmark"` in `data/photo_places.json`): on the map as placed by Cairn, not written into Photos, and taken back with **Take them back**.
 
@@ -796,7 +802,7 @@ The easiest way is **⚙️ Settings → Imports**: a row per source (these, and
 | **OV-chipkaart** | ov-chipkaart.nl → Mijn OV-chip → card → *Reishistorie* → CSV (18 months back at most; per card) | `python imports/ovchipkaart.py ~/Downloads/reizen*.csv` (sends to Cairn) |
 
 Add `--send mini:repos/contrail/data/<file>.json` to copy the result to the Mac that runs Cairn. What they give:
-- **📍 Check-ins** (`data/checkins.json`): places you were at a known time, a map layer of their own, counted for your towns, countries and trips like the rest. A photo's own time and place come first, else its post's. Uber and Bolt give where each completed ride began and ended. Importing a source again replaces what it gave before; the other sources' stay.
+- **📍 Check-ins** (`data/checkins.json`): places you were at a known time, a map layer of their own, counted for your towns, countries and trips like the rest. A photo's own time and place come first, else its post's. Uber and Bolt give where each completed ride began and ended. Importing a source again replaces what it gave before; the other sources' stay. Posts with a place added later in one go (three or more within an hour, over 300 km apart) show on the map, marked so, but are not counted for their day. A place Facebook put in the wrong town can be put right in `data/checkin_fixes.json` (`{"name as Facebook gives it": [lat, lon]}`), kept over each import.
 - **💼 Work trips** (`data/calendar.json`): events that last a day or more or have a place, each once (a repeating meeting only by its first). A trip with a work-like event (a conference, workshop, symposium, project meeting, defence, summer school…), or an event of several days in one of its towns, gets 💼 in the Trips list and the events under its name.
 - **Card payments** (`data/transactions.json`, card payments and cash withdrawals only, not transfers or salary): a trip's page adds **Paid by card and cash**, in euros on each day's rate. **+ Add → 💡 To check → Payments abroad no trip explains** lists the payments in a country (from the payment's description, "… MADRID ESP", or its currency) on days nothing else puts you there: trips that may be missing. ✕ one that was a purchase online.
 - **🎧 Spotify** (`data/spotify.json`): each day's country (where the phone or computer was connected from; plays made offline left out) lists **+ Add → 💡 To check → Days abroad on Spotify no trip explains**: days with 3 or more plays in a country nothing else in Cairn puts you in; ✕ one that was a VPN or someone else on your account. Its songs (played 30 s or more) count on towns' and trips' pages on the days Last.fm has none.
@@ -820,7 +826,7 @@ Add `--send mini:repos/contrail/data/<file>.json` to copy the result to the Mac 
 
 **+ Add** in the top bar adds what your emails, Garmin and photos do not know:
 - **✈️ Flight**: by flight number and date, or by hand (below).
-- **🚆 Train, bus, ferry, 👍 hitchhiking or 🚙 by car**: from and to (towns, stations or ports, found like the others: see [Ground trips](#ground-trips)), and when, as well as you remember it: a day (and time), a month, or only a year. A trip known only to the month or year gets its line on the map and its distance counted, but no day is made up for it (it does not count for towns, countries or trips). **Times taken** makes one entry stand for a trip you made many times (each way), and **and back** adds the way back.
+- **🚆 Train, bus, ferry, 👍 hitchhiking, 🚙 by car or 🚡 cable car**: from and to (towns, stations or ports, found like the others: see [Ground trips](#ground-trips)), and when, as well as you remember it: a day (and time), a month, or only a year. A trip known only to the month or year gets its line on the map and its distance counted, but no day is made up for it (it does not count for towns, countries or trips). **Times taken** makes one entry stand for a trip you made many times (each way), and **and back** adds the way back.
 - **🏨 Stay**: where, from and until, and what (hotel, hostel, flat, friends, family, camping, Couchsurfing).
 - **💡 To check**: trips your to-dos say you made (a "trip to X" to-do done in Things where nothing in Cairn puts you within 300 km of X in the 200 days either side), the trains, buses and ferries of your trip docs not on the map (`data/tripdoc_rows.json`), the albums below, and your photos, in the order you took them, put you in towns; where they jump from one town to another far away (60 km or more, within 6 days, at a speed a train or bus could do) and no flight, train, bus, ferry or ride of yours connects them, that leg is listed, grouped into journeys, with the last photo before and the first after. Choose how you went and **Add**, or **✕** when it was no trip (a photo's place is wrong, you drove); **None of these** for a whole journey. A flight opens the flight form with its date. Moves inside your home countries (to work, to family) and on days with a rental car are left out; your answers are kept in `data/suggestions.dismissed.json`. The older your photos in the index, the further back this reaches (see [The map](#the-map), Photos).
 
@@ -933,14 +939,14 @@ At most one request a second goes to each service; a service that is down is tri
 |-------|-------------|
 | `id` | number, assigned by the server |
 | `date`, `arrival` | local departure and arrival (`YYYY-MM-DD HH:MM:SS`) |
-| `mode` | `train`, `bus` or `ferry` |
+| `mode` | `train`, `bus`, `ferry`, `drive` (by car), `hitch` (hitchhiking) or `cable` (cable car) |
 | `service` | train or bus number, when known |
 | `from`, `to` | station or place names as on the ticket or in the calendar |
 | `event_id` | the calendar event tripmail made for it |
 | `source` | where the trip came from, e.g. `flightmail` (a ticket email; tripmail's older name, kept in the data) |
 | `from_lat`, `from_lon`, `to_lat`, `to_lon` | where the two places are |
 | `path` | the track as an encoded polyline with 6 decimals; empty for a straight line |
-| `path_source` | `transitous`, `rail` (the likeliest railway line), `osrm` or `straight` |
+| `path_source` | `transitous`, `rail` (the likeliest railway line), `osrm`, `stops` (along the roads through the stops you named), `clues` (through your photos on the way), `sea` (ferry lines), `cable` or `straight` |
 | `distance` | km along the track |
 | `approx` | `month` or `year` for a trip added by hand known only that well (`date` is then the 1st of it, and gives no day) |
 | `times` | how many trips this one entry stands for (added by hand) |

@@ -53,7 +53,7 @@ async function renderCuriosities() {
     '</div>';
 
   // how far by each means, and the sea by year, as bars
-  const names = { flight: '✈️ Flown', train: '🚆 Train', commute: '🔁 Commute', bus: '🚌 Bus', ferry: '⛴️ Ferry', hitch: '👍 Hitchhiked', drive: '🚙 By car', ride: '🚴 Cycled', run: '🏃 Run', walk: '🥾 Walked' };
+  const names = { flight: '✈️ Flown', train: '🚆 Train', commute: '🔁 Commute', bus: '🚌 Bus', ferry: '⛴️ Ferry', hitch: '👍 Hitchhiked', drive: '🚙 By car', cable: '🚡 Cable car', ride: '🚴 Cycled', run: '🏃 Run', walk: '🥾 Walked' };
   const max = Math.max(...Object.values(d.by));
   html += '<div class="music-cols" style="margin-top:16px"><div><h4>How far, by each means</h4><div class="curio-bars" style="grid-template-columns: 90px 1fr 80px">' +
     Object.entries(d.by).sort((a, b) => b[1] - a[1]).map(([k, km]) => `<span>${escapeHTML(names[k] || k)}</span><div class="bar mode-bar" style="--c: var(${(TRAVEL_MODES[k] || TRAVEL_MODES.bus)[1]}); width:${Math.max(1, km / max * 100)}%"></div><span>${fmtDist(km)}</span>`).join('') + '</div></div>';

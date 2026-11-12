@@ -485,7 +485,7 @@ app.post('/api/flights/lookup', async (req, res) => {
 const WHEN = /^\d{4}-\d\d-\d\d( \d\d:\d\d(:\d\d)?)?$/, DAY = /^\d{4}-\d\d-\d\d$/, CODE = /^[A-Z0-9]{3,4}$/;
 const RULES = {
   flight: { from: CODE, to: CODE, date: WHEN, arrival: WHEN },
-  ground: { date: WHEN, arrival: WHEN, mode: /^(train|bus|ferry|hitch|drive)$/ },
+  ground: { date: WHEN, arrival: WHEN, mode: /^(train|bus|ferry|hitch|drive|cable)$/ },
   stay: { start: DAY, end: DAY, what: /^(stay|car)$/, vehicle: /^(car|scooter)$/ }  // a rental: a car, or a scooter (or moped)
 };
 function badField(kind, body) {
@@ -862,13 +862,20 @@ app.post('/api/photos/auto', (req, res) => {
 });
 // [{ id, t, name, albums: [index], video, near }], the ones not placed yet, by time; the albums' names; and per day
 // where Cairn has you that day (the town most of the day's places are in), to place a day's photos there in one go
+const UNLIKELY_RANK = 0.2;  // a photo's landmark rank (photos_landmarks.py --rank) below which a landmark is unlikely
 app.get('/api/photos/unplaced', (_req, res) => {
   const places = readImport(PHOTO_PLACES, {}), removed = readImport(PHOTO_REMOVED, {}), names = [], index = new Map(), photos = [], days = {};
   const where = dayTownMap();
+  // what Google's landmark detection made of each (imports/photos_landmarks.py): google 'none' when it found nothing,
+  // 'found' when it found a landmark not placed (unsure, or the photo's date is an upload); unlikely: not sent yet and
+  // CLIP finds a landmark unlikely (UNLIKELY_RANK: of those sent, Google found one in 7 of 100), for doing by hand
+  const answers = readImport(path.join(DATA_DIR, 'photo_landmarks.json'), {}), ranks = readImport(path.join(DATA_DIR, 'photo_landmark_rank.json'), {});
   for (const [id, [t, file, name, albumList, video]] of unplacedById()) {
     if (places[file] || removed[file] || (albumList || []).some(a => /^To delete/.test(a))) continue;  // nor the copies waiting to be deleted
     const albumIdx = (albumList || []).map(a => { if (!index.has(a)) { index.set(a, names.length); names.push(a); } return index.get(a); });
-    photos.push({ id, t, name, albums: albumIdx, video: video ? 1 : 0, near: nearSpot(t) });
+    const g = answers[file], google = g ? (g.landmarks?.length ? 'found' : 'none') : undefined;
+    const unlikely = !g && file in ranks && ranks[file] < UNLIKELY_RANK;
+    photos.push({ id, t, name, albums: albumIdx, video: video ? 1 : 0, near: nearSpot(t), ...(google && { google }), ...(unlikely && { unlikely: 1 }) });
     const day = t ? new Date(t * 1000).toISOString().slice(0, 10) : '';
     if (day && !(day in days)) days[day] = where.get(day) || null;
   }
@@ -973,7 +980,11 @@ app.get('/api/timeline', (_req, res) => res.json(readImport(TIMELINE_FILE, { vis
 // places you were at a known time from data downloads: Facebook, Instagram, VK, Maps reviews, Uber, Bolt
 const CHECKINS_FILE = path.join(DATA_DIR, 'checkins.json');
 // the check-ins, without the places you were tagged in that your other data says you were not at (see allPlacesAndDays)
-app.get('/api/checkins', (_req, res) => { placesAndDays('', ''); res.json(readImport(CHECKINS_FILE, []).filter(c => !untrusted.has(c))); });
+app.get('/api/checkins', (_req, res) => {
+  placesAndDays('', '');
+  const all = readImport(CHECKINS_FILE, []), batch = batchPosted(all);
+  res.json(all.filter(c => !untrusted.has(c)).map(c => (batch.has(c) ? { ...c, batch: true } : c)));
+});
 
 // --- Strava ---
 
@@ -1131,8 +1142,39 @@ function localTime(s, tz) {
   } catch (_) { return null; }
 }
 
+// Photos that cannot have been taken where they are placed at their time: over JUMP_KM from the photo taken just
+// before or after, faster than JUMP_KMH (a plane flies about 900 km/h). Scans and old photos placed by hand keep the
+// day they were scanned or put up (a tour's photos from three countries all on the scanning day): on the map,
+// not counted for their day
+const JUMP_KM = 100, JUMP_KMH = 1000;
+function jumpyPhotos(shot) {
+  const by = [...shot].sort((a, b) => a[1] - b[1]), out = new Set();
+  for (let i = 1; i < by.length; i++) {
+    const a = by[i - 1], b = by[i], d = ground.km([a[2], a[3]], [b[2], b[3]]);
+    if (d > JUMP_KM && d / Math.max((b[1] - a[1]) / 3600, 1 / 60) > JUMP_KMH) out.add(a), out.add(b);
+  }
+  return out;
+}
+
 const TAGGED_KM = 300;
 let untrusted = new Set();  // the check-ins left out (allPlacesAndDays)
+// posts with a place added later in one go, as a list of the places you had been (Moscow, Zürich and Lviv within
+// minutes): three or more of one source within BATCH_S, over TAGGED_KM apart. On the map, not counted for their day
+const BATCH_POSTS = 3, BATCH_S = 3600;
+let batchMemo = { checkins: null, out: new Set() };
+function batchPosted(checkins) {
+  if (batchMemo.checkins === checkins) return batchMemo.out;
+  const out = new Set(), posts = checkins.filter(c => c.kind !== 'tagged').sort((a, b) => a.t - b.t);
+  const bySource = new Map();
+  posts.forEach(c => { if (!bySource.has(c.source)) bySource.set(c.source, []); bySource.get(c.source).push(c); });
+  bySource.forEach(list => list.forEach((c, i) => {
+    const w = [];
+    for (let j = i; j < list.length && list[j].t - c.t <= BATCH_S; j++) w.push(list[j]);
+    if (w.length >= BATCH_POSTS && w.some(a => w.some(b => ground.km([a.lat, a.lon], [b.lat, b.lon]) > TAGGED_KM))) w.forEach(x => out.add(x));
+  }));
+  batchMemo = { checkins, out };
+  return out;
+}
 function allPlacesAndDays(withStays) {
   const from = '', to = '';
   const pts = [], inPeriod = d => d && (!from || d >= from) && (!to || d <= to);
@@ -1165,18 +1207,19 @@ function allPlacesAndDays(withStays) {
   const flying = flyingSpans(), ccOf = at => townOfAt(at)?.cc;
   const inAir = (t, p) => flying.some(([a, b, x, y]) => t > a && t < b && ((ground.km(p, x) > 100 && ground.km(p, y) > 100)
     || (ground.km(p, x) > 10 && ground.km(p, y) > 10 && ccOf(p) && ccOf(p) !== ccOf(x) && ccOf(p) !== ccOf(y))));
-  const shot = datedPhotos();
+  const shot = datedPhotos(), jumpy = jumpyPhotos(shot);
   if (shot.length) {
     const seen = new Set();
     shot.forEach(p => {
-      if (inAir(p[1], [p[2], p[3]])) return;
+      if (inAir(p[1], [p[2], p[3]]) || jumpy.has(p)) return;
       const d = new Date(p[1] * 1000).toISOString().slice(0, 10), key = `${d}|${p[2].toFixed(2)}|${p[3].toFixed(2)}`;
       if (!seen.has(key)) { seen.add(key); add([p[2], p[3]], d, undefined, p[5] === 'c'); }
     });
   } else readImport(PHOTOS_FILE, []).forEach(c => (c.days || []).forEach(d => add([c.lat, c.lon], d)));
   // check-ins, posts with a place, reviews and rides (imports/checkins.py): where you were that day
   const dayOf = c => new Date(c.t * 1000).toISOString().slice(0, 10), checkins = readImport(CHECKINS_FILE, []);
-  checkins.filter(c => c.kind !== 'tagged').forEach(c => add([c.lat, c.lon], dayOf(c)));
+  const batch = batchPosted(checkins);
+  checkins.filter(c => c.kind !== 'tagged' && !batch.has(c)).forEach(c => add([c.lat, c.lon], dayOf(c)));
   (readImport(TIMELINE_FILE, {}).visits || []).forEach(v => eachDay(v.start.slice(0, 10), v.end.slice(0, 10), d => add([v.lat, v.lon], d)));
   activities.list().forEach(a => add(a.at, (a.date || '').slice(0, 10)));
   // places Facebook tagged you in were found by their name ("School of Computer Science"), which can be a namesake far
@@ -1221,7 +1264,7 @@ function countryStats({ scheme = null, from = '', to = '' } = {}) {
     const id = scheme ? place.id : place.cc;
     // cc: the country code, for its flag (a list's place: its own, or the country it is part of)
     return all[id] = all[id] || { country: id, name: scheme ? place.name : undefined, cc: scheme ? place.cc || (/^[A-Z]{2}$/.test(place.id) ? place.id : undefined) : place.cc, days: new Set(), towns: new Set(), nights: 0,
-      flights: 0, train: 0, bus: 0, ferry: 0, hitch: 0, drive: 0, cars: 0, activities: 0, km: 0, photos: 0 };
+      flights: 0, train: 0, bus: 0, ferry: 0, hitch: 0, drive: 0, cable: 0, cars: 0, activities: 0, km: 0, photos: 0 };
   };
   placesBeen(from, to).forEach(p => {
     const v = of(p.at, p.city), t = townOf(p.at, p.city);
@@ -1232,7 +1275,7 @@ function countryStats({ scheme = null, from = '', to = '' } = {}) {
     if (ap && inPeriod((f.date || '').slice(0, 10))) { const v = of([ap.lat, ap.lon], ap.city); if (v) v.flights++; }
   });
   trips.forEach(t => {
-    if (!inPeriod((t.date || '').slice(0, 10)) || !['train', 'bus', 'ferry', 'hitch', 'drive'].includes(t.mode)) return;
+    if (!inPeriod((t.date || '').slice(0, 10)) || !['train', 'bus', 'ferry', 'hitch', 'drive', 'cable'].includes(t.mode)) return;
     new Set([of(t.from_lat != null && [t.from_lat, t.from_lon]), of(t.to_lat != null && [t.to_lat, t.to_lon])]).forEach(v => { if (v) v[t.mode]++; });
   });
   const away = awayNights(stays);

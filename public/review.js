@@ -23,7 +23,7 @@ async function yearsSideBySide() {
   const rows = (await fetch('/api/review/by-year').then(r => (r.ok ? r.json() : [])).catch(() => [])).filter(r => r.year <= now).reverse();
   if (!rows.length) { box.innerHTML = ''; return; }
   const sum = (o, keys) => keys.reduce((n, k) => n + (o[k] || 0), 0);
-  const GROUND = ['train', 'commute', 'bus', 'ferry', 'hitch', 'drive'], SPORT = ['ride', 'run', 'walk', 'sport'];
+  const GROUND = ['train', 'commute', 'bus', 'ferry', 'hitch', 'drive', 'cable'], SPORT = ['ride', 'run', 'walk', 'sport'];
   const cols = [
     ['Days', r => r.days, 'with a place'], ['Away', r => r.away, 'days on trips'], ['Trips', r => r.trips],
     ['Countries', r => r.countries, r => (r.newCountries ? `${r.newCountries} new` : '')], ['Towns', r => r.towns, r => (r.newTowns ? `${r.newTowns} new` : '')],
@@ -83,7 +83,7 @@ async function openYear(y) {
     (newTowns.length ? `<p><b>New towns (${newTowns.length}):</b> ${newTowns.slice(0, 60).map(town).join(' · ')}${newTowns.length > 60 ? ' …' : ''}</p>` : ''));
   html += section('Where you spent the year', `<p>${d.countries.slice(0, 20).map(c => `${country(c.cc)} <small>${c.days} d</small>`).join(' · ')}</p>` +
     `<p><b>Towns:</b> ${d.towns.slice(0, 15).map(t => `${town(t)} <small>${t.days} d</small>`).join(' · ')}</p>`);
-  const names = { flight: '✈️ Flown', train: '🚆 Train', commute: '🔁 Commute', bus: '🚌 Bus', ferry: '⛴️ Ferry', hitch: '👍 Hitchhiked', drive: '🚙 By car', ride: '🚴 Cycled', run: '🏃 Run', walk: '🥾 Walked', sport: '🏅 Other' };
+  const names = { flight: '✈️ Flown', train: '🚆 Train', commute: '🔁 Commute', bus: '🚌 Bus', ferry: '⛴️ Ferry', hitch: '👍 Hitchhiked', drive: '🚙 By car', cable: '🚡 Cable car', ride: '🚴 Cycled', run: '🏃 Run', walk: '🥾 Walked', sport: '🏅 Other' };
   const max = Math.max(1, ...Object.values(d.distance));
   html += section('How far, by each means', `<div class="curio-bars" style="grid-template-columns: 90px 1fr 90px">${Object.entries(d.distance).filter(([, v]) => v).sort((a, b) => b[1] - a[1])
     .map(([k, v]) => `<span>${escapeHTML(names[k] || k)}</span><div class="bar" style="width:${Math.max(1, v / max * 100)}%"></div><span>${fmtDist(v)}</span>`).join('')}</div>` +
