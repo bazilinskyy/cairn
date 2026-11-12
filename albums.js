@@ -258,8 +258,8 @@ function create({ dir, cacheFile, placesFile, km, towns, near = () => null, flig
 
   const ready = () => !!scanned.list;
   function list() {
-    const c = loadCache(), no = dismissed();
-    const albums = scan().filter(a => a.suggest && !no.has(a.key));
+    const c = loadCache(), no = dismissed(), mine = choices().albums;
+    const albums = scan().filter(a => a.suggest && !no.has(a.key) && !(a.album in mine));  // (not one you placed: done)
     const todo = new Map();
     albums.forEach(a => { if (a.place && !(a.place in c) && !todo.has(a.place)) todo.set(a.place, a); });
     lookUp([...todo.values()]);

@@ -13,7 +13,8 @@ const TRANSITOUS = 'https://api.transitous.org/api/v5/plan';
 const OSRM = 'https://router.project-osrm.org/route/v1/driving/';
 const BIKE = 'https://routing.openstreetmap.de/routed-bike/route/v1/driving/';  // FOSSGIS's OSRM with the bicycle profile
 const BROUTER = 'https://brouter.de/brouter';
-const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];  // the second when the first is busy
+const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter', 'https://maps.mail.ru/osm/tools/overpass/api/interpreter'];  // the next when one is busy
 const TRANSIT_MODES = { train: 'RAIL', bus: 'COACH,BUS', ferry: 'FERRY' };
 const NOT_TRANSIT = new Set(['WALK', 'BIKE', 'CAR', 'RENTAL', 'CAR_PARKING', 'FLEX', 'ODM']);
 const PLACE_TAGS = ['place', 'boundary:administrative', 'railway:station', 'railway:halt', 'public_transport:station',
@@ -147,7 +148,7 @@ async function getJSON(url) {
   if (res.status === 429 || res.status === 403 || (res.status >= 500 && !OK_FAILS[host])) throw new Error(`${host}: HTTP ${res.status}`);
   return res.json().catch(() => ({}));  // BRouter's "no track found" is plain text: no route
 }
-const SLOW = { 'overpass-api.de': 300000, 'overpass.kumi.systems': 300000 };  // the railways along a long way take Overpass a while
+const SLOW = { 'overpass-api.de': 300000, 'overpass.kumi.systems': 300000, 'overpass.private.coffee': 300000, 'maps.mail.ru': 300000 };  // the railways along a long way take Overpass a while
 const OK_FAILS = { 'brouter.de': true };  // a route BRouter gives up on (too long, no track) is an answer, not an outage
 const REST_MS = 30 * 60e3;
 
@@ -427,6 +428,26 @@ function keepPiece(q, elements) {
   fs.mkdirSync(railDir, { recursive: true });
   fs.writeFileSync(require('path').join(railDir, require('crypto').createHash('sha1').update(q).digest('hex') + '.json'), JSON.stringify(elements));
 }
+// Overpass' answer to q from the first server that gives one. When none does, Overpass counts as down for a while that
+// doubles with each outage in a row (OVERPASS_DOWN_MS, up to the last), so a long outage is not asked about every few
+// minutes; the first answer ends it.
+const OVERPASS_DOWN_MS = [5, 15, 60, 180, 360].map(m => m * 60e3);
+const overpassDown = { n: 0, until: 0 };
+async function overpass(q) {
+  if (overpassDown.until > Date.now()) throw new Error(`overpass: down until ${new Date(overpassDown.until).toTimeString().slice(0, 5)}`);
+  let err;
+  for (const host of OVERPASS) {
+    try {
+      const d = await getJSON(`${host}?data=${encodeURIComponent(q)}`);
+      overpassDown.n = 0;
+      return d;
+    } catch (e) { err = e; }
+  }
+  const wait = OVERPASS_DOWN_MS[Math.min(overpassDown.n++, OVERPASS_DOWN_MS.length - 1)];
+  overpassDown.until = Date.now() + wait;
+  console.log(`[ground] no Overpass server answers (${err.message}): railway and ferry guesses wait ${wait < 3600e3 ? `${wait / 60e3} min` : `${wait / 3600e3} h`}`);
+  throw new Error(`overpass: ${err.message}`);
+}
 const railRest = new Map();  // after Overpass failed on a train: until when its railway guess waits (the other trains go on)
 const RAIL_REST_MS = 5 * 60e3;  // a few minutes: Overpass is slow at busy times, but most of its answers come
 async function railOverpass(a, b, old = false, longest = 0) {
@@ -448,12 +469,8 @@ async function railOverpass(a, b, old = false, longest = 0) {
   const piece = async q => {
     const kept = keptPiece(q);
     if (kept) return kept;
-    let d = null;
-    for (const [j, host] of OVERPASS.entries()) {
-      try { d = await getJSON(`${host}?data=${encodeURIComponent(q)}`); break; } catch (e) {
-        if (j === OVERPASS.length - 1) { railRest.set(key, Date.now() + RAIL_REST_MS); throw new Error(`overpass: ${e.message}`); }
-      }
-    }
+    let d;
+    try { d = await overpass(q); } catch (e) { railRest.set(key, Date.now() + RAIL_REST_MS); throw e; }
     if (d.remark) throw new Error(`overpass: ${d.remark}`);  // cut off (timeout, memory): not a piece to keep
     keepPiece(q, d.elements || []);
     return d.elements || [];
@@ -796,10 +813,7 @@ async function ferryLines(a, b) {
   const q = `[out:json][timeout:120];way["route"="ferry"](${bb});(._;>;);out skel qt;`;
   let elements = keptPiece(q);
   if (!elements) {
-    let d = null;
-    for (const [j, host] of OVERPASS.entries()) {
-      try { d = await getJSON(`${host}?data=${encodeURIComponent(q)}`); break; } catch (e) { if (j === OVERPASS.length - 1) throw new Error(`overpass: ${e.message}`); }
-    }
+    const d = await overpass(q);
     if (d.remark) throw new Error(`overpass: ${d.remark}`);
     elements = d.elements || [];
     keepPiece(q, elements);
@@ -1085,11 +1099,17 @@ async function placeStay(stay, flights, trips, airports, seen = []) {
 // Returns { later: true } when some trips wait for BRouter or Overpass, which refused (tried again once they have
 // rested; the other trips go on meanwhile), or when a service was down and the pass stopped
 const FAILS_IN_A_ROW = 3;
+// A trip whose lookup failed waits longer after each failure (an hour, six, a day, a week), so a few stubborn trips
+// neither fill the log nor stop the pass (FAILS_IN_A_ROW) before the trips after them; kept until a restart
+const BACKOFF_MS = [1, 6, 24, 168].map(h => h * 3600e3);
+const backoff = new WeakMap();  // trip -> { n: failures in a row, until }
+const hours = ms => ms < 864e5 ? `${Math.round(ms / 3600e3)} h` : `${Math.round(ms / 864e5)} d`;
 async function enrich(store, log = console.log) {
   const todo = [...store.trips].sort((x, y) => (x.date || '').localeCompare(y.date || ''));
   let later = false, failed = 0;
   for (const trip of todo) {
     if (!store.trips.includes(trip)) continue;  // deleted meanwhile
+    if (backoff.get(trip)?.until > Date.now()) { later = true; continue; }
     try {
       if ((!at(trip, 'from') || !at(trip, 'to')) && !trip.unplaced) {
         await place(trip, store.flights(), store.trips, store.airports(), store.known);
@@ -1137,17 +1157,20 @@ async function enrich(store, log = console.log) {
       }
     } catch (e) {
       if (/brouter\.de|overpass/.test(e.message)) {  // the railway guess: this train waits, the rest go on
-        if (!later) log(`[ground] railway guesses wait: ${e.message}`);
+        if (!later && !/overpass: (down until|resting)/.test(e.message)) log(`[ground] railway guesses wait: ${e.message}`);
         later = true;
         continue;
       }
       // a service slow or down for this trip: it waits for the next pass, the others go on; a service down for
       // FAILS_IN_A_ROW trips in a row stops the pass (the next in a while)
       later = true;
-      log(`[ground] ${trip.date} ${trip.from} - ${trip.to} waits: ${e.message}`);
+      const n = (backoff.get(trip)?.n || 0) + 1, wait = BACKOFF_MS[Math.min(n, BACKOFF_MS.length) - 1];
+      backoff.set(trip, { n, until: Date.now() + wait });
+      log(`[ground] ${trip.date} ${trip.from} - ${trip.to} waits ${hours(wait)}: ${e.message}`);
       if (++failed >= FAILS_IN_A_ROW) { log('[ground] lookups paused'); return { later }; }
       continue;
     }
+    backoff.delete(trip);
     failed = 0;
   }
   for (const stay of [...(store.stays || [])]) {

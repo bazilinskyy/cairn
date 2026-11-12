@@ -60,6 +60,22 @@ def day_of(prop, value):
     return None, False
 
 
+MOJIBAKE = re.compile("[\u00c2-\u00c3\u00d0-\u00d1][\u0080-\u00bf]")
+
+
+def repaired(text):
+    """Text that was UTF-8 read as Latin-1 (or Windows-1252) and saved so: "Ð¤ÐµÑÑ" back to "Фест"; as it is
+    when it does not read back."""
+    if not MOJIBAKE.search(text or ""):
+        return text
+    for codec in ("latin-1", "cp1252"):
+        try:
+            return text.encode(codec).decode("utf-8")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            continue
+    return text
+
+
 def events(name, data):
     text = unfold(data.decode("utf-8", "replace"))
     out = []
@@ -78,7 +94,7 @@ def events(name, data):
         end = end or start
         if all_day and end > start:
             end -= timedelta(days=1)  # all-day events end the day after (exclusive)
-        title, location = unescape(props.get("SUMMARY", ("", ""))[1]), unescape(props.get("LOCATION", ("", ""))[1])
+        title, location = repaired(unescape(props.get("SUMMARY", ("", ""))[1])), repaired(unescape(props.get("LOCATION", ("", ""))[1]))
         status = props.get("STATUS", ("", ""))[1].upper()
         if status == "CANCELLED" or (end < start):
             continue
@@ -99,7 +115,7 @@ def exported(path):
         start, end = date.fromisoformat(e["start"][:10]), date.fromisoformat(e["end"][:10])
         if e.get("all_day") and end > start and e["end"][11:16] in ("", "00:00"):
             end -= timedelta(days=1)  # all-day events end the day after (exclusive)
-        title, location = (e.get("title") or "").strip(), " ".join((e.get("location") or "").split())
+        title, location = repaired((e.get("title") or "").strip()), repaired(" ".join((e.get("location") or "").split()))
         if end < start or (not location and not e.get("all_day") and (end - start).days < 1):
             continue
         out.append({"start": start.isoformat(), "end": end.isoformat(), "title": title, "location": location, "calendar": name})

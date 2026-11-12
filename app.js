@@ -880,8 +880,46 @@ app.get('/api/photos/unplaced', (_req, res) => {
     if (day && !(day in days)) days[day] = where.get(day) || null;
   }
   photos.sort((a, b) => (a.t || 0) - (b.t || 0));
-  res.json({ photos, albums: names, days, placed: Object.keys(places).length, removed: Object.keys(removed).length });
+  // per day the places to choose from in one click (choices) and the trip it falls in (trips), to go through them trip by trip
+  const { choices, tripList } = placeChoices(Object.keys(days));
+  res.json({ photos, albums: names, days, choices, trips: tripList, placed: Object.keys(places).length, removed: Object.keys(removed).length });
 });
+// For each day: the towns Cairn has you in (dayTownsRanked) and the stops of that day's ground legs (Gori on a drive to
+// Kutaisi), at most CHOICES; a day with none gets those of the day before and after (marked side), as a photo's UTC
+// day can be a day off. And the trips (trips.js) those days fall in, with their towns, to place a trip's photos in
+const CHOICES = 6, CHOICE_KM = 5;
+function placeChoices(dayList) {
+  loadTowns();
+  const ranked = dayTownsRanked(), stopsOn = new Map();
+  trips.forEach(t => {
+    if (t.approx || !t.stops_at?.length) return;
+    const d = (t.date || '').slice(0, 10);
+    t.stops_at.forEach((at, i) => { if (at && t.stops?.[i]) { if (!stopsOn.has(d)) stopsOn.set(d, []); stopsOn.get(d).push({ name: t.stops[i], lat: at[0], lon: at[1], cc: townOfAt(at)?.cc || '' }); } });
+  });
+  const addDays = (d, n) => new Date(Date.parse(d) + n * 864e5).toISOString().slice(0, 10);
+  const of = d => {
+    const out = [];
+    for (const c of [...(ranked.get(d) || []), ...(stopsOn.get(d) || [])]) {
+      if (!out.some(o => o.name === c.name || ground.km([o.lat, o.lon], [c.lat, c.lon]) < CHOICE_KM)) out.push({ name: c.name, cc: c.cc || '', lat: c.lat, lon: c.lon });
+    }
+    return out;
+  };
+  const choices = {};
+  for (const d of dayList) {
+    let list = of(d);
+    if (!list.length) list = [...of(addDays(d, -1)), ...of(addDays(d, 1))].filter((c, i, a) => a.findIndex(o => o.name === c.name) === i).map(c => ({ ...c, side: 1 }));
+    if (list.length) choices[d] = list.slice(0, CHOICES);
+  }
+  const sorted = [...dayList].sort(), tripList = [];
+  let all = [];
+  try { all = tripStore.list(); } catch (_) {}
+  for (const t of all) {
+    const i = sorted.findIndex(d => d >= t.start);
+    if (i < 0 || sorted[i] > t.end) continue;
+    tripList.push({ id: t.id, name: t.name, start: t.start, end: t.end, towns: (t.towns || []).map(x => ({ name: x.name, cc: x.country || '', lat: x.lat, lon: x.lon })) });
+  }
+  return { choices, tripList: tripList.sort((a, b) => a.start.localeCompare(b.start)) };
+}
 app.get('/api/photos/unplaced/:id/:size(thumb|full)', async (req, res) => {
   const row = unplacedById().get(req.params.id);
   if (!row) return res.status(404).json({ error: 'no such photo' });
@@ -1610,6 +1648,7 @@ const tripStore = require('./trips').create({
   stays: () => stays, activities: () => activities.list(), photos: datedPhotos,
   homeAirports, file: path.join(DATA_DIR, 'drives.json'),
   wellness: wellnessDays, weather: () => weather.all(), calendar: () => readImport(path.join(DATA_DIR, 'calendar.json'), []),
+  lived: () => readImport(HOME_FILE, {}).lived || [],
   log: m => console.log(m)
 });
 // each trip with its cover photo (the one chosen on its page, else the middle one of its day with the most photos) and
@@ -1860,10 +1899,14 @@ function dayTownMap() {
   if (dayTowns.list !== list) {
     const count = new Map();
     list.forEach(p => { const t = townOfAt(p.at, p.city); if (!t) return; const m = count.get(p.day) || new Map(); m.set(t, (m.get(t) || 0) + 1); count.set(p.day, m); });
-    dayTowns = { list, map: new Map([...count].map(([d, m]) => { const t = [...m].sort((x, y) => y[1] - x[1])[0][0]; return [d, { id: t.id, name: t.name, cc: t.cc, lat: t.lat, lon: t.lon, tz: t.tz }]; })) };
+    const brief = t => ({ id: t.id, name: t.name, cc: t.cc, lat: t.lat, lon: t.lon, tz: t.tz });
+    const ranked = new Map([...count].map(([d, m]) => [d, [...m].sort((x, y) => y[1] - x[1]).map(([t, n]) => ({ ...brief(t), n }))]));
+    dayTowns = { list, ranked, map: new Map([...ranked].map(([d, r]) => { const { n, ...t } = r[0]; return [d, t]; })) };
   }
   return dayTowns.map;
 }
+// Every town Cairn has you in on a day (flights, ground legs, stays, placed photos, check-ins, rides), most places first
+function dayTownsRanked() { dayTownMap(); return dayTowns.ranked; }
 const spending = require('./spending').create({
   stays: () => stays, file: path.join(DATA_DIR, 'rates.json'), log: m => console.log(m),
   transactions: () => readImport(path.join(DATA_DIR, 'transactions.json'), []), dayTowns: dayTownMap, trips: () => tripStore.list(),
@@ -2056,6 +2099,9 @@ app.get('/api/suggestions/albums', (_req, res) => { const list = albums.list(); 
 // may be missing. Per country, the payments a few days apart make one run; a run with no day of yours in that
 // country around it (a day either side) is listed, unless you said it was none (an online purchase)
 let paidCache = { key: '', list: [] };
+// paid online, wherever you were: services, shops, conferences, visas, and tickets and rooms booked ahead (the merchant's
+// country is the company's, not where you were)
+const ONLINE = /heroku|github|openai|anthropic|google|apple\.com|itunes|amzn|amazon|paypal|ebay|allegro|planszomania|booking\.com|bkg\*|hotel (at|on) booking|edreams|tripsta|travelgenio|agent fee|discovercars|vipcars|gotrentalcars|westendrent|\bacm\b|conferen|cvent|even3|figure eight|e-?visa|visaonline|visaarr|\beta\b|nzeta|k-eta|citizen&imm|travelstack|recreation\.gov|rws online|ryanair|wizz ?air|easyjet|jetstar|spirit\d|turkish airlines|flydubai|vivaaerobus|^american\b|southwes|hawaiian\d/i;
 app.get('/api/suggestions/payments', (_req, res) => {
   const tx = readImport(path.join(DATA_DIR, 'transactions.json'), []), no = dismissedSet();
   if (!tx.length) return res.json([]);
@@ -2070,7 +2116,7 @@ app.get('/api/suggestions/payments', (_req, res) => {
     placesAndDays('', '').forEach(p => { const cc = p.at && ccAt(p.at); if (cc) there.add(`${cc}|${p.day}`); });
     const near = (cc, d) => [-1, 0, 1].some(n => there.has(`${cc}|${new Date(Date.parse(d) + n * 864e5).toISOString().slice(0, 10)}`));
     const runs = [];
-    tx.filter(t => t.country && !home.has(t.country) && t.amount < 0).sort((a, b) => a.date.localeCompare(b.date)).forEach(t => {
+    tx.filter(t => t.country && !home.has(t.country) && !livedIn(t.country, t.date) && t.amount < 0 && !ONLINE.test(t.description || '')).sort((a, b) => a.date.localeCompare(b.date)).forEach(t => {
       const r = runs.findLast(x => x.country === t.country);
       if (r && (Date.parse(t.date) - Date.parse(r.last)) / 864e5 <= 3) { r.last = t.date; r.items.push(t); } else runs.push({ country: t.country, first: t.date, last: t.date, items: [t] });
     });
@@ -2100,7 +2146,7 @@ app.get('/api/suggestions/spotify', (_req, res) => {
     const near = (cc, d) => [-1, 0, 1].some(n => there.has(`${cc}|${new Date(Date.parse(d) + n * 864e5).toISOString().slice(0, 10)}`));
     const runs = [];
     Object.keys(byDay).sort().forEach(d => Object.entries(byDay[d]).forEach(([cc, n]) => {
-      if (home.has(cc) || n < SPOTIFY_MIN_PLAYS) return;
+      if (home.has(cc) || livedIn(cc, d) || n < SPOTIFY_MIN_PLAYS) return;
       const r = runs.findLast(x => x.country === cc);
       if (r && (Date.parse(d) - Date.parse(r.last)) / 864e5 <= 3) { r.last = d; r.days.push(d); r.plays += n; } else runs.push({ country: cc, first: d, last: d, days: [d], plays: n });
     }));
@@ -2155,8 +2201,11 @@ function walletMatched() {
   const matched = [], missing = new Map(), ground = new Map();
   for (const p of passes) {
     if (p.kind === 'flight') {
-      const near = x => { const t = Date.parse((x.date || '').slice(0, 10)); return p.day ? Math.abs(t - Date.parse(p.day)) <= 864e5
-        : Math.abs(t - walletPasses.dayOfYear(new Date(t).getUTCFullYear(), p.julian)) <= 864e5; };
+      // (the pass's own day, else its printed day of the year: the day it carries can be a day or two off, as when
+      // iCloud brought it again)
+      const near = x => { const t = Date.parse((x.date || '').slice(0, 10)); return (p.day && Math.abs(t - Date.parse(p.day)) <= 864e5)
+        || (p.julian > 0 && (!p.day || p.day.slice(0, 4) === String(new Date(t).getUTCFullYear()))
+          && Math.abs(t - walletPasses.dayOfYear(new Date(t).getUTCFullYear(), p.julian)) <= 864e5); };
       const f = (byRoute.get(`${p.from}|${p.to}`) || []).find(near);
       if (f) matched.push({ pass: p, flight: f });
       else if (p.yours) {
@@ -2255,6 +2304,9 @@ function countryYears(today) {
   return { years: [...years].sort(), rows, abroad, schengen };
 }
 
+// whether you lived in that country then (data/home.json's lived: the places you lived before)
+const livedIn = (cc, day) => tripStore.homeOn(day).cc.has(cc);
+
 // Gaps (To check): trips abroad with no flight, train, bus or ferry around their first or last day (how did you get
 // there or back?), and long runs of days nothing in Cairn has a place for. Each can be dismissed
 let gapsCache = { key: '', value: null };
@@ -2264,14 +2316,15 @@ app.get('/api/suggestions/gaps', (_req, res) => {
   const key = [dataVersion, flights.length, trips.length, stays.length, no.size, today].join('|');
   if (gapsCache.key !== key) {
     const day = (d, n) => new Date(Date.parse(d) + n * 864e5).toISOString().slice(0, 10);
-    const moved = new Set();  // every day with a flight, train, bus or ferry, and the day either side
-    [...flights, ...trips].forEach(t => { const d = (t.date || '').slice(0, 10); if (d && t.approx !== 'year' && t.approx !== 'month') [-1, 0, 1].forEach(n => moved.add(day(d, n))); });
+    const moved = new Set();  // every day with a flight, train, bus or ferry, and the days around it (a trip's first
+    // and last days are those something shows you away: the way there can be a few days before, back a few days after)
+    [...flights, ...trips].forEach(t => { const d = (t.date || '').slice(0, 10); if (d && t.approx !== 'year' && t.approx !== 'month') [-3, -2, -1, 0, 1, 2, 3].forEach(n => moved.add(day(d, n))); });
     // a ride, run or walk that day (a trip on your own power), or a rental car picked up or brought back
     activities.list().filter(x => !x.trainer && (x.distance || 0) >= 20).forEach(x => moved.add((x.date || '').slice(0, 10)));
     stays.filter(x => x.what === 'car').forEach(x => [x.start, x.end].forEach(d => d && [-1, 0, 1].forEach(n => moved.add(day(d.slice(0, 10), n)))));
     const home = new Set(Object.values(homePlaces()).filter(Boolean).map(t => t.cc));
     homeAirports().map(c => airports[c]).filter(Boolean).forEach(a => { const t = towns && cities.townAt(towns, a.lat, a.lon); if (t) home.add(t.cc); });
-    const unreached = tripStore.list().filter(t => t.end < today && t.countries.some(c => !home.has(c.cc)))
+    const unreached = tripStore.list().filter(t => t.end < today && t.countries.some(c => !home.has(c.cc) && !tripStore.homeOn(t.start).cc.has(c.cc)))
       .map(t => ({ key: `gap-trip|${t.id}`, id: t.id, name: t.name, start: t.start, end: t.end, days: t.days, there: moved.has(t.start), back: moved.has(t.end) }))
       .filter(t => (!t.there || !t.back) && !no.has(t.key));
     const days = [...new Set(placesAndDays('', '').map(p => p.day).filter(d => d && d <= today))].sort(), quiet = [];
@@ -2279,7 +2332,9 @@ app.get('/api/suggestions/gaps', (_req, res) => {
       const n = Math.round((Date.parse(days[i]) - Date.parse(days[i - 1])) / 864e5) - 1;
       if (n >= GAP_DAYS) quiet.push({ key: `gap-days|${day(days[i - 1], 1)}`, first: day(days[i - 1], 1), last: day(days[i], -1), days: n });
     }
-    gapsCache = { key, value: { unreached: unreached.sort((a, b) => b.start.localeCompare(a.start)), quiet: quiet.filter(g => !no.has(g.key)).reverse() } };
+    // (not a stretch wholly in a time you lived somewhere before: days with nothing to show there were days at home)
+    const lived = readImport(HOME_FILE, {}).lived || [], atHome = g => lived.some(l => l.from <= g.first && g.last < (l.to || '9999'));
+    gapsCache = { key, value: { unreached: unreached.sort((a, b) => b.start.localeCompare(a.start)), quiet: quiet.filter(g => !no.has(g.key) && !atHome(g)).reverse() } };
   }
   res.json(gapsCache.value);
 });
@@ -2392,7 +2447,8 @@ app.put('/api/home', (req, res) => {
     if (!t) return res.status(400).json({ error: `no town ${id}` });
     home[r] = { id: t.id, name: t.name, cc: t.cc, lat: t.lat, lon: t.lon };
   }
-  fs.writeFileSync(HOME_FILE, JSON.stringify({ ...home, ...(!counted && { commutes: false }), ...(daily && { onthisday_discord: true }) }, null, 1));
+  const lived = readImport(HOME_FILE, {}).lived;  // where you lived before (edited in the file): kept
+  fs.writeFileSync(HOME_FILE, JSON.stringify({ ...home, ...(!counted && { commutes: false }), ...(daily && { onthisday_discord: true }), ...(lived && { lived }) }, null, 1));
   res.json(home);
 });
 
@@ -2568,6 +2624,32 @@ app.get('/auth/tripit/callback', async (req, res) => {
 
 // --- Start ---
 
+// The server's own code changed (an edit, a git pull): it stops, and the LaunchAgent (KeepAlive) starts it again on
+// the new code, so the code running is never older than the code on disk. 10 s after the last change, and only if
+// every changed file parses (a half-saved file waits for the next change); process.exit runs between two
+// statements, never in the middle of a data file being written. The pages in public/ need no restart.
+function restartOnCodeChange() {
+  if (process.env.CAIRN_NO_RESTART) return;
+  const changed = new Set();
+  let timer = null;
+  try {
+    fs.watch(__dirname, (ev, name) => {
+      if (!name || !/^[\w-]+\.js$/.test(name)) return;
+      changed.add(name);
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        const files = [...changed].filter(f => fs.existsSync(path.join(__dirname, f)));
+        changed.clear();
+        const bad = files.filter(f => require('child_process').spawnSync(process.execPath, ['--check', path.join(__dirname, f)]).status !== 0);
+        if (bad.length) return console.warn(`[restart] not restarting: ${bad.join(', ')} does not parse`);
+        if (!files.length) return;
+        console.log(`[restart] ${files.join(', ')} changed: restarting on the new code`);
+        process.exit(0);
+      }, 10e3);
+    });
+  } catch (e) { console.warn('[restart] cannot watch the code:', e.message); }
+}
+
 init().then(() => {
   const server = app.listen(config.port, config.host, () => {
     console.log(`Cairn running at http://${config.host}:${config.port}`);
@@ -2589,6 +2671,7 @@ init().then(() => {
     setInterval(() => weather.fill(), 6 * 3600e3).unref();  // new rides, once the weather history has them
     if (strava.connected()) strava.sync();
     setInterval(() => { if (strava.connected()) strava.sync(); }, 3600e3).unref();
+    restartOnCodeChange();
   });
   server.on('error', e => {
     if (e.code === 'EADDRINUSE') {

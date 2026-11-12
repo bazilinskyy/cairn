@@ -17,8 +17,8 @@ fs.writeFileSync(path.join(dir, 'towns.txt'), [town(1, 'Eindhoven', 'NL', 51.44,
 const grid = cities.load(path.join(dir, 'towns.txt'));
 const airports = { EIN: { lat: 51.45, lon: 5.39, city: 'Eindhoven' }, LIS: { lat: 38.77, lon: -9.13, city: 'Lisbon' } };
 
-function store({ flights = [], stays = [], points = [], photos = [], ground = [], towns = grid }) {
-  return trips.create({
+function store({ flights = [], stays = [], points = [], photos = [], ground = [], towns = grid, lived = [] }) {
+  return trips.create({ lived: () => lived,
     towns: () => towns, cities, days: () => points, flights: () => flights, airports: () => airports, groundTrips: () => ground,
     stays: () => stays, activities: () => [], photos: () => photos, homeAirports: () => ['EIN'], file: path.join(dir, 'drives.json'), log: () => {}
   });
@@ -149,4 +149,27 @@ test('a room kept in town while sleeping elsewhere: its check-out that day is no
     stays: [room, away] });
   const id = s.list()[0].id, out = trips.localToUnix('2026-03-06 10:00', -9.14);
   assert.ok(!s.get(id).moves.some(m => m.t1 === out && Math.abs(m.to[0] - 38.72) < 0.01), 'no way back to the room at its check-out');
+});
+
+test('a train without its arrival is not guessed to arrive after the rental car leaves from there: no drive from where it left', () => {
+  const car = { id: 1, what: 'car', start: '2026-03-02', end: '2026-03-03', lat: 38.72, lon: -9.14 };
+  const s = store({ stays: [car],
+    flights: [{ id: 1, date: '2026-03-01 12:00', from: 'EIN', to: 'LIS', duration: '02:50' }, { id: 2, date: '2026-03-04 16:00', from: 'LIS', to: 'EIN', duration: '02:40' }],
+    ground: [{ id: 1, mode: 'train', date: '2026-03-02 09:00', from_lat: 40.0, from_lon: -8.5, to_lat: 38.72, to_lon: -9.14, distance: 220 },   // no arrival: 3.7 h guessed
+      { id: 2, mode: 'drive', date: '2026-03-02 11:30', from_lat: 38.72, from_lon: -9.14, to_lat: 38.80, to_lon: -9.38, distance: 30 }] });
+  const moves = s.get(s.list()[0].id).moves;
+  assert.ok(!moves.some(m => m.kind === 'drive' && Math.abs(m.from[0] - 40.0) < 0.01), 'no drive from where the train left');
+});
+
+test('the years you lived elsewhere: that country is home then, its airports are where trips start, and a room there is no night away', () => {
+  const lisbon = [{ name: 'Lisbon', cc: 'PT', lat: 38.72, lon: -9.14, from: '2010-09-01', to: '2012-07-01', airports: ['LIS'] }];
+  const days = ['2011-03-01', '2011-03-02', '2011-03-03', '2011-03-04'].map(day => ({ at: [38.72, -9.14], day }));
+  assert.strictEqual(store({ points: days }).list().length, 1, 'without it: four days in Portugal are a trip');
+  assert.strictEqual(store({ points: days, lived: lisbon }).list().length, 0, 'living there: days at home');
+  const room = [{ id: 1, what: 'stay', start: '2011-03-01', end: '2011-03-05', lat: 38.72, lon: -9.14 }];
+  assert.strictEqual(store({ points: days, stays: room, lived: lisbon }).list().length, 0, 'a room in the town you lived in');
+  const out = store({ lived: lisbon, flights: [{ id: 1, date: '2011-05-01 10:00', from: 'LIS', to: 'EIN' }, { id: 2, date: '2011-05-04 18:00', from: 'EIN', to: 'LIS' }],
+    points: [{ at: [51.44, 5.48], day: '2011-05-02' }] }).list();
+  assert.deepStrictEqual(out.map(t => [t.start, t.end, t.name]), [['2011-05-01', '2011-05-04', 'Netherlands']], 'from Lisbon to Eindhoven and back: a trip');
+  assert.strictEqual(store({ lived: lisbon, points: [{ at: [38.72, -9.14], day: '2013-03-01' }, { at: [38.72, -9.14], day: '2013-03-02' }, { at: [38.72, -9.14], day: '2013-03-03' }] }).list().length, 1, 'after you moved away: a trip again');
 });

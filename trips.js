@@ -1,7 +1,7 @@
 'use strict';
 // Trips: the runs of days you were away, from everything Cairn knows (flights, trains, buses and ferries, stays,
 // activities, photos, Timeline). A day is away when something puts you outside your home countries (those of your
-// home airports) or you slept in a stay; days in a row make a trip when it has a night in a stay, a flight or a
+// home airports; before, those of where you lived then: lived) or you slept in a stay; days in a row make a trip when it has a night in a stay, a flight or a
 // train, bus or ferry, or lasts three days or more (a ride over the border and back is not a trip). Each trip gets
 // its day-by-day story and its moves, as Polarsteps draws them: where you were from photo to photo, activity to
 // activity and stay to stay, when no flight, ground trip or activity of your own already shows how you got there.
@@ -14,6 +14,7 @@ const { awayNights } = require('./stats');
 
 const OSRM = 'https://router.project-osrm.org/route/v1/driving/';
 const WORK = /conferen|congress|symposi|workshop|summit|seminar|colloqui|summer school|winter school|meeting|kick-?off|defen[cs]e|viva|keynote|invited talk|panel|committee|review|project|hackathon|expo\b|trade fair|training|course\b|lecture|visit to|site visit|retreat|plenary/i;
+const LIVED_KM = 25;  // a stay this close to where you lived then is at home
 const MIN_DAYS = 3, MAX_REST_DAYS = 2, MAX_FLOWN_DAYS = 90, MOVE_KM = 1, ROAD_KM = 10, HOP_KM = 2, CAR_HOP_KM = 5, WALK_KMH = 7, PICKUP_KM = 30, AT_CAR_KM = 5, ROAD_MAX_KM = 900, CAR_KMH = 140, FERRY_KM = 20, ROAD_V = 2;
 const regionName = (() => {
   try { const n = new Intl.DisplayNames(['en'], { type: 'region' }); return cc => { try { return n.of(cc); } catch (_) { return cc; } }; } catch (_) { return cc => cc; }
@@ -36,8 +37,10 @@ const localToUnix = (s, lon) => {
 // sources: getters for the server's lists; towns() the town grid (cities.js), or null without the town list
 // wellness: () => { day: { rhr, sleep, score, ... } } (Garmin); weather: () => { activity id: the ride's weather }
 // calendar: () => [{ start, end, title, location }] (imports/calendar_events.py): what a trip was for (workOf)
+// lived: () => [{ name, cc, from, to, airports }] (data/home.json): where you lived before (from that day until the day
+// before to): on those days that country is home, and those airports are the ones trips start from and end at
 function create({ towns, cities, days, flights, airports, groundTrips, stays, activities, photos, homeAirports, file,
-  wellness = () => ({}), weather = () => ({}), calendar = () => [], log = console.log }) {
+  wellness = () => ({}), weather = () => ({}), calendar = () => [], lived = () => [], log = console.log }) {
   let memo = { key: null, list: [] };
   let drives = null;
   const loadDrives = () => {
@@ -49,6 +52,25 @@ function create({ towns, cities, days, flights, airports, groundTrips, stays, ac
     const ap = airports();
     return new Set(homeAirports().map(c => ap[c] && cities.townAt(grid, ap[c].lat, ap[c].lon)?.cc).filter(Boolean));
   }
+  // where you lived on a day: { cc: home countries, ap: home airports } (the place you lived then, else home now)
+  function homesBy(grid) {
+    const now = { cc: homeCountries(grid), ap: new Set(homeAirports()) };
+    const then = (lived() || []).filter(l => l && l.from && l.cc).sort((a, b) => a.from.localeCompare(b.from))
+      .map(l => ({ from: l.from, to: l.to || '9999', cc: new Set([l.cc]), ap: new Set(l.airports || []), at: l.lat != null ? [l.lat, l.lon] : null }));
+    // the day you moved: both homes (you left one and reached the other)
+    const both = (a, b) => ({ cc: new Set([...a.cc, ...b.cc]), ap: new Set([...a.ap, ...b.ap]), at: b.at });
+    const memo = new Map();
+    return day => {
+      const d = (day || '').slice(0, 10);
+      if (!memo.has(d)) {
+        const i = then.findIndex(l => l.from <= d && d < l.to), h = i < 0 ? now : then[i];
+        const before = i > 0 ? then[i - 1] : i < 0 && then.length && then[then.length - 1].to === d ? then[then.length - 1] : null;
+        memo.set(d, before && before.to === d ? both(before, h) : h);
+      }
+      return memo.get(d);
+    };
+  }
+  const homeOn = day => homesBy(towns())(day);
 
   function list() {
     const grid = towns();
@@ -56,9 +78,9 @@ function create({ towns, cities, days, flights, airports, groundTrips, stays, ac
     const fl = flights(), gt = groundTrips(), st = stays(), acts = activities(), ph = photos();
     // (a stay's or a trip's dates changed, as well as how many there are)
     const sig = list => { let h = 0; for (const x of list) for (const v of [x.start, x.end, x.date, x.lat]) { const t = String(v ?? ''); for (let i = 0; i < t.length; i++) h = (h * 31 + t.charCodeAt(i)) | 0; } return h; };
-    const key = [fl.length, gt.length, st.length, acts.length, ph.length, acts[0]?.id, st[st.length - 1]?.id, (calendar() || []).length, sig(st), sig(gt), sig(fl)].join('|');
+    const key = [fl.length, gt.length, st.length, acts.length, ph.length, acts[0]?.id, st[st.length - 1]?.id, (calendar() || []).length, sig(st), sig(gt), sig(fl), JSON.stringify(lived() || [])].join('|');
     if (memo.key === key) return memo.list;
-    const home = homeCountries(grid), ap = airports();
+    const homeAt = homesBy(grid), ap = airports();
     const cache = new Map(), townOf = (at, city) => {
       const k = at[0].toFixed(2) + ',' + at[1].toFixed(2) + (city ? '|' + city : '');
       if (!cache.has(k)) cache.set(k, (city && cities.townNamed(grid, city, at[0], at[1])) || cities.townAt(grid, at[0], at[1]));
@@ -69,22 +91,28 @@ function create({ towns, cities, days, flights, airports, groundTrips, stays, ac
     const pts = days('', ''), atHome = new Set();  // days something puts you in a home country
     for (const p of pts) {
       const t = p.at && townOf(p.at, p.city);
-      if (t && !home.has(t.cc)) mark(p.day, t.cc); else if (t) atHome.add(p.day);
+      if (t && !homeAt(p.day).cc.has(t.cc)) mark(p.day, t.cc); else if (t) atHome.add(p.day);
     }
-    for (const p of ph) if (p[2] != null) { const t = townOf([p[2], p[3]]); if (t && !home.has(t.cc)) mark(dayOf(p[1]), t.cc); else if (t) atHome.add(dayOf(p[1])); }
+    for (const p of ph) if (p[2] != null) { const d = dayOf(p[1]), t = townOf([p[2], p[3]]); if (t && !homeAt(d).cc.has(t.cc)) mark(d, t.cc); else if (t) atHome.add(d); }
     const nights = new Set();
     for (const s of st) {
       if (s.what === 'car' || !s.start) continue;
-      for (let d = s.start, n = 0; d < (s.end || s.start) && n < 120; d = addDays(d, 1), n++) { nights.add(d); mark(d); mark(addDays(d, 1)); }
+      for (let d = s.start, n = 0; d < (s.end || s.start) && n < 120; d = addDays(d, 1), n++) {
+        const lived = homeAt(d).at;  // a room in the town you lived in then: home, not a night away
+        if (lived && s.lat != null && ground.km(lived, [s.lat, s.lon]) < LIVED_KM) continue;
+        nights.add(d); mark(d); mark(addDays(d, 1));
+      }
     }
     const travel = new Set([...fl.map(f => (f.date || '').slice(0, 10)), ...gt.filter(t => !t.approx).map(t => (t.date || '').slice(0, 10))]);
     // flights from a home airport until landing at one again: all those days are away
-    const homeAp = new Set(homeAirports());
-    let leftOn = null;
+    const homeAp = { has: (code, day) => homeAt(day).ap.has(code) };
+    let leftOn = null, leftFrom = null;
     for (const f of [...fl].filter(f => f.date).sort((a, b) => a.date.localeCompare(b.date))) {
-      if (homeAp.has(f.from) && !leftOn) leftOn = f.date.slice(0, 10);
-      if (leftOn && homeAp.has(f.to)) {  // (not over months with no flight home: you came back some other way)
-        if ((Date.parse(f.date.slice(0, 10)) - Date.parse(leftOn)) / 864e5 <= MAX_FLOWN_DAYS) {
+      if (homeAp.has(f.from, f.date) && !leftOn) leftOn = f.date.slice(0, 10), leftFrom = f.from;
+      if (leftOn && homeAp.has(f.to, f.date)) {  // (not over months with no flight home: you came back some other way)
+        // (not from one home airport to another the same day: the day you moved, or a change of planes on the way)
+        const moved = leftOn === f.date.slice(0, 10) && leftFrom !== f.to;
+        if (!moved && (Date.parse(f.date.slice(0, 10)) - Date.parse(leftOn)) / 864e5 <= MAX_FLOWN_DAYS) {
           for (let d = leftOn; d <= f.date.slice(0, 10); d = addDays(d, 1)) mark(d);
         }
         leftOn = null;
@@ -100,7 +128,7 @@ function create({ towns, cities, days, flights, airports, groundTrips, stays, ac
     // something puts you at home then, or a flight brought you home
     const sorted = [...away.keys()].sort(), ccOf = d => [...(away.get(d) || new Map()).keys()];
     const ccNear = (i, step) => { for (let j = i, n = 0; j >= 0 && j < sorted.length && n < 4; j += step, n++) if (ccOf(sorted[j]).length) return ccOf(sorted[j]); return []; };
-    const homeLanding = new Set(fl.filter(f => homeAp.has(f.to)).map(f => (f.date || '').slice(0, 10)));
+    const homeLanding = new Set(fl.filter(f => homeAp.has(f.to, f.date)).map(f => (f.date || '').slice(0, 10)));
     const rest = (r, i) => {
       const gap = [];
       for (let d = addDays(r.end, 1); d < sorted[i]; d = addDays(d, 1)) gap.push(d);
@@ -117,6 +145,7 @@ function create({ towns, cities, days, flights, airports, groundTrips, stays, ac
       const cc = new Map();
       r.days.forEach(d => (away.get(d) || new Map()).forEach((n, c) => cc.set(c, (cc.get(c) || 0) + 1)));
       const countries = [...cc].sort((a, b) => b[1] - a[1]).map(([c, n]) => ({ cc: c, days: n }));
+      const home = homeAt(r.start).cc;
       const townList = cities.rank(grid, pts.filter(p => p.day >= r.start && p.day <= r.end)).filter(t => !home.has(t.country) || !countries.length);
       const name = countries.length ? countries.slice(0, 3).map(c => regionName(c.cc)).join(' · ') + (countries.length > 3 ? ' …' : '')
         : (townList[0]?.name || 'Trip');
@@ -159,19 +188,24 @@ function create({ towns, cities, days, flights, airports, groundTrips, stays, ac
     // a ferry with its times is to a rental car what a flight is (an island's car left at the port, the next island's
     // picked up there); one known only by its day (at noon) is not
     const timed = t => !t.approx && (t.arrival || (/^\d{4}-\d\d-\d\d \d\d:\d\d/.test(t.date || '') && !/ 12:00(:00)?$/.test(t.date)));
+    // a trip without its arrival: guessed from its length (60 km/h), but never after the next trip leaves (a train
+    // to the town where the rental car's first drive starts: guessed later than that drive, the way joined the two
+    // by car)
+    const leaves = gt.filter(t => t.from_lat != null && t.to_lat != null).map(t => unix(t.date, t.from_lat, t.from_lon)).sort((a, b) => a - b);
     for (const t of gt) {
       if (t.from_lat == null || t.to_lat == null) continue;
-      const t0 = unix(t.date, t.from_lat, t.from_lon), t1 = t.arrival ? unix(t.arrival, t.to_lat, t.to_lon) : t0 + Math.max(1800, (t.distance || 50) / 60 * 3600);
+      const t0 = unix(t.date, t.from_lat, t.from_lon), next = leaves.find(x => x > t0);
+      let t1 = t.arrival ? unix(t.arrival, t.to_lat, t.to_lon) : t0 + Math.max(1800, (t.distance || 50) / 60 * 3600);
+      if (!t.arrival && next != null && t1 >= next) t1 = Math.max(t0 + 60, next - 60);
       const ferry = t.mode === 'ferry' && timed(t);
       ev.push({ t: t0, at: [t.from_lat, t.from_lon], what: 'ground', cover: 'g' + t.id, ...(ferry && { off: true }) });
       ev.push({ t: t1, at: [t.to_lat, t.to_lon], what: 'ground', cover: 'g' + t.id, ...(ferry && { on: true, from: [t.from_lat, t.from_lon] }) });
     }
-    const homeAp = new Set(homeAirports());
     for (const f of fl) {
       const a = ap[f.from], b = ap[f.to], t0 = unix(f.date, a.lat, a.lon);
       const [h, m] = (f.duration || '').split(':').map(Number);
       ev.push({ t: t0, at: [a.lat, a.lon], what: 'flight', cover: 'f' + f.id, off: true });
-      ev.push({ t: t0 + ((h || 0) * 60 + (m || 0) || 120) * 60, at: [b.lat, b.lon], what: 'flight', cover: 'f' + f.id, on: true, from: [a.lat, a.lon], home: homeAp.has(f.to) });
+      ev.push({ t: t0 + ((h || 0) * 60 + (m || 0) || 120) * 60, at: [b.lat, b.lon], what: 'flight', cover: 'f' + f.id, on: true, from: [a.lat, a.lon], home: homeOn(f.date).ap.has(f.to) });
     }
     // a stay you kept while away (a room in town, nights elsewhere on a road trip): its check-in or check-out on a day a
     // shorter stay elsewhere has you sleeping there (the night after, the night before) is not where you were
@@ -390,7 +424,7 @@ function create({ towns, cities, days, flights, airports, groundTrips, stays, ac
   // the drives, waiting for the first working out
   const drivesReady = () => (driveMemo.key ? Promise.resolve(allDrives()) : refreshDrives());
 
-  return { list, get, drives: allDrives, drivesReady };
+  return { list, get, drives: allDrives, drivesReady, homeOn };
 }
 
 module.exports = { create, localToUnix };

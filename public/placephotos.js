@@ -3,9 +3,20 @@
 // albums they are in. Select one or many (a click, shift-click for a run, a day's or an album's at once), then place them
 // in a town (search, or the town Cairn has you in that day), drag them onto the map at the exact spot, or put each at the
 // spot of a photo with a place taken within half an hour of it (📍 on the photo: a camera beside the phone), or take them
-// out of Cairn instead (a screenshot, a scan: nothing to place; Apple Photos keeps them). Each can be undone. Uses the page's globals (escapeHTML, fmtDate, BASEMAPS, prefs, toneMap, toast).
+// out of Cairn instead (a screenshot, a scan: nothing to place; Apple Photos keeps them). Each can be undone.
+// The days come under the trip they fall in (trips.js), and each day offers the places Cairn has you in that day (or the
+// day before and after) as one-click buttons: a click places the day's selected photos there, or all of the day's when
+// none of them is selected; the trip's towns place a selection within the trip, and the panel offers the places of the
+// selected photos' days and trips. Uses the page's globals (escapeHTML, fmtDate, BASEMAPS, prefs, toneMap, toast).
 
 const PP_DAYS = 40;  // days drawn at a time
+const ppDayOf = p => (p.t ? new Date(p.t * 1000).toISOString().slice(0, 10) : '');
+const ppTripOf = day => (day && (pp.trips || []).find(t => t.start <= day && day <= t.end)) || null;
+// a day's places to click: those of /api/photos/unplaced's choices, else the one town Cairn has you in
+const ppChoices = day => pp.choices?.[day] || (pp.days[day] ? [pp.days[day]] : []);
+const ppChip = (c, onclick, extra = '') => `<button class="btn btn-ghost pp-here${c.side ? ' pp-side-day' : ''}" onclick="${onclick}"
+  title="${c.side ? 'Where Cairn has you the day before or after' : 'Where Cairn has you that day'}${extra}">📍 ${flagOf(c.cc || '')}${escapeHTML(c.name)}</button>`;
+const ppRange = t => (t.start === t.end ? fmtDate(t.start) : `${fmtDate(t.start)} – ${fmtDate(t.end)}`);
 let pp = null;       // { photos, albums, days, shown (filtered list), selected: Set, last: index, map, markers, undo: [] }
 
 async function openPlacePhotos() {
@@ -49,6 +60,7 @@ async function openPlacePhotos() {
           <div id="pp-sel">Nothing selected</div>
           <div id="pp-nearsel"></div>
           <div id="pp-removesel"></div>
+          <div id="pp-choices"></div>
           <input id="pp-town" type="search" placeholder="Place them in a town…" autocomplete="off" aria-label="Town">
           <div id="pp-towns"></div>
           <p class="sp-note">Or drag photos onto the map to place them at that exact spot. Dragging a selected photo moves
@@ -106,15 +118,25 @@ function ppFilter() {
 function ppDraw() {
   const grid = document.getElementById('pp-grid'), byDay = new Map();
   pp.shown.forEach((p, i) => { const d = p.t ? new Date(p.t * 1000).toISOString().slice(0, 10) : ''; if (!byDay.has(d)) byDay.set(d, []); byDay.get(d).push([p, i]); });
-  const days = [...byDay.entries()];
+  const days = [...byDay.entries()], tripCount = new Map();
+  days.forEach(([day, list]) => { const t = ppTripOf(day); if (t) tripCount.set(t.id, (tripCount.get(t.id) || 0) + list.length); });
+  let lastTrip;
   grid.innerHTML = days.slice(0, pp.limit).map(([day, list]) => {
     const albums = [...new Set(list.flatMap(([p]) => p.albums))].map(a => pp.albums[a]);
-    const at = pp.days[day], near = list.filter(([p]) => p.near).length;
-    return `<div class="pp-day" data-day="${day}">
+    const near = list.filter(([p]) => p.near).length, trip = ppTripOf(day);
+    let head = '';
+    if ((trip?.id || null) !== (lastTrip === undefined ? undefined : lastTrip?.id || null)) {
+      head = trip ? `<div class="pp-trip"><label><input type="checkbox" onchange="ppSelectTrip('${trip.id}', this.checked)"> <b>${escapeHTML(trip.name)}</b>
+        · ${ppRange(trip)} · ${tripCount.get(trip.id).toLocaleString()} photo${tripCount.get(trip.id) > 1 ? 's' : ''}</label>
+        ${trip.towns.length ? `<span class="pp-trip-towns">${trip.towns.map((c, k) => ppChip(c, `ppPlaceTrip('${trip.id}', ${k})`, '; places the selected photos of this trip')).join('')}</span>` : ''}</div>`
+        : (day ? '<div class="pp-trip pp-notrip">Not on a trip</div>' : '');
+      lastTrip = trip;
+    }
+    return `${head}<div class="pp-day" data-day="${day}">
       <div class="pp-day-head">
         <label><input type="checkbox" onchange="ppSelectDay('${day}', this.checked)"> <b>${day ? fmtDate(day) : 'No date'}</b> · ${list.length}</label>
         ${albums.length ? `<small>in ${albums.slice(0, 3).map(escapeHTML).join(', ')}${albums.length > 3 ? ` +${albums.length - 3}` : ''}</small>` : ''}
-        ${at ? `<button class="btn btn-ghost pp-here" title="Cairn has you in ${escapeHTML(at.name)} that day" onclick="ppPlaceDay('${day}')">📍 ${flagOf(at.cc)}${escapeHTML(at.name)}</button>` : ''}
+        ${ppChoices(day).map((c, k) => ppChip(c, `ppPlaceDay('${day}', ${k})`)).join('')}
         ${near ? `<button class="btn btn-ghost pp-here" title="Each where a photo with a place was taken within half an hour of it" onclick="ppPlaceDayNear('${day}')">📍 ${near} at nearby photos' spots</button>` : ''}
       </div>
       <div class="pp-thumbs">${list.map(([p, i]) => `<div class="pp-ph${pp.selected.has(p.id) ? ' sel' : ''}" data-id="${p.id}" data-i="${i}" draggable="true"
@@ -149,6 +171,36 @@ function ppSelectDay(day, on) {
   pp.shown.forEach(p => { if ((p.t ? new Date(p.t * 1000).toISOString().slice(0, 10) : '') === day) on ? pp.selected.add(p.id) : pp.selected.delete(p.id); });
   ppMarks();
 }
+function ppSelectTrip(id, on) {
+  const t = (pp.trips || []).find(x => x.id === id);
+  if (!t) return;
+  pp.shown.forEach(p => { const d = ppDayOf(p); if (d && t.start <= d && d <= t.end) on ? pp.selected.add(p.id) : pp.selected.delete(p.id); });
+  ppMarks();
+}
+// one of a trip's towns: the selected photos of that trip placed there
+function ppPlaceTrip(id, k) {
+  const t = (pp.trips || []).find(x => x.id === id), at = t?.towns[k];
+  if (!at) return;
+  const ids = pp.shown.filter(p => { const d = ppDayOf(p); return pp.selected.has(p.id) && d && t.start <= d && d <= t.end; }).map(p => p.id);
+  if (!ids.length) return toast(`Select photos of this trip first (tick the trip or a day, or click photos)`, 'error');
+  ppPlace(ids, at.lat, at.lon, at.name);
+}
+// the panel's places: those of the selected photos' days and trips, most used first; a click places the whole selection
+function ppPanelChoices() {
+  const box = document.getElementById('pp-choices');
+  if (!box) return;
+  const sel = pp.photos.filter(p => pp.selected.has(p.id)), seen = new Map();
+  const add = (c, w) => { const k = c.name + '|' + (c.cc || ''); const o = seen.get(k); if (o) o.w += w; else seen.set(k, { ...c, side: 0, w }); };
+  new Set(sel.map(ppDayOf)).forEach(d => ppChoices(d).forEach((c, i) => add(c, c.side ? 1 : 10 - i)));
+  new Set(sel.map(p => ppTripOf(ppDayOf(p))).filter(Boolean)).forEach(t => t.towns.forEach(c => add(c, 1)));
+  pp.panel = [...seen.values()].sort((a, b) => b.w - a.w).slice(0, 10);
+  box.innerHTML = pp.panel.length ? `<p class="sp-note">Place ${sel.length > 1 ? 'them' : 'it'} where Cairn has you on ${sel.length > 1 ? 'those days' : 'that day'}:</p>`
+    + pp.panel.map((c, k) => ppChip(c, `ppPlacePanel(${k})`)).join('') : '';
+}
+function ppPlacePanel(k) {
+  const c = pp.panel?.[k];
+  if (c && pp.selected.size) ppPlace([...pp.selected], c.lat, c.lon, c.name);
+}
 function ppSelectShown() { pp.shown.forEach(p => pp.selected.add(p.id)); ppMarks(); }
 function ppClear() { pp.selected.clear(); ppMarks(); }
 function ppMarks() {
@@ -165,6 +217,7 @@ function ppCount() {
     title="Each where a photo with a place was taken within half an hour of it">📍 Place ${near === n ? (n > 1 ? 'them' : 'it') : `${near.toLocaleString()} of them`} at nearby photos' spots</button>` : '';
   document.getElementById('pp-removesel').innerHTML = n ? `<button class="btn btn-ghost pp-remove" onclick="ppRemove([...pp.selected])"
     title="Not placed anywhere and no longer listed here; Apple Photos keeps ${n > 1 ? 'them' : 'it'} as ${n > 1 ? 'they are' : 'it is'}">🗑 Remove ${n > 1 ? 'them' : 'it'} from Cairn</button>` : '';
+  ppPanelChoices();
 }
 function ppNearText([, , min]) {
   return min === 0 ? 'A photo with a place was taken the same minute' : `A photo with a place was taken ${Math.abs(min)} min ${min > 0 ? 'after' : 'before'}`;
@@ -183,15 +236,16 @@ async function ppTowns(q) {
   }; });
 }
 
-function ppPlaceDay(day) {
-  const at = pp.days[day];
-  const inDay = pp.shown.filter(p => (p.t ? new Date(p.t * 1000).toISOString().slice(0, 10) : '') === day);
+function ppPlaceDay(day, k = 0) {
+  const at = ppChoices(day)[k];
+  if (!at) return;
+  const inDay = pp.shown.filter(p => ppDayOf(p) === day);
   const chosen = inDay.filter(p => pp.selected.has(p.id));
   ppPlace((chosen.length ? chosen : inDay).map(p => p.id), at.lat, at.lon, at.name);
 }
 
 function ppPlaceDayNear(day) {
-  const inDay = pp.shown.filter(p => p.near && (p.t ? new Date(p.t * 1000).toISOString().slice(0, 10) : '') === day);
+  const inDay = pp.shown.filter(p => p.near && ppDayOf(p) === day);
   const chosen = inDay.filter(p => pp.selected.has(p.id));
   ppPlaceNear((chosen.length ? chosen : inDay).map(p => p.id));
 }
