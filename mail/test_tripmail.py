@@ -360,6 +360,28 @@ def test_things_script_arguments():
     assert tripmail.ThingsTodos("✈️ Travel").args(spec) == [spec["title"], spec["notes"], "2026", "11", "15", "✈️ Travel"]
 
 
+
+def test_a_trip_todo_per_new_doc_once():
+    class Things:
+        def __init__(self):
+            self.made = []
+
+        def trip(self, spec, key):
+            self.made.append((spec, key))
+            return f"t{len(self.made)}"
+    state = {"docs": {"done": {
+        "leg:FR1@2026-12-03": {"doc": "d9", "spec": {"what": "leg", "start": "2026-12-03", "end": "2026-12-07"}},
+        "ride:x": {"doc": "d9", "spec": {"what": "leg", "mode": "bus", "start": "2026-12-03", "end": "2026-12-07"}},
+        "stay:1": {"doc": "d1", "spec": {"what": "stay", "start": "2026-11-20", "end": "2026-11-22"}}}}}
+    things, now = Things(), tripmail.datetime(2026, 11, 12, 9)
+    tripmail.trip_todos(state, {"d9": "Malaga 2026 2"}, things, now)
+    tripmail.trip_todos(state, {"d9": "Malaga 2026 2"}, things, now)  # made once
+    (spec, key), = things.made
+    assert key == "d9" and spec["title"] == "trip to Malaga" and spec["notes"] == "https://docs.google.com/document/d/d9/edit"
+    assert (spec["when"], spec["deadline"]) == ("2026-11-14", "2026-11-29")
+    assert [done for _, done in spec["checklist"]] == [True, False, False, False]  # a bus is no flight
+    assert state["docs"]["todos"]["d9"]["ref"] == "t1"
+
 def test_title_matches_any_airline_prefix():
     for title in ("EJU1234: Amsterdam - Tenerife South", "✈️ U21234: Amsterdam - Tenerife", "Flight: U2 1234 from AMS to TFS", "U21234: Amsterdam - Tenerife"):
         assert tripmail.title_has_flight(title, "U21234"), title

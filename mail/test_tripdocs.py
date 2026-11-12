@@ -83,7 +83,9 @@ class FakeGoogle:
     def create(self, folder, name):
         doc_id = f"new{len(self.created) + 1}"
         self.created.append(name)
-        self.docs[doc_id] = {"name": name, "tables": [[[{"text": h} for h in PLAN]], [[{"text": h} for h in TRANSPORT]]]}
+        self.docs[doc_id] = {"name": name, "tables": [[[{"text": h} for h in heads]] +
+                                                      [[{"text": ""} for _ in heads] for _ in range(tripdocs.EMPTY_ROWS)]
+                                                      for heads in (PLAN, TRANSPORT)]}  # as TEMPLATE
         return doc_id
 
 
@@ -158,9 +160,10 @@ def test_flights_go_to_transport_and_a_new_doc():
     docs.run(state, AIRPORTS, NOW, ["AMS"])
     assert g.created == ["Faro 2027"], g.created
     assert texts(g.docs["new1"]["tables"][1])[1:] == [["✈️ FR1: Amsterdam - Faro", "28.02.27 10:00", "", "Booking code: ABC123"],
-                                                     ["✈️ FR2: Faro - Amsterdam", "05.03.27 13:00", "", "Booking code: ABC123"]]
+                                                     ["✈️ FR2: Faro - Amsterdam", "05.03.27 13:00", "", "Booking code: ABC123"],
+                                                     ["", "", "", ""]]  # the new doc's empty rows filled in turn
     docs.run(state, AIRPORTS, NOW, ["AMS"])  # nothing new: nothing written twice
-    assert len(g.docs["new1"]["tables"][1]) == 3
+    assert len(g.docs["new1"]["tables"][1]) == 4
     state["stays"] = {"4": stay("4", "Faro", "2027-02-28", "2027-03-05")}
     docs.run(state, AIRPORTS, NOW, ["AMS"])  # a stay in the same days joins that doc
     assert texts(g.docs["new1"]["tables"][0])[1][:3] == ["Faro", "28.02–05.03.27", "Hostel"]
@@ -253,6 +256,44 @@ def test_past_items_are_left_alone():
     state = {"stays": {"1": stay("1", "Faro", "2026-10-01", "2026-10-03")}}
     assert tripdocs.wanted(state, AIRPORTS, NOW, ["AMS"]) == {}
 
+
+
+def test_tables_without_data_get_three_empty_rows_and_a_stay_fills_the_first():
+    g = FakeGoogle({"d1": {"name": "Portugal 2026", "tables": [rows(PLAN), rows(TRANSPORT, ["", "", "", ""])]},
+                    "d2": {"name": "Spain 2026", "tables": [rows(PLAN, ["Madrid", "01–03.12.26", "", "", ""]), rows(TRANSPORT)]}})
+    state = {"stays": {"1": stay("1", "Faro", "2026-11-12", "2026-11-13")}}
+    docs = tripdocs.TripDocs(g, "folder", lambda m: None)
+    docs.run(state, AIRPORTS, NOW, ["AMS"])
+    plan, transport = g.docs["d1"]["tables"]  # no dates, so not this trip's doc, but brought up to three rows
+    assert texts(plan)[1:] == [["", "", "", "", ""]] * 3 and texts(transport)[1:] == [["", "", "", ""]] * 3
+    assert texts(g.docs["d2"]["tables"][0])[1:] == [["Madrid", "01–03.12.26", "", "", ""]]  # has data: left as it is
+    assert len(g.docs["d2"]["tables"][1]) == 4
+    g.docs["d3"] = {"name": "Spain 2025", "tables": [rows(PLAN), rows(TRANSPORT, ["✈️ X1: A - B", "01.05.25 08:00", "", ""])]}
+    state["stays"]["2"] = stay("2", "Lagos", "2026-11-20", "2026-11-21")
+    docs.run(state, AIRPORTS, NOW, ["AMS"])
+    assert len(g.docs["d3"]["tables"][0]) == 1  # a trip that is over is left as it is
+    assert tripdocs.over("Turkey 2021", None, NOW.date()) and not tripdocs.over("Asia winter 2026", None, NOW.date())
+    assert not tripdocs.over("Yellowstone", None, NOW.date())
+    assert texts(g.docs["new1"]["tables"][0])[1:] == [["Faro", "12–13.11.26", "Hostel", "20€", ""], ["", "", "", "", ""],
+                                                     ["", "", "", "", ""]]  # the first empty row filled
+
+
+def test_new_docs_are_noted_and_shared_by_link():
+    g = FakeGoogle({})
+    docs = tripdocs.TripDocs(g, "folder", lambda m: None)
+    docs.run({"stays": {"1": stay("1", "Faro", "2026-11-12", "2026-11-13")}}, AIRPORTS, NOW, ["AMS"])
+    assert docs.created == {"new1": "Portugal 2026"}
+
+    class Calls(tripdocs.Google):
+        def __init__(self):
+            self.calls = []
+
+        def call(self, method, url, body=None, data=None, ctype="application/json"):
+            self.calls.append((method, url.rsplit("/", 2)[-2:], body))
+            return {"id": "doc9"}
+    c = Calls()
+    assert c.create("folder", "Faro 2027") == "doc9"
+    assert ("POST", ["doc9", "permissions"], {"type": "anyone", "role": "writer", "allowFileDiscovery": False}) in c.calls
 
 class ParaGoogle(FakeGoogle):
     """A doc with a Plan table and then paragraphs, kept as one string with a style and a bullet flag per paragraph;

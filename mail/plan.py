@@ -1,7 +1,7 @@
 """What to keep in step with the flights the owner is on: a check-in to-do per flight, a busy block in the work
 calendar per flight, train, bus or ferry that falls in working hours, and an all-day banner per trip. Pure functions over rows of state["seen"]; tripmail.py
 applies the result to Things and the calendars."""
-from datetime import datetime, time, timedelta
+from datetime import date, datetime, time, timedelta
 from urllib.parse import quote_plus
 from zoneinfo import ZoneInfo
 
@@ -51,6 +51,23 @@ def todo(row, airports, now):
     return {"title": f"check in {row['flight']}", "when": when.isoformat(),
             "notes": url + (f"\nBooking code: {code}" if code else "")}
 
+
+
+TRIP_CHECKLIST = ("book flights", "book accommodation", "rent car", "make plan")
+BOOKED = {"book flights": "leg", "book accommodation": "stay", "rent car": "car"}  # ticked when the trip has one
+
+
+def trip_todo(name, link, start, booked, now):
+    """To-do for a trip that just got its doc: "trip to Faro", the doc's link in its notes and a checklist (what is
+    already booked ticked). Scheduled for the first Saturday after today, deadline the last Sunday before the trip
+    starts; when that Sunday comes first, scheduled today."""
+    today = now.date()
+    saturday = today + timedelta(days=(5 - today.weekday()) % 7 or 7)
+    start = date.fromisoformat(start)
+    sunday = start - timedelta(days=(start.weekday() + 1) % 7 or 7)
+    return {"title": f"trip to {name}", "notes": link, "when": (saturday if saturday <= sunday else today).isoformat(),
+            "deadline": sunday.isoformat() if sunday >= today else None,
+            "checklist": [[item, BOOKED.get(item) in booked] for item in TRIP_CHECKLIST]}
 
 def block(row, airports):
     """Busy block: from 2 hours before departure to 1 hour after arrival, as aware datetimes. Ground legs carry

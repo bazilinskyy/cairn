@@ -4,7 +4,8 @@
 tripmail fills them from the bookings it reads: a hotel or Airbnb goes into the Plan row for that place and dates
 (empty cells only) or a new row in date order; a rental car into the Comments of the row of its pick-up day; each
 flight into a Transport row. A cancelled stay empties the Accommodation and Price cells. A trip without a doc gets
-a new one, named like "Portugal 2026". Text the user wrote is never changed.
+a new one, named like "Portugal 2026", that anyone with its link can edit (and a Things to-do, by tripmail.py).
+Tables with no data yet get three empty rows. Text the user wrote is never changed.
 
 Suggestions: when the doc of a trip that is not over yet changes (the user's edits or tripmail's), Claude (`claude
 -p`) is asked for things to do around where the user sleeps and a day-by-day itinerary, new to them: it is told where
@@ -37,12 +38,13 @@ h1 { font-size: 18pt; font-weight: bold; margin-top: 24pt; margin-bottom: 6pt; }
 h2 { font-size: 14pt; font-weight: bold; margin-top: 18pt; margin-bottom: 4pt; }
 h3 { font-size: 12pt; font-weight: bold; color: #666666; margin-top: 14pt; margin-bottom: 4pt; }
 </style>"""
+EMPTY_ROWS = 3  # a table with no data yet has this many empty rows to write in
 TEMPLATE = f"""<html><head>{STYLE}</head><body>
 <h1>Information</h1><p></p>
 <h1>Plan</h1>
-<table><tr><td><b>Place</b></td><td><b>Dates</b></td><td><b>Accommodation</b></td><td><b>Price</b></td><td><b>Comments</b></td></tr></table>
+<table><tr><td><b>Place</b></td><td><b>Dates</b></td><td><b>Accommodation</b></td><td><b>Price</b></td><td><b>Comments</b></td></tr>{("<tr>" + "<td></td>" * 5 + "</tr>") * EMPTY_ROWS}</table>
 <h1>Transport</h1>
-<table><tr><td><b>Transport</b></td><td><b>Date</b></td><td><b>Price</b></td><td><b>Comments</b></td></tr></table>
+<table><tr><td><b>Transport</b></td><td><b>Date</b></td><td><b>Price</b></td><td><b>Comments</b></td></tr>{("<tr>" + "<td></td>" * 4 + "</tr>") * EMPTY_ROWS}</table>
 </body></html>"""
 # and their page: A4 with 1 cm margins, pageless
 CM = {"magnitude": 28.346456692913385, "unit": "PT"}
@@ -107,7 +109,12 @@ class Google:
         doc_id = self.call("POST", "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart", data=data,
                            ctype=f"multipart/related; boundary={boundary}")["id"]
         self.batch(doc_id, [PAGE])
+        self.share(doc_id)
         return doc_id
+
+    def share(self, doc_id):
+        """Anyone with the link can edit (it is not listed or searchable)."""
+        self.call("POST", f"{DRIVE}/{doc_id}/permissions", {"type": "anyone", "role": "writer", "allowFileDiscovery": False})
 
     def replace(self, doc_id, html=TEMPLATE):
         """The doc's whole content and named styles made anew from html (same doc, same link), on that page."""
@@ -277,11 +284,28 @@ def add_row(table, after):
                                                        "rowIndex": after, "columnIndex": 0}, "insertBelow": True}}]
 
 
+def over(name, days, today):
+    """Whether a doc's trip is past: by its dates, else by the years in its name ("Turkey 2021")."""
+    years = [int(y) for y in re.findall(r"\b(?:19|20)\d\d\b", name)]
+    return days[1] < today if days else bool(years) and max(years) < today.year
+
+
+def pad(doc):
+    """Rows that bring each table with no data yet (Plan, Transport) up to EMPTY_ROWS empty ones, the later table
+    first so the earlier one's place holds."""
+    out = []
+    for t in sorted(tables(doc).values(), key=lambda t: -t["start"]):
+        if not any(c["text"] for row in t["rows"][1:] for c in row):
+            out += add_row(t, len(t["rows"]) - 1) * max(0, EMPTY_ROWS + 1 - len(t["rows"]))
+    return out
+
+
 # --- where a booking goes ---
 
 def stay_row(plan, stay):
     """("fill", row) for the Plan row that already links to the booking, else for the row of this place and dates;
-    else ("insert", row to insert below) in date order. Filling writes only empty cells."""
+    else its place in date order: ("fill", row) when that row is empty, or ("insert", row to insert below). Filling
+    writes only empty cells."""
     after = 0
     for r, row in enumerate(plan["rows"][1:], 1):
         cell = lambda name: row[plan["cols"][name]] if name in plan["cols"] else {"text": "", "links": []}
@@ -294,6 +318,8 @@ def stay_row(plan, stay):
         if days and place and (place in _norm(stay["place"]) or _norm(stay["place"]) in place) \
                 and days[0] < date.fromisoformat(stay["end"]) and date.fromisoformat(stay["start"]) < days[1] + timedelta(days=1):
             return "fill", r
+    if after + 1 < len(plan["rows"]) and not any(c["text"] for c in plan["rows"][after + 1]):
+        return "fill", after + 1  # an empty row in its place
     return "insert", after
 
 
@@ -408,12 +434,17 @@ def _stub(name):
 class TripDocs:
     def __init__(self, google, folder, log, dry=False, skip=()):
         self.g, self.folder, self.log, self.dry, self.skip, self.names = google, folder, log, dry, set(skip), {}
+        self.created = {}  # doc id -> name of the docs this run made
 
-    def files(self):
+    def files(self, today=None):
+        """{doc id: name and days}; the empty tables of docs whose trip is not over padded."""
         out = {}
         for f in self.g.docs_in(self.folder):
             self.names[f["id"]] = f["name"]
-            days = span(self.g.get(f["id"]))
+            doc = self.g.get(f["id"])
+            days = span(doc)
+            if pad(doc) and today and not over(f["name"], days, today):
+                self.batch(f["id"], pad(doc))
             out[f["id"]] = {"name": f["name"], "start": days[0].isoformat() if days else None, "end": days[1].isoformat() if days else None}
         return out
 
@@ -435,7 +466,7 @@ class TripDocs:
         title = next(t for t in [name] + [f"{name} {i}" for i in range(2, 100)] if t not in taken)
         self.log(f"{'would ' if self.dry else ''}create doc {title!r}")
         doc_id = "dry:" + title if self.dry else self.g.create(self.folder, title)
-        self.names[doc_id] = title
+        self.names[doc_id] = self.created[doc_id] = title
         return doc_id
 
     def _table(self, doc_id, kind):
@@ -479,8 +510,8 @@ class TripDocs:
             self.batch(doc_id, car_requests(cell, spec))
             return
         how, r = stay_row(t, spec)
-        if how == "fill":
-            self.batch(doc_id, fill(t, r, {k: v for k, v in stay_cells(spec).items() if k in ("accommodation", "price")}))
+        if how == "fill":  # the place and dates too when the row has none
+            self.batch(doc_id, fill(t, r, stay_cells(spec)))
         elif how == "insert":
             self._insert_and_fill(doc_id, "plan", r, stay_cells(spec))
 
@@ -523,7 +554,7 @@ class TripDocs:
         if not any(steps.values()):
             return
         waiting = [i for i in desired if i in done and not done[i]["doc"] and i not in steps["update"]]
-        files = self.files()
+        files = self.files(now.date())
         today = now.date().isoformat()
         for i in steps["remove"] + steps["update"]:
             if done[i]["spec"]["end"] >= today and done[i]["doc"] in files:

@@ -25,6 +25,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 import traceback
 import urllib.parse
 import urllib.request
@@ -329,6 +330,14 @@ THINGS_UPDATE = """on run argv
     end try
   end tell
 end run"""
+THINGS_FIND = """on run argv
+  tell application "Things3"
+    repeat with td in to dos of project (item 2 of argv)
+      if notes of td contains (item 1 of argv) then return id of td
+    end repeat
+  end tell
+  return ""
+end run"""
 THINGS_CANCEL = """on run argv
   tell application "Things3"
     try
@@ -363,6 +372,26 @@ class ThingsTodos:
 
     def remove(self, ref):  # cancel, so it stays visible in the logbook
         self._osa(THINGS_CANCEL, [ref])
+
+    def trip(self, spec, key):
+        """A trip's to-do with its checklist, which AppleScript cannot make: through Things' URL scheme (adding needs
+        no token), then found by key (in its notes) for its id. One whose notes have key already is kept instead."""
+        found = self._osa(THINGS_FIND, [key, self.project])
+        if found:
+            return found
+        attrs = {"title": spec["title"], "notes": spec["notes"], "when": spec["when"], "list": self.project,
+                 "checklist-items": [{"type": "checklist-item", "attributes": {"title": t, "completed": done}}
+                                     for t, done in spec["checklist"]]}
+        if spec["deadline"]:
+            attrs["deadline"] = spec["deadline"]
+        data = json.dumps([{"type": "to-do", "attributes": attrs}])
+        subprocess.run(["open", "-g", "things:///json?reveal=false&data=" + urllib.parse.quote(data)], check=True, timeout=30)
+        for _ in range(20):
+            time.sleep(1)
+            found = self._osa(THINGS_FIND, [key, self.project])
+            if found:
+                return found
+        raise RuntimeError(f"Things: the to-do {spec['title']!r} did not appear (are Things URLs on?)")
 
 
 class WorkBlocks:
@@ -540,6 +569,22 @@ def run_extras(state, todos, blocks, banners, airports, now, home, work_tz="Euro
             if owned[i]["ref"] and _ahead(kind, owned[i]["spec"], now):
                 store.remove(owned[i]["ref"])
             del owned[i]
+
+
+def trip_todos(state, created, things, now):
+    """A "trip to Faro" to-do (plan.trip_todo) for each doc this run made, linking it, once; state["docs"]["todos"]
+    keeps them."""
+    reg = state.setdefault("docs", {}).setdefault("todos", {})
+    done = state["docs"].get("done", {})
+    for doc_id, title in created.items():
+        specs = [d["spec"] for d in done.values() if d["doc"] == doc_id]
+        if doc_id in reg or not specs:
+            continue
+        booked = {s["what"] if s.get("mode", "flight") == "flight" else s["mode"] for s in specs}
+        link = f"https://docs.google.com/document/d/{doc_id}/edit"
+        name = re.sub(r"\s+\d{4}(?:\s+\d+)?$", "", title)  # "Portugal 2026 2" -> "Portugal"
+        spec = plan.trip_todo(name, link, min(s["start"] for s in specs), booked, now)
+        reg[doc_id] = {"ref": things.trip(spec, doc_id), "spec": spec}
 
 
 # --- Cairn (HTTP API on mini) ---
@@ -789,6 +834,8 @@ def run(args, cfg, sec):
     if docs:
         try:
             docs.run(work, airports, now(), cfg.get("home_airports", ["AMS", "EIN", "RTM"]))
+            if extras and cfg.get("trip_todos", True):
+                trip_todos(work, docs.created, Logged(extras[0], "things", args.dry_run), now())
             if cfg.get("trip_suggestions", True):
                 claude = cfg.get("claude_path") or shutil.which("claude") or str(Path.home() / ".local/bin/claude")
                 model = cfg.get("suggestions_model", "sonnet")

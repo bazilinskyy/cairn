@@ -36,6 +36,19 @@ def test_todo_uses_airline_link_and_never_the_past():
     assert t["when"] == "2026-10-22" and t["notes"].startswith("https://www.ryanair.com/")
 
 
+
+def test_trip_todo_first_saturday_and_last_sunday():
+    now = D(2026, 11, 12, 9, 0)  # a Thursday
+    t = plan.trip_todo("Faro", "https://docs.google.com/document/d/x/edit", "2026-12-03", {"leg"}, now)
+    assert (t["title"], t["notes"], t["when"], t["deadline"]) == (
+        "trip to Faro", "https://docs.google.com/document/d/x/edit", "2026-11-14", "2026-11-29")
+    assert t["checklist"] == [["book flights", True], ["book accommodation", False], ["rent car", False], ["make plan", False]]
+    assert plan.trip_todo("Faro", "", "2026-11-23", set(), now)["deadline"] == "2026-11-22"  # a Monday: the day before
+    assert plan.trip_todo("Faro", "", "2026-11-22", set(), now)["deadline"] == "2026-11-15"  # a Sunday: the one before
+    assert plan.trip_todo("Faro", "", "2026-11-14", set(), D(2026, 11, 14, 9))["when"] == "2026-11-14"  # a Saturday, trip
+    soon = plan.trip_todo("Faro", "", "2026-11-13", {"stay"}, now)  # starts before any Saturday: today, no deadline gone by
+    assert (soon["when"], soon["deadline"], soon["checklist"][1]) == ("2026-11-12", None, ["book accommodation", True])
+
 def test_block_two_hours_before_one_after():
     r = row("KL1234", "AMS", "LIS", D(2026, 11, 16, 16, 10), D(2026, 11, 16, 17, 55))
     start, end = plan.block(r, AP)
