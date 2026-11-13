@@ -2107,7 +2107,7 @@ app.get('/api/suggestions/payments', (_req, res) => {
   if (!tx.length) return res.json([]);
   loadTowns();
   if (!towns) return res.json([]);
-  const key = [tx.length, flights.length, trips.length, stays.length, no.size].join('|');
+  const key = [tx.length, flights.length, trips.length, stays.length, no.size, dataVersion].join('|');
   if (paidCache.key !== key) {
     const memo = new Map(), ccAt = at => { const k = at[0].toFixed(2) + ',' + at[1].toFixed(2); if (!memo.has(k)) memo.set(k, cities.townAt(towns, at[0], at[1])?.cc || null); return memo.get(k); };
     const home = new Set(homeAirports().map(c => airports[c]).filter(Boolean).map(a => ccAt([a.lat, a.lon])).filter(Boolean));
@@ -2120,7 +2120,11 @@ app.get('/api/suggestions/payments', (_req, res) => {
       const r = runs.findLast(x => x.country === t.country);
       if (r && (Date.parse(t.date) - Date.parse(r.last)) / 864e5 <= 3) { r.last = t.date; r.items.push(t); } else runs.push({ country: t.country, first: t.date, last: t.date, items: [t] });
     });
-    paidCache = { key, list: runs.filter(r => !r.items.some(t => near(r.country, t.date))).map(r => {
+    // (not a run on a trip Cairn has, or within 3 days of one: the bank's country is often wrong, read from a shop's
+    // shortened name ("... AUT" for a ticket machine), and a payment can be booked a day or two late)
+    const day = (d, n) => new Date(Date.parse(d) + n * 864e5).toISOString().slice(0, 10);
+    const onTrip = d => tripStore.list().some(t => day(t.start, -3) <= d && d <= day(t.end, 3));
+    paidCache = { key, list: runs.filter(r => !r.items.some(t => near(r.country, t.date) || onTrip(t.date))).map(r => {
       const amounts = {};
       r.items.forEach(t => { amounts[t.currency] = Math.round(((amounts[t.currency] || 0) - t.amount) * 100) / 100; });
       return { key: `payments|${r.country}|${r.first}`, country: r.country, first: r.first, last: r.last, payments: r.items.length, amounts,
@@ -2150,7 +2154,10 @@ app.get('/api/suggestions/spotify', (_req, res) => {
       const r = runs.findLast(x => x.country === cc);
       if (r && (Date.parse(d) - Date.parse(r.last)) / 864e5 <= 3) { r.last = d; r.days.push(d); r.plays += n; } else runs.push({ country: cc, first: d, last: d, days: [d], plays: n });
     }));
-    spotifyCache = { key, list: runs.filter(r => !r.days.some(d => near(r.country, d)))
+    // (not on a trip Cairn has, or a day either side: a change of planes, a phone on the next country's network)
+    const day = (d, n) => new Date(Date.parse(d) + n * 864e5).toISOString().slice(0, 10);
+    const onTrip = d => tripStore.list().some(t => day(t.start, -1) <= d && d <= day(t.end, 1));
+    spotifyCache = { key, list: runs.filter(r => !r.days.some(d => near(r.country, d) || onTrip(d)))
       .map(r => ({ key: `spotify|${r.country}|${r.first}`, country: r.country, first: r.first, last: r.last, days: r.days.length, plays: r.plays }))
       .filter(r => !no.has(r.key)).reverse() };
   }
