@@ -14,6 +14,7 @@ const MAX_DAYS = 6;     // photos further apart than this: we do not know what h
 const MAX_KMH = 900;    // faster than this (between the photos' times) is a clock or a place gone wrong
 const MAX_GROUND_KMH = 200, MIN_FLIGHT_KM = 400;
 const AIRPORT_KM = 100;  // a flight explains a move from a town this near its airport
+const THROUGH_KM = 20;   // a train or bus explains a move between two towns its line passes this near
 
 // fromPlane: (unix time, [lat, lon]) => whether a photo then and there was taken from a plane
 function create({ towns, cities, photos, flights, airports, groundTrips, activities, stays, homeAirports, dismissedFile, fromPlane = () => false }) {
@@ -27,7 +28,9 @@ function create({ towns, cities, photos, flights, airports, groundTrips, activit
     const key = [ph.length, fl.length, gt.length, acts.length, no.size].join('|');
     if (memo.key === key) return memo.list;
     if (!grid) return [];
-    const ap = airports(), day = t => new Date(t * 1000).toISOString().slice(0, 10);
+    // (the day where the photo was taken: its UTC time moved by the longitude's hours, as an evening photo in
+    // California is the next day in UTC)
+    const ap = airports(), day = (t, lon = 0) => new Date((t + Math.round(lon / 15) * 3600) * 1000).toISOString().slice(0, 10);
     // home: your home airports' countries; moves inside them (to work, to family) are not journeys
     const home = new Set(homeAirports().map(c => ap[c] && cities.townAt(grid, ap[c].lat, ap[c].lon)?.cc).filter(Boolean));
     const driving = (d0, d1) => cars.some(c => c.start <= d1 && (c.end || c.start) >= d0);
@@ -54,12 +57,30 @@ function create({ towns, cities, photos, flights, airports, groundTrips, activit
     const near = (a, b) => ground.km(a, b) < 40, nearAirport = (a, b) => ground.km(a, b) < AIRPORT_KM;
     const connects = (a, b, d0, d1) =>
       fl.some(f => { const x = ap[f.from], y = ap[f.to], d = (f.date || '').slice(0, 10); return x && y && d >= d0 && d <= d1 && (nearAirport([x.lat, x.lon], a) || nearAirport([y.lat, y.lon], b)); }) ||
-      gt.some(t => { const d = (t.date || '').slice(0, 10); return t.from_lat != null && d >= d0 && d <= d1 && (near([t.from_lat, t.from_lon], a) || near([t.to_lat, t.to_lon], b)); }) ||
+      gt.some(t => { const d = (t.date || '').slice(0, 10); return t.from_lat != null && d >= d0 && d <= d1 && (near([t.from_lat, t.from_lon], a) || near([t.to_lat, t.to_lon], b) || through(t, a, b)); }) ||
       acts.some(x => { const d = (x.date || '').slice(0, 10); return x.at && d >= d0 && d <= d1 && (x.distance || 0) >= ground.km(a, b) * 0.6; });
+    // a leg that passes both towns on its way (a train from Ludwigsburg to Venlo, by Mainz and Düsseldorf): its line
+    // within THROUGH_KM of each, along its path when it has one, else the straight line between its ends
+    const lines = new Map();
+    const lineOf = t => {
+      if (!lines.has(t)) { let pts = null; try { pts = t.path ? ground.decode(t.path) : null; } catch (_) {} lines.set(t, pts?.length > 1 ? pts : [[t.from_lat, t.from_lon], [t.to_lat, t.to_lon]]); }
+      return lines.get(t);
+    };
+    const offLine = (p, pts) => {  // the distance from p to the line, in km (flat over a segment: near enough here)
+      let best = Infinity;
+      const k = Math.cos(p[0] * Math.PI / 180);
+      for (let i = 1; i < pts.length; i++) {
+        const [ay, ax] = pts[i - 1], [by, bx] = pts[i], dx = (bx - ax) * k, dy = by - ay, l = dx * dx + dy * dy;
+        const u = l ? Math.max(0, Math.min(1, (((p[1] - ax) * k) * dx + (p[0] - ay) * dy) / l)) : 0;
+        best = Math.min(best, ground.km(p, [ay + u * dy, ax + u * (bx - ax)]));
+      }
+      return best;
+    };
+    const through = (t, a, b) => t.to_lat != null && offLine(a, lineOf(t)) < THROUGH_KM && offLine(b, lineOf(t)) < THROUGH_KM;
     const out = [];
     for (let i = 1; i < merged.length; i++) {
       const A = merged[i - 1], B = merged[i], a = [A.town.lat, A.town.lon], b = [B.town.lat, B.town.lon];
-      const km = ground.km(a, b), hours = Math.max((B.t0 - A.t1) / 3600, 0.1), d0 = day(A.t1), d1 = day(B.t0);
+      const km = ground.km(a, b), hours = Math.max((B.t0 - A.t1) / 3600, 0.1), d0 = day(A.t1, A.town.lon), d1 = day(B.t0, B.town.lon);
       if (km < MIN_KM || km / hours > MAX_KMH || (B.t0 - A.t1) / 864e2 > MAX_DAYS) continue;
       if (km < MIN_FLIGHT_KM && km / hours > MAX_GROUND_KMH) continue;  // too fast for the road and too near for a flight: a place gone wrong
       if (home.has(A.town.cc) && home.has(B.town.cc)) continue;

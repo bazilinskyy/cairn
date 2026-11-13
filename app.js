@@ -721,13 +721,39 @@ app.get('/api/photos', (_req, res) => res.json(readImport(PHOTOS_FILE, [])));
 const PHOTO_PLACES = path.join(DATA_DIR, 'photo_places.json'), PHOTO_UNPLACED = path.join(DATA_DIR, 'photo_unplaced.json');
 // the photos with no place you took out of Cairn (#place-photos): { file: { t, name, at } }; left alone in Apple Photos
 const PHOTO_REMOVED = path.join(DATA_DIR, 'photo_removed.json');
-let placedMemo = { places: null, albums: null, out: [] };
+// Days of photos placed by hand whose date is when they were copied or scanned, not taken (a few years of prints
+// scanned on one evening, a friend's photos copied in one go): two or more jumps of over BATCH_JUMP_KM within an hour,
+// or BATCH_SAME photos or more within BATCH_SAME_S over BATCH_JUMP_KM apart. A flight has one such jump at most
+const BATCH_JUMP_KM = 300, BATCH_JUMPS = 2, BATCH_SAME = 10, BATCH_SAME_S = 600;
+function copiedDays(places) {
+  const byDay = new Map();
+  for (const v of Object.values(places)) {
+    if (v.auto || v.t == null) continue;
+    const d = new Date(v.t * 1000).toISOString().slice(0, 10);
+    if (!byDay.has(d)) byDay.set(d, []);
+    byDay.get(d).push(v);
+  }
+  const out = new Set();
+  byDay.forEach((vs, d) => {
+    if (vs.length < 3) return;
+    const s = [...vs].sort((a, b) => a.t - b.t), far = (a, b) => ground.km([a.lat, a.lon], [b.lat, b.lon]) > BATCH_JUMP_KM;
+    let jumps = 0;
+    for (let i = 1; i < s.length; i++) if (s[i].t - s[i - 1].t < 3600 && far(s[i - 1], s[i])) jumps++;
+    const tight = s.length >= BATCH_SAME && s[s.length - 1].t - s[0].t <= BATCH_SAME_S && s.some(x => far(s[0], x));
+    if (jumps >= BATCH_JUMPS || tight) out.add(d);
+  });
+  return out;
+}
+let placedMemo = { places: null, albums: null, out: [], copied: new Set() };
 function placedPhotos() {
   const places = readImport(PHOTO_PLACES, {}), al = typeof albums !== 'undefined' ? albums.photoEntries() : [];
   if (placedMemo.places !== places || placedMemo.albums !== al) {
     // a photo placed here, by you or by itself, is not also at its album's place
-    // (a 'c': placed by Cairn itself, a guess: not for what needs the exact spot, nor for placing more)
-    placedMemo = { places, albums: al, out: [...Object.entries(places).map(([file, v]) => [v.t, v.lat, v.lon, file, v.auto ? 'c' : '']), ...al.filter(e => !places[e[3]])] };
+    // (a 'c': placed by Cairn itself, a guess: not for what needs the exact spot, nor for placing more; a 'y': its
+    // camera's date is wrong (undated): on the map, not counted for its day)
+    // (and a 'y' for a day of photos copied or scanned in one go: copiedDays)
+    const copied = copiedDays(places), copiedOn = v => !v.auto && v.t != null && copied.has(new Date(v.t * 1000).toISOString().slice(0, 10));
+    placedMemo = { places, albums: al, copied, out: [...Object.entries(places).map(([file, v]) => [v.t, v.lat, v.lon, file, v.undated || copiedOn(v) ? 'y' : v.auto ? 'c' : '']), ...al.filter(e => !places[e[3]])] };
   }
   return placedMemo.out;
 }
@@ -1017,10 +1043,21 @@ setTimeout(() => writePlacesSoon(60000), 0);  // what was left at the last stop
 app.get('/api/timeline', (_req, res) => res.json(readImport(TIMELINE_FILE, { visits: [], paths: [] })));
 // places you were at a known time from data downloads: Facebook, Instagram, VK, Maps reviews, Uber, Bolt
 const CHECKINS_FILE = path.join(DATA_DIR, 'checkins.json');
+// check-ins you said you were not at (a page's posts about an event you joined from afar): ["<unix time>|<name>"]
+const CHECKINS_NOT_THERE = path.join(DATA_DIR, 'checkins.not-there.json');
+let checkinsMemo = { raw: null, skip: null, list: [] };
+function ownCheckins() {
+  const raw = readImport(CHECKINS_FILE, []), skip = readImport(CHECKINS_NOT_THERE, []);
+  if (checkinsMemo.raw !== raw || checkinsMemo.skip !== skip) {
+    const no = new Set(skip);
+    checkinsMemo = { raw, skip, list: no.size ? raw.filter(c => !no.has(`${c.t}|${c.name}`)) : raw };
+  }
+  return checkinsMemo.list;
+}
 // the check-ins, without the places you were tagged in that your other data says you were not at (see allPlacesAndDays)
 app.get('/api/checkins', (_req, res) => {
   placesAndDays('', '');
-  const all = readImport(CHECKINS_FILE, []), batch = batchPosted(all);
+  const all = ownCheckins(), batch = batchPosted(all);
   res.json(all.filter(c => !untrusted.has(c)).map(c => (batch.has(c) ? { ...c, batch: true } : c)));
 });
 
@@ -1147,7 +1184,7 @@ function townOfAt(at, city) {
 const placesMemo = new Map();
 function placesAndDays(from, to, { stays: withStays = true } = {}) {
   const refs = [dataVersion, flights.length, trips.length, stays.length, activities.list(), readImport(PHOTOS_FILE, []), readImport(TIMELINE_FILE, {}),
-    readImport(CHECKINS_FILE, []), datedPhotos()];
+    ownCheckins(), datedPhotos()];
   let m = placesMemo.get(withStays);
   if (!m || m.refs.some((r, i) => r !== refs[i])) placesMemo.set(withStays, m = { refs, list: allPlacesAndDays(withStays) });
   return from || to ? m.list.filter(p => (!from || p.day >= from) && (!to || p.day <= to)) : m.list.slice();
@@ -1255,7 +1292,7 @@ function allPlacesAndDays(withStays) {
     });
   } else readImport(PHOTOS_FILE, []).forEach(c => (c.days || []).forEach(d => add([c.lat, c.lon], d)));
   // check-ins, posts with a place, reviews and rides (imports/checkins.py): where you were that day
-  const dayOf = c => new Date(c.t * 1000).toISOString().slice(0, 10), checkins = readImport(CHECKINS_FILE, []);
+  const dayOf = c => new Date(c.t * 1000).toISOString().slice(0, 10), checkins = ownCheckins();
   const batch = batchPosted(checkins);
   checkins.filter(c => c.kind !== 'tagged' && !batch.has(c)).forEach(c => add([c.lat, c.lon], dayOf(c)));
   (readImport(TIMELINE_FILE, {}).visits || []).forEach(v => eachDay(v.start.slice(0, 10), v.end.slice(0, 10), d => add([v.lat, v.lon], d)));

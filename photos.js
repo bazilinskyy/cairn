@@ -55,7 +55,9 @@ function create({ file, cache, readImport, extra = () => [] }) {
     const raw = readImport(file, []), more = extra();
     if (loaded.raw !== raw || loaded.more !== more) {
       const byId = new Map(), list = [];
-      for (const [t, lat, lon, p, how] of [...raw, ...more]) {
+      // (one placed some other way whose date is not its own, 'y', before the library's copy of it: a place written
+      // back into Photos does not make its copying day a day of yours again)
+      for (const [t, lat, lon, p, how] of [...more.filter(e => e[4] === 'y'), ...raw, ...more]) {
         const id = crypto.createHash('sha1').update(p || `${t},${lat},${lon}`).digest('hex').slice(0, 12);
         if (byId.has(id)) continue;
         byId.set(id, { t, lat, lon, path: p, how });
