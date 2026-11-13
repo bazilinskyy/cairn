@@ -9,7 +9,9 @@
 // from those (a day out), a lone hike out of town (a trailhead), and a spot only one one-way activity gives (it may
 // end at a station): those need a second, as yesterday's ride ending where today's starts, and near home a loop too. Two spots for the same
 // night: the one with more loops, a run's first (a hike or a ride often starts at a trailhead). Not swims, skiing or
-// paddling (from a pool, a lift, a beach).
+// paddling (from a pool, a lift, a beach). A morning one does not count for the night before when a journey (a flight,
+// a train, a drive) left from far away earlier that day: you slept where it set off (up at five for the airport, the run
+// after landing).
 
 const LOOP_KM = 0.5;      // a loop ends this close to where it started
 const SPOT_KM = 0.5;      // loops this close start from the same bed
@@ -21,19 +23,30 @@ const SINGLE_KM = 100;    // a lone loop at least this far from home and where y
 const MORNING = 14;       // a loop starting before this hour counts for the night before; a one-way one: its start
 const ARRIVE = 14;        // a one-way activity ending at this hour or later: its end is that night's bed
 const SPORTS = /run|ride|cycl|bike|hike|walk/i;  // not swims, skiing or paddling
+const SET_OFF_KM = 50;    // a journey leaving this far from a morning activity's start, earlier that day: not its bed
 
 const addDays = (d, n) => new Date(Date.parse(d) + n * 864e5).toISOString().slice(0, 10);
 const cell = at => `${Math.round(at[0] * 20)},${Math.round(at[1] * 20)}`;  // about 5 km
 
 // activities: () => [{ date: local "YYYY-MM-DD HH:MM:SS", path (encoded), sport, trainer, name }]; stays: () => the stays;
-// homes: () => [[lat, lon]]; km, decode: ground.js; townAt: ([lat, lon]) => { name, cc } or null
-function create({ activities, stays, homes, km, decode, townAt = () => null }) {
+// homes: () => [[lat, lon]]; km, decode: ground.js; townAt: ([lat, lon]) => { name, cc } or null;
+// departures: () => [{ date: local "YYYY-MM-DD HH:MM", at: [lat, lon] }] (flights and trips by land, with a time)
+function create({ activities, stays, homes, km, decode, townAt = () => null, departures = () => [] }) {
   let memo = { key: null, list: [] };
 
   function list() {
-    const acts = activities(), st = stays(), hs = homes();
-    const key = [acts.length, st.length, hs.map(h => h.join(',')).join(';')].join('|');
+    const acts = activities(), st = stays(), hs = homes(), deps = departures();
+    const key = [acts.length, st.length, deps.length, hs.map(h => h.join(',')).join(';')].join('|');
     if (memo.key === key) return memo.list;
+    const leftOn = new Map();  // day -> [[time, at]] of the journeys that set off then
+    for (const d of deps) {
+      if (!/^\d{4}-\d\d-\d\d \d\d:\d\d/.test(d.date || '') || !d.at) continue;
+      const day = d.date.slice(0, 10);
+      if (!leftOn.has(day)) leftOn.set(day, []);
+      leftOn.get(day).push([d.date.slice(11, 16), d.at]);
+    }
+    // a journey left from far away before this morning activity did: the night before was not at its start
+    const setOff = (a, at) => (leftOn.get(a.date.slice(0, 10)) || []).some(([t, from]) => t < a.date.slice(11, 16) && km(from, at) > SET_OFF_KM);
     const loops = [];
     for (const a of acts) {
       if (a.trainer || !a.path || !/^\d{4}-\d\d-\d\d \d\d/.test(a.date || '') || !SPORTS.test(a.sport || '') || /virtual/i.test(a.sport || '')) continue;
@@ -41,10 +54,13 @@ function create({ activities, stays, homes, km, decode, townAt = () => null }) {
       if (p.length < 2) continue;
       const day = a.date.slice(0, 10), hour = +a.date.slice(11, 13), sport = a.sport || '';
       const spot = { name: a.name || '', run: /run/i.test(sport), hike: /hike|walk/i.test(sport) };
-      if (km(p[0], p[p.length - 1]) <= LOOP_KM) { loops.push({ ...spot, at: p[0], night: hour < MORNING ? addDays(day, -1) : day }); continue; }
+      if (km(p[0], p[p.length - 1]) <= LOOP_KM) {
+        if (hour >= MORNING || !setOff(a, p[0])) loops.push({ ...spot, at: p[0], night: hour < MORNING ? addDays(day, -1) : day });
+        continue;
+      }
       // one way: from the bed of the night before (left in the morning), to that night's (reached in the afternoon)
       const end = hour + (a.elapsed_time || a.moving_time || 0) / 3600;
-      if (hour < MORNING) loops.push({ ...spot, at: p[0], night: addDays(day, -1), oneWay: true });
+      if (hour < MORNING && !setOff(a, p[0])) loops.push({ ...spot, at: p[0], night: addDays(day, -1), oneWay: true });
       if (end >= ARRIVE && end < 24) loops.push({ ...spot, at: p[p.length - 1], night: day, oneWay: true });
     }
     // where you lived: a spot with many loops over the years

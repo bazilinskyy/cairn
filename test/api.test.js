@@ -455,13 +455,26 @@ test('placed by Cairn itself: near a photo with a place, not a batch copied at o
     [t, file(1), 'DSC_1.jpg', [], 0],
     [t + 900, file(2), 'DSC_2.jpg', ['Holidays 2016'], 0],                                     // its album says another year
     ...Array.from({ length: 10 }, (_, i) => [t + 1200 + i * 5, file(10 + i), `IMG_${i}.jpg`, [], 0])]));  // ten 5 s apart: a batch
-  assert.deepStrictEqual(await (await call('GET', '/api/photos/auto')).json(), { near: 1, day: 0, between: 0, total: 1, placed: 0 });
+  assert.deepStrictEqual(await (await call('GET', '/api/photos/auto')).json(), { near: 1, day: 0, between: 0, home: 0, total: 1, placed: 0 });
   assert.deepStrictEqual(await (await call('POST', '/api/photos/auto', {})).json(), { placed: 1 });
-  assert.deepStrictEqual(await (await call('GET', '/api/photos/auto')).json(), { near: 0, day: 0, between: 0, total: 0, placed: 1 });
+  assert.deepStrictEqual(await (await call('GET', '/api/photos/auto')).json(), { near: 0, day: 0, between: 0, home: 0, total: 0, placed: 1 });
   const points = await (await call('GET', '/api/photos/points')).json();
   assert.deepStrictEqual(points.filter(p => p[5] === 'c').map(p => [p[2], p[3]]), [[45.07, 7.69]]);  // on the map, marked a guess
   assert.deepStrictEqual(await (await call('POST', '/api/photos/auto', { undo: true })).json(), { removed: 1 });
   ['photo_points.json', 'photo_unplaced.json', 'photo_places.json'].forEach(f => fs.rmSync(path.join(dir, 'data', f)));
+});
+
+test('placed by Cairn itself on a day with no trip near it: where you lived then', async () => {
+  const lib = '/Pictures/Photos Library.photoslibrary/originals/5/', file = n => lib + `E1B2C3D4-0000-0000-0000-00000000000${n}.jpeg`;
+  const home = path.join(dir, 'data', 'home.json'), was = fs.existsSync(home) ? fs.readFileSync(home) : null;
+  fs.writeFileSync(home, JSON.stringify({ ...(was ? JSON.parse(was) : {}), lived: [{ name: 'Eindhoven', cc: 'NL', lat: 51.441, lon: 5.478, from: '2001-01-01', to: '2005-06-30' }] }));
+  fs.writeFileSync(path.join(dir, 'data', 'photo_unplaced.json'), JSON.stringify([
+    [Date.UTC(2003, 4, 10, 12) / 1000, file(1), 'DSC_1.jpg', [], 0],      // lived in Eindhoven then, no trip
+    [Date.UTC(2012, 4, 10, 12) / 1000, file(2), 'DSC_2.jpg', [], 0]]));   // after: where you live now (none in this test)
+  const list = await (await call('GET', '/api/photos/auto?list=1')).json();
+  assert.deepStrictEqual(list.map(x => [x.name, x.how, x.at]), [['Eindhoven', 'home', [51.441, 5.478]]]);
+  if (was) fs.writeFileSync(home, was); else fs.rmSync(home);
+  fs.rmSync(path.join(dir, 'data', 'photo_unplaced.json'));
 });
 
 test('backup: out as a .tar.gz with its manifest, and back in (what changed since is undone, the data before kept)', async () => {

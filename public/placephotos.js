@@ -85,14 +85,15 @@ async function openPlacePhotos() {
   ppAuto();
 }
 
-// the ones Cairn can place by itself (/api/photos/auto): near a photo with a place, or on a day all else puts you in one
-// town; kept in Cairn only (a guess), all taken back at once
+// the ones Cairn can place by itself (/api/photos/auto): near a photo with a place, on a day all else puts you in one
+// town, or on a day with no trip near it (where you lived then); kept in Cairn only (a guess), all taken back at once
 async function ppAuto() {
   const a = await fetch('/api/photos/auto').then(r => (r.ok ? r.json() : null)).catch(() => null), box = document.getElementById('pp-auto');
   if (!a || !box) return;
   const n = x => x.toLocaleString();
   box.innerHTML = (a.total ? `Cairn can place ${n(a.total)} of these by itself: ${n(a.near)} taken within half an hour of a photo with a place, ` +
-      `${n(a.day + a.between)} on days when all else puts you in one town (at that town). Not batches copied or posted at once (their times are not when they were taken), ` +
+      `${n(a.day + a.between)} on days when all else puts you in one town (at that town)` +
+      (a.home ? `, ${n(a.home)} on days with no trip near them (where you lived then)` : '') + `. Not batches copied or posted at once (their times are not when they were taken), ` +
       `and kept in Cairn only, not written into Photos. <button class="btn btn-ghost" onclick="ppAutoGo()">Place them</button> ` : '') +
     (a.placed ? `${n(a.placed)} placed by Cairn so far. <button class="btn btn-ghost" onclick="ppAutoGo(true)">Take them back</button>` : '');
 }

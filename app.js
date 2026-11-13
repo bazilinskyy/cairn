@@ -812,7 +812,9 @@ function nearSpot(t) {
 // are left to you, and so are photos whose time is not when they were taken: one of BURST or more within an hour, or
 // of a run of RUN or more each at most RUN_S seconds after the one before (a batch copied or uploaded at once, the
 // time of that), in an album named for another year ("Rome 2011" photos dated 2012), or in one of photos posted
-// again later (profile and cover pictures). [{ id, file, t, at: [lat, lon], name, how }]
+// again later (profile and cover pictures). home: a day with none of them and no trip within a day of it, at the place
+// you lived then (data/home.json: lived, else where you live now): the trips are whole by now (the health list's gaps),
+// so a day away from all of them was a day at home. [{ id, file, t, at: [lat, lon], name, how }]
 const DAY_KM = 20, NO_DATA_DAYS = 3, MIDNIGHT_H = 3, BURST = 40, RUN = 10, RUN_S = 30;
 const REPOSTED = /(profile pictures|cover photos|instagram photos|bitstrips photos|mobile uploads|timeline photos)$/i;
 function autoPlaces() {
@@ -833,6 +835,18 @@ function autoPlaces() {
     for (let i = 1; i <= NO_DATA_DAYS && before === null; i++) if (where.has(addDays(d, -i))) before = oneTown(addDays(d, -i)) || false;
     for (let i = 1; i <= NO_DATA_DAYS && after === null; i++) if (where.has(addDays(d, i))) after = oneTown(addDays(d, i)) || false;
     return before && after && before.id === after.id ? { ...before, between: true } : null;
+  };
+  // home: no trip within a day, and where you lived then (its town)
+  const away = new Set();
+  for (const t of tripStore.list()) for (let d = addDays(t.start, -1); d <= addDays(t.end, 1); d = addDays(d, 1)) away.add(d);
+  const lived = readImport(HOME_FILE, {}).lived || [], now = homePlaces().residence;
+  const last = lived.reduce((m, l) => (l.to && l.to > m ? l.to : m), '');
+  const homeOn = d => {
+    if (away.has(d)) return null;
+    const l = lived.find(x => x.from <= d && d < (x.to || '9999') && x.lat != null);
+    const at = l ? [l.lat, l.lon] : d >= last && now?.lat != null ? [now.lat, now.lon] : null;
+    const town = at && cities.townAt(towns, at[0], at[1]);
+    return town ? { ...town, lat: at[0], lon: at[1], id: `home|${town.name}`, home: true } : null;
   };
   const removed = readImport(PHOTO_REMOVED, {});
   const all = [...unplacedById()].filter(([, [t, file, , al]]) => t && !removed[file] && !(al || []).some(a => /^To delete/.test(a)));
@@ -858,16 +872,16 @@ function autoPlaces() {
     const near = nearSpot(t);
     if (near) { out.push({ id, file, t, at: [near[0], near[1]], name: 'near a photo with a place', how: 'near' }); continue; }
     const day = new Date(t * 1000).toISOString().slice(0, 10), h = new Date(t * 1000).getUTCHours();
-    const town = townOn(day);
+    const town = townOn(day) || (!where.has(day) && homeOn(day));
     if (!town) continue;
     const edge = h < MIDNIGHT_H ? addDays(day, -1) : h >= 24 - MIDNIGHT_H ? addDays(day, 1) : null, other = edge && townOn(edge);
-    if (edge && where.has(edge) && other?.id !== town.id) continue;
-    out.push({ id, file, t, at: [town.lat, town.lon], name: town.name, how: town.between ? 'between' : 'day' });
+    if (edge && where.has(edge) && other?.id !== town.id && !(town.home && other && ground.km([other.lat, other.lon], [town.lat, town.lon]) <= DAY_KM)) continue;
+    out.push({ id, file, t, at: [town.lat, town.lon], name: town.name, how: town.home ? 'home' : town.between ? 'between' : 'day' });
   }
   return out;
 }
 app.get('/api/photos/auto', (req, res) => {
-  const list = autoPlaces(), count = { near: 0, day: 0, between: 0 };
+  const list = autoPlaces(), count = { near: 0, day: 0, between: 0, home: 0 };
   if (req.query.list) return res.json(list.map(({ file, ...x }) => ({ ...x, albums: unplacedById().get(x.id)[3] || [] })));
   list.forEach(x => count[x.how]++);
   const places = readImport(PHOTO_PLACES, {});
@@ -1854,7 +1868,10 @@ setInterval(copyBackup, 3600e3).unref();
 const bases = require('./bases').create({
   activities: () => activities.list(), stays: () => stays, km: ground.km, decode: ground.decode,
   homes: () => Object.values(homePlaces()).filter(Boolean).map(t => [t.lat, t.lon]),
-  townAt: at => (loadTowns() && cities.townAt(towns, at[0], at[1])) || null
+  townAt: at => (loadTowns() && cities.townAt(towns, at[0], at[1])) || null,
+  departures: () => [
+    ...flights.filter(f => airports[f.from]).map(f => ({ date: f.date, at: [airports[f.from].lat, airports[f.from].lon] })),
+    ...trips.filter(t => t.from_lat != null).map(t => ({ date: t.date, at: [t.from_lat, t.from_lon] }))]
 });
 // A photo taken from a plane, for the journeys photos suggest: within PLANE_SLACK_S of a flight's time in the air (a
 // camera's clock can be a few hours out), over PLANE_AIRPORT_KM from both airports, and on the way between them

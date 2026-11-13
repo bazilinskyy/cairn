@@ -54,3 +54,13 @@ test('a lone hike out of town is a trailhead, not a bed; in a town it is', () =>
     km: ground.km, decode: ground.decode, townAt: () => ({ name: 'Bergdorf', cc: 'CH' }) }).list();
   assert.strictEqual(inTown.length, 1);
 });
+
+test('a morning run after a journey that set off from elsewhere that day is not the night before\'s bed', () => {
+  const town = [60.39, 5.32];  // Bergen
+  const run = loop(town, '2019-03-08 12:30:00');
+  const with_ = deps => bases.create({ activities: () => [run], stays: () => [], homes: () => [[52.0, 4.36]],
+    km: ground.km, decode: ground.decode, departures: () => deps }).list();
+  assert.strictEqual(with_([]).length, 1);  // alone: the night of the 7th in Bergen
+  assert.deepStrictEqual(with_([{ date: '2019-03-08 06:10:00', at: [52.01, 4.36] }]), []);  // the train to the airport at 06:10
+  assert.strictEqual(with_([{ date: '2019-03-08 15:00:00', at: [52.01, 4.36] }]).length, 1);  // a journey after the run: no matter
+});

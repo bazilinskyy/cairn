@@ -148,7 +148,8 @@ async function getJSON(url) {
   if (res.status === 429 || res.status === 403 || (res.status >= 500 && !OK_FAILS[host])) throw new Error(`${host}: HTTP ${res.status}`);
   return res.json().catch(() => ({}));  // BRouter's "no track found" is plain text: no route
 }
-const SLOW = { 'overpass-api.de': 300000, 'overpass.kumi.systems': 300000, 'overpass.private.coffee': 300000, 'maps.mail.ru': 300000 };  // the railways along a long way take Overpass a while
+// the railways along a long way take Overpass a while; the stand-ins less long, so one that hangs does not hold up the rest
+const SLOW = { 'overpass-api.de': 300000, 'overpass.kumi.systems': 120000, 'overpass.private.coffee': 120000, 'maps.mail.ru': 120000 };
 const OK_FAILS = { 'brouter.de': true };  // a route BRouter gives up on (too long, no track) is an answer, not an outage
 const REST_MS = 30 * 60e3;
 
@@ -430,19 +431,52 @@ function keepPiece(q, elements) {
 }
 // Overpass' answer to q from the first server that gives one. When none does, Overpass counts as down for a while that
 // doubles with each outage in a row (OVERPASS_DOWN_MS, up to the last), so a long outage is not asked about every few
-// minutes; the first answer ends it.
+// minutes; the first answer ends it. One question at a time (overpassQueue): overpass-api.de gives each address two
+// slots and refuses (HTTP 429) a third, so Cairn never runs two at once. A refusal is not an outage: its /api/status
+// says when a slot is free again, and the same server is asked once more after that wait (at most OVERPASS_SLOT_MS).
 const OVERPASS_DOWN_MS = [5, 15, 60, 180, 360].map(m => m * 60e3);
+const OVERPASS_SLOT_MS = 5 * 60e3, OVERPASS_TRIES = 3;
 const overpassDown = { n: 0, until: 0 };
-async function overpass(q) {
+let overpassQueue = Promise.resolve();
+async function overpassSlot(host) {  // ms until overpass-api.de has a slot for us (its status page), else a minute
+  try {
+    const res = await fetch(host.replace(/interpreter$/, 'status'), { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(30000) });
+    const t = await res.text();
+    if (/slots? available now/.test(t)) return 1000;
+    const ins = [...t.matchAll(/in (\d+) seconds/g)].map(m => +m[1]);
+    if (ins.length) return Math.min(...ins) * 1000 + 1000;
+  } catch { /* no status: wait a minute */ }
+  return 60e3;
+}
+function overpass(q) {
+  const run = overpassQueue.then(() => overpassNow(q));
+  overpassQueue = run.catch(() => {});
+  return run;
+}
+async function overpassNow(q) {
   if (overpassDown.until > Date.now()) throw new Error(`overpass: down until ${new Date(overpassDown.until).toTimeString().slice(0, 5)}`);
-  let err;
+  const errs = [];
   for (const host of OVERPASS) {
-    try {
-      const d = await getJSON(`${host}?data=${encodeURIComponent(q)}`);
-      overpassDown.n = 0;
-      return d;
-    } catch (e) { err = e; }
+    const name = new URL(host).host;
+    for (let tries = 1; ; tries++) {
+      try {
+        const d = await getJSON(`${host}?data=${encodeURIComponent(q)}`);
+        overpassDown.n = 0;
+        return d;
+      } catch (e) {
+        if (/HTTP 429/.test(e.message) && tries < OVERPASS_TRIES) {  // no free slot: wait for one, then the same server
+          delete resting[name];
+          const ms = /overpass-api\.de/.test(name) ? await overpassSlot(host) : 60e3;
+          await new Promise(r => setTimeout(r, Math.min(OVERPASS_SLOT_MS, ms)));
+          continue;
+        }
+        if (/HTTP 429/.test(e.message)) delete resting[name];  // busy, not refusing us: asked again next time
+        errs.push(e.name === 'TimeoutError' ? `${name}: no answer` : e.message);
+        break;
+      }
+    }
   }
+  const err = { message: errs.join('; ') };
   const wait = OVERPASS_DOWN_MS[Math.min(overpassDown.n++, OVERPASS_DOWN_MS.length - 1)];
   overpassDown.until = Date.now() + wait;
   console.log(`[ground] no Overpass server answers (${err.message}): railway and ferry guesses wait ${wait < 3600e3 ? `${wait / 60e3} min` : `${wait / 3600e3} h`}`);
@@ -719,10 +753,14 @@ async function placeStops(trip) {
   trip.stops_at = out;
 }
 
-async function osrm(a, b) {
+// The road between two places: further round than a railway may go (ROAD_ROUND times the straight line, plus 30 km),
+// as the road between the exact two ends is the way, even round mountains (two and a half times the straight line);
+// a train put on the road (a guess) keeps the railway's limit.
+const ROAD_ROUND = 3;
+async function osrm(a, b, guess = false) {
   const d = await getJSON(`${OSRM}${a[1]},${a[0]};${b[1]},${b[0]}?overview=full&geometries=polyline6`);
   const pts = d.code === 'Ok' && d.routes?.[0] ? decode(d.routes[0].geometry, 6) : [];
-  return plausible(pts, a, b) ? pts : null;
+  return plausible(pts, a, b, guess ? 0 : ROAD_ROUND * km(a, b) + 30) ? pts : null;
 }
 
 // A ferry's ports: of the ferry terminals within PORT_KM of each end (and nearer to it than to the other end: an
@@ -978,7 +1016,7 @@ async function place(trip, flights, trips, airports, known = () => null) {
 // A trip with no track from where its ends were placed (a town's middle, too far to walk to its station) is tried
 // again from the nearest station or port at each end
 const STATION_TAGS = { train: 'railway:station', bus: 'amenity:bus_station', ferry: 'amenity:ferry_terminal' };
-const ROUTE_VERSION = 10;  // straight lines from before the station retry, the railway guess and the ferry lines are tried once more
+const ROUTE_VERSION = 11;  // straight lines from before are tried once more (10: the station retry, the railway guess, the ferry lines; 11: roads further round)
 
 async function route(trip, clues = null) {
   if (trip.mode === 'ferry' && !trip.ports) {  // from port to port, not between the middles of the places
@@ -1044,7 +1082,7 @@ async function route(trip, clues = null) {
     }
     source = 'rail';
   }
-  if (!pts && trip.mode === 'train') pts = await osrm(a, b), source = 'road';  // no railway found: along the roads, a guess
+  if (!pts && trip.mode === 'train') pts = await osrm(a, b, true), source = 'road';  // no railway found: along the roads, a guess
   if (!pts && trip.mode === 'ferry') pts = await waterRoute(a, b), source = 'water';  // no ferry line known: through the water
   if (!pts && trip.mode === 'ferry') pts = [a, b], source = 'direct';  // ferries mostly go straight across: drawn so
   // a train or bus whose photos on the way are off its track (a timetable of today's lines, the likeliest railway):
