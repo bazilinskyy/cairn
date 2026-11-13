@@ -558,11 +558,11 @@ app.post('/api/ground', (req, res) => {
   if (!t.mode || !t.from || !t.to || !t.date) return res.status(400).json({ error: 'mode, from, to and date are required' });
   // the same trip again: by its calendar event, the same departure minute, or the same towns that day within three
   // hours (a calendar's time and an email's, in two time zones); not for ones added by hand with only a year or a
-  // month known: several trips can share it
+  // month known: several trips can share it (nor two with only their day: a day can have several)
   const town = n => (n || '').toLowerCase().replace(/\s*\(.*?\)/g, '').split(/[\s,-]+/)[0];
   const hours = (a, b) => Math.abs(Date.parse(a.replace(' ', 'T')) - Date.parse(b.replace(' ', 'T'))) / 36e5;
   const same = trips.find(x => (t.event_id && x.event_id === t.event_id)
-    || (!t.approx && !x.approx && x.mode === t.mode && ((x.date || '').slice(0, 16) === t.date.slice(0, 16)
+    || (!t.approx && !x.approx && x.mode === t.mode && ((t.date.length >= 16 && (x.date || '').slice(0, 16) === t.date.slice(0, 16))
       || ((x.date || '').slice(0, 10) === t.date.slice(0, 10) && town(x.from) === town(t.from) && town(x.to) === town(t.to) && hours(x.date, t.date) <= 3))));
   if (same) {
     const { id, ...changes } = t;

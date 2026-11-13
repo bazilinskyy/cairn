@@ -146,6 +146,12 @@ test('ground trips: added, updated in place when posted again, edited and delete
   const mail = await (await call('POST', '/api/ground', { date: '2022-04-12 11:55:00', mode: 'bus', from: 'Faro', to: 'Huelva (Bus Station)', source: 'flightmail' })).json();
   assert.strictEqual(mail.id, cal.id);
   await call('DELETE', `/api/ground/${cal.id}`);
+  // two trains on one day with only the day known: two trips, not one
+  const one = await (await call('POST', '/api/ground', { date: '2023-08-06', mode: 'train', from: 'Köln', to: 'Mannheim' })).json();
+  const two = await (await call('POST', '/api/ground', { date: '2023-08-06', mode: 'train', from: 'Mannheim', to: 'Zürich' })).json();
+  assert.notStrictEqual(two.id, one.id);
+  await call('DELETE', `/api/ground/${one.id}`);
+  await call('DELETE', `/api/ground/${two.id}`);
 
   assert.strictEqual((await (await call('GET', '/api/ground')).json()).length, 2);
   assert.deepStrictEqual(await (await call('DELETE', `/api/ground/${c.id}`)).json(), { deleted: c.id });
