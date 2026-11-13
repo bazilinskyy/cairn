@@ -278,10 +278,13 @@ function pick(cands, q, { shortened = false, bias = null, maxKm = null, anyAirpo
 }
 
 // A day in Transitous' timetable window (about a year ahead) with the trip's weekday and clock time: the track of a
-// past trip is looked up on the same weekday next week.
+// past trip is looked up on the same weekday next week. A trip known only by its day: at DAY_HOUR that day (trains run
+// then; without a time it would get only a guess).
+const DAY_HOUR = '10:00';
 function planTime(date, today = new Date()) {
-  const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/.exec(date || '');
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:$|[ T](\d{2}):(\d{2}))/.exec(date || '');
   if (!m) return null;
+  if (m[4] == null) [m[4], m[5]] = DAY_HOUR.split(':');
   let d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]));
   const soon = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() + 2);
   if (d < soon || d > soon + 300 * 864e5) {
@@ -306,7 +309,7 @@ async function timetableTrack(a, b, mode, time, fill) {
   for (const it of d.itineraries || []) {
     let pts = (it.legs || []).filter(l => !NOT_TRANSIT.has(l.mode) && l.legGeometry)
       .flatMap(l => decode(l.legGeometry.points, l.legGeometry.precision || 6));
-    if (fill && mode !== 'ferry') pts = await fillGaps(pts, mode, time);
+    if (fill && mode !== 'ferry') pts = await fillTimetableGaps(pts, mode, time);
     if (plausible(pts, a, b) && (mode === 'ferry' || !gappy(pts))) return pts;
   }
   return null;
@@ -316,7 +319,7 @@ async function timetableTrack(a, b, mode, time, fill) {
 // jump between the legs around it: each jump over GAP_KM (a few at most) is looked up on its own, and its track put in
 // when one is found
 const GAP_KM = 20, GAPS = 3;
-async function fillGaps(pts, mode, time) {
+async function fillTimetableGaps(pts, mode, time) {  // (not fillGaps: that name is the railway's and road's, below)
   const out = pts.slice(0, 1);
   let tries = 0;
   for (let i = 1; i < pts.length; i++) {
@@ -436,7 +439,7 @@ function keepPiece(q, elements) {
 // says when a slot is free again, and the same server is asked once more after that wait (at most OVERPASS_SLOT_MS).
 const OVERPASS_DOWN_MS = [5, 15, 60, 180, 360].map(m => m * 60e3);
 const OVERPASS_SLOT_MS = 5 * 60e3, OVERPASS_TRIES = 3;
-const overpassDown = { n: 0, until: 0 };
+const overpassDown = { n: 0, until: 0, told: null };  // told: what the log last said about it
 let overpassQueue = Promise.resolve();
 async function overpassSlot(host) {  // ms until overpass-api.de has a slot for us (its status page), else a minute
   try {
@@ -448,12 +451,14 @@ async function overpassSlot(host) {  // ms until overpass-api.de has a slot for 
   } catch { /* no status: wait a minute */ }
   return 60e3;
 }
-function overpass(q) {
-  const run = overpassQueue.then(() => overpassNow(q));
+// split: a question that can be asked in smaller parts (several boxes at once): when the servers time out on it (too
+// much at once), Overpass is not counted down, so the parts can be asked right after
+function overpass(q, { split = false } = {}) {
+  const run = overpassQueue.then(() => overpassNow(q, split));
   overpassQueue = run.catch(() => {});
   return run;
 }
-async function overpassNow(q) {
+async function overpassNow(q, split = false) {
   if (overpassDown.until > Date.now()) throw new Error(`overpass: down until ${new Date(overpassDown.until).toTimeString().slice(0, 5)}`);
   const errs = [];
   for (const host of OVERPASS) {
@@ -461,7 +466,8 @@ async function overpassNow(q) {
     for (let tries = 1; ; tries++) {
       try {
         const d = await getJSON(`${host}?data=${encodeURIComponent(q)}`);
-        overpassDown.n = 0;
+        if (overpassDown.told) console.log(`[ground] Overpass answers again (${name})`);
+        overpassDown.n = 0, overpassDown.told = null;
         return d;
       } catch (e) {
         if (/HTTP 429/.test(e.message) && tries < OVERPASS_TRIES) {  // no free slot: wait for one, then the same server
@@ -477,9 +483,13 @@ async function overpassNow(q) {
     }
   }
   const err = { message: errs.join('; ') };
+  if (split && errs.some(m => /no answer|HTTP 504/.test(m))) throw new Error(`overpass: too much at once (${err.message})`);
   const wait = OVERPASS_DOWN_MS[Math.min(overpassDown.n++, OVERPASS_DOWN_MS.length - 1)];
   overpassDown.until = Date.now() + wait;
-  console.log(`[ground] no Overpass server answers (${err.message}): railway and ferry guesses wait ${wait < 3600e3 ? `${wait / 60e3} min` : `${wait / 3600e3} h`}`);
+  // in the log once when it starts and when the servers' answers change, not every few minutes while it lasts
+  const told = err.message.replace(/\d+/g, '#');
+  if (overpassDown.told !== told) console.log(`[ground] no Overpass server answers (${err.message}): railway and ferry guesses wait ${wait < 3600e3 ? `${wait / 60e3} min` : `${wait / 3600e3} h`}, then longer while it lasts`);
+  overpassDown.told = told;
   throw new Error(`overpass: ${err.message}`);
 }
 const railRest = new Map();  // after Overpass failed on a train: until when its railway guess waits (the other trains go on)
@@ -500,11 +510,11 @@ async function railOverpass(a, b, old = false, longest = 0) {
     if (run >= RAIL_SAMPLE_KM || i === road.length - 1) { line.push(road[i]); run = 0; }
   }
   // a piece of Overpass' answer: kept on disk, else asked for (the second server when the first fails)
-  const piece = async q => {
+  const piece = async (q, split = false) => {
     const kept = keptPiece(q);
     if (kept) return kept;
     let d;
-    try { d = await overpass(q); } catch (e) { railRest.set(key, Date.now() + RAIL_REST_MS); throw e; }
+    try { d = await overpass(q, { split }); } catch (e) { railRest.set(key, Date.now() + RAIL_REST_MS); throw e; }
     if (d.remark) throw new Error(`overpass: ${d.remark}`);  // cut off (timeout, memory): not a piece to keep
     keepPiece(q, d.elements || []);
     return d.elements || [];
@@ -523,7 +533,7 @@ async function railOverpass(a, b, old = false, longest = 0) {
     const which = r >= RAIL_MAIN_KM ? '["usage"="main"]' : LINES;  // the widest: main lines only
     // a train of before 2014 (old) also on the main lines closed since (cut by a war or at a border)
     const lines = bb => rails(bb, which) + (old ? rails(bb, '["usage"="main"]', 'disused') : '');
-    const ask = list => piece(`[out:json][timeout:240];(${list.map(lines).join('')});(._;>;);out skel qt;`);
+    const ask = list => piece(`[out:json][timeout:240];(${list.map(lines).join('')});(._;>;);out skel qt;`, list.length > 1);
     for (let i = 0; i < boxes.length; i += RAIL_BOXES) {
       const some = boxes.slice(i, i + RAIL_BOXES);
       try {
@@ -1137,10 +1147,16 @@ async function placeStay(stay, flights, trips, airports, seen = []) {
 // Returns { later: true } when some trips wait for BRouter or Overpass, which refused (tried again once they have
 // rested; the other trips go on meanwhile), or when a service was down and the pass stopped
 const FAILS_IN_A_ROW = 3;
+// a train or bus known only by its day, drawn before such days were looked up in the timetables (a guess: the likeliest
+// railway, the road): once more (DAY_V), keeping the guess when the timetable has nothing
+const DAY_V = 1;
+const dayOnlyAgain = trip => ['train', 'bus'].includes(trip.mode) && /^\d{4}-\d\d-\d\d$/.test(trip.date || '')
+  && ['rail', 'road', 'osrm', 'straight'].includes(trip.path_source) && (trip.day_v || 0) < DAY_V;
 // A trip whose lookup failed waits longer after each failure (an hour, six, a day, a week), so a few stubborn trips
 // neither fill the log nor stop the pass (FAILS_IN_A_ROW) before the trips after them; kept until a restart
 const BACKOFF_MS = [1, 6, 24, 168].map(h => h * 3600e3);
 const backoff = new WeakMap();  // trip -> { n: failures in a row, until }
+let railTold = null;  // what the log last said about the railway guesses waiting
 const hours = ms => ms < 864e5 ? `${Math.round(ms / 3600e3)} h` : `${Math.round(ms / 864e5)} d`;
 async function enrich(store, log = console.log) {
   const todo = [...store.trips].sort((x, y) => (x.date || '').localeCompare(y.date || ''));
@@ -1165,6 +1181,12 @@ async function enrich(store, log = console.log) {
         || (trip.path_source === 'road' && !(resting['brouter.de'] > Date.now()) && (trip.road_tries || 0) < 3))) {  // a train put on the road: the railway again, a few times
         if (trip.path_source === 'road') trip.road_tries = (trip.road_tries || 0) + 1;
         await route(trip, store.clues);
+        store.save();
+      } else if (dayOnlyAgain(trip) && at(trip, 'from') && at(trip, 'to')) {  // a guess from before such days had timetables
+        const was = trip.path_source;
+        await route(trip, store.clues);
+        trip.day_v = DAY_V;
+        if (trip.path_source !== was) log(`[ground] ${trip.date} ${trip.from} - ${trip.to}: from the timetable now (was ${was})`);
         store.save();
       }
       if (trip.mode === 'train' && trip.path && trip.path_source !== 'road' && (trip.gaps_v || 0) < RAIL_GAP_V) {
@@ -1195,7 +1217,8 @@ async function enrich(store, log = console.log) {
       }
     } catch (e) {
       if (/brouter\.de|overpass/.test(e.message)) {  // the railway guess: this train waits, the rest go on
-        if (!later && !/overpass: (down until|resting)/.test(e.message)) log(`[ground] railway guesses wait: ${e.message}`);
+        if (!/down until|resting/.test(e.message) && railTold !== e.message) log(`[ground] railway guesses wait: ${e.message}`);
+        if (!/down until|resting/.test(e.message)) railTold = e.message;
         later = true;
         continue;
       }
@@ -1204,11 +1227,16 @@ async function enrich(store, log = console.log) {
       later = true;
       const n = (backoff.get(trip)?.n || 0) + 1, wait = BACKOFF_MS[Math.min(n, BACKOFF_MS.length) - 1];
       backoff.set(trip, { n, until: Date.now() + wait });
-      log(`[ground] ${trip.date} ${trip.from} - ${trip.to} waits ${hours(wait)}: ${e.message}`);
+      if (trip.waits !== e.message) {  // once per reason, also across restarts: kept on the trip until it is found
+        log(`[ground] ${trip.date} ${trip.from} - ${trip.to} waits ${hours(wait)}, then longer: ${e.message}`);
+        trip.waits = e.message;
+        store.save();
+      }
       if (++failed >= FAILS_IN_A_ROW) { log('[ground] lookups paused'); return { later }; }
       continue;
     }
     backoff.delete(trip);
+    if (trip.waits) { log(`[ground] ${trip.date} ${trip.from} - ${trip.to}: found after all`); delete trip.waits; store.save(); }
     failed = 0;
   }
   for (const stay of [...(store.stays || [])]) {

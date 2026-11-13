@@ -2129,7 +2129,8 @@ app.get('/api/health', (_req, res) => {
     .filter(x => !no.has(`health|unplaced|${x.kind}|${x.id}`)).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
   const straight = trips.filter(t => t.path_source === 'straight' && t.mode !== 'ferry' && !no.has(`health|straight|${t.id}`))
     .map(t => ({ id: t.id, date: t.date, mode: t.mode, from: t.from, to: t.to, distance: t.distance }));
-  const flightsBare = flights.filter(f => !/^[A-Z0-9]{2}\s?\d/i.test((f.flight_number || '').trim()) && !no.has(`health|flight|${f.id}`))
+  // an airline's code has a letter in it (S4, 3U, W6): "151" alone is not one
+  const flightsBare = flights.filter(f => !/^([A-Z][A-Z0-9]|\d[A-Z])\s?\d/i.test((f.flight_number || '').trim()) && !no.has(`health|flight|${f.id}`))
     .map(f => ({ id: f.id, date: f.date, flight_number: f.flight_number || '', from: f.from, to: f.to, airline: f.airline || '' }));
   // the photo jobs that failed last time: the photo index (imports/photos.py writes how its run went) and writing the
   // places you gave photos into Photos
@@ -2447,10 +2448,11 @@ app.get('/api/suggestions/albums/cover', async (req, res) => {  // ?key=album|<n
   if (!made) return res.status(404).end();
   res.set('Cache-Control', 'max-age=86400').type(made.type).sendFile(made.file);
 });
-app.post('/api/suggestions/dismiss', (req, res) => {
-  if (!req.body?.key) return res.status(400).json({ error: 'key is required' });
-  suggestions.dismiss(String(req.body.key));
-  res.json({ ok: true });
+app.post('/api/suggestions/dismiss', (req, res) => {  // { key } or { keys: [..] } (a whole list set aside at once)
+  const keys = Array.isArray(req.body?.keys) ? req.body.keys.map(String).filter(Boolean) : req.body?.key ? [String(req.body.key)] : [];
+  if (!keys.length) return res.status(400).json({ error: 'key is required' });
+  keys.forEach(k => suggestions.dismiss(k));
+  res.json({ ok: true, dismissed: keys.length });
 });
 
 app.get('/api/curiosities', (_req, res) => res.json(curiosities.get() || { pending: true }));

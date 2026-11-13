@@ -37,6 +37,7 @@ test('past trips are looked up on the same weekday in the coming week', () => {
   assert.strictEqual(g.planTime('2026-10-26 08:00:00', today), '2026-10-26T08:00:00Z');
   assert.strictEqual(g.planTime('2026-10-25 08:00:00', today), '2026-11-01T08:00:00Z');  // tomorrow: too soon
   assert.strictEqual(g.planTime('', today), null);
+  assert.strictEqual(g.planTime('2021-10-01', today), '2026-10-30T10:00:00Z');  // only the day known: in the morning
 });
 
 test('a trip starts near the last arrival of the three weeks before it', () => {

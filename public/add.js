@@ -543,7 +543,8 @@ async function renderHealth() {
     `<div class="sugg" data-key="health|straight|${x.id}" data-id="${x.id}"><div class="pics"><span class="pic-icon">${(MODES[x.mode] || '🚌').split(' ')[0]}</span></div>` +
     `<div><b>${escapeHTML(x.from)} → ${escapeHTML(x.to)}</b><small>${fmtDate(x.date.slice(0, 10))} · no track found yet</small></div>` +
     `<div class="acts"><button class="btn btn-primary" data-retry>Look up again</button>${fine(`health|straight|${x.id}`)}</div></div>`).join('')}</div>`;
-  if (d.flights.length) html += `<h3 class="sugg-title">Flights without their airline's code (${d.flights.length})</h3><p class="subtitle">"151" instead of "S4151": check-in to-dos and other lists name flights with the code.</p>` +
+  if (d.flights.length) html += `<h3 class="sugg-title">Flights without their airline's code (${d.flights.length})</h3><p class="subtitle">"151" instead of "S4151": check-in to-dos and other lists name flights with the code. ` +
+    `<button class="btn btn-ghost" data-flights-fine>All fine</button> when there is nothing to find them by (old flights with no mail).</p>` +
     `<div class="sugg-group">${d.flights.slice(0, HEALTH_PAGE).map(f => `<div class="sugg" data-key="health|flight|${f.id}" data-id="${f.id}"><div class="pics"><span class="pic-icon">✈️</span></div>` +
       `<div><b>${escapeHTML(f.from)} → ${escapeHTML(f.to)}</b><small>${fmtDate(f.date.slice(0, 10))} · ${escapeHTML(f.airline || 'airline not known')}</small>` +
       `<div class="album-fields"><input data-f="number" value="${escapeHTML(f.flight_number)}" placeholder="e.g. KL1234" aria-label="Flight number"></div></div>` +
@@ -630,6 +631,12 @@ async function renderHealth() {
     allFlights = allFlights.filter(x => x.id !== f.id);
     gone(b.closest('[data-key]'));
   }));
+  box.querySelector('[data-flights-fine]')?.addEventListener('click', async () => {
+    if (!confirm(`Set all ${d.flights.length} flights without their airline's code aside? Their numbers stay as they are.`)) return;
+    await post('/api/suggestions/dismiss', { keys: d.flights.map(f => `health|flight|${f.id}`) });
+    toast(`${d.flights.length} flights set aside`);
+    renderHealth();
+  });
   box.querySelectorAll('[data-flight]').forEach(b => b.addEventListener('click', async () => {
     const row = b.closest('[data-id]'), n = row.querySelector('[data-f="number"]').value.trim().toUpperCase().replace(/\s+/g, '');
     if (!/^[A-Z0-9]{2}\d{1,4}$/.test(n)) return toast('A flight number with its airline code, e.g. KL1234', 'error');

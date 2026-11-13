@@ -258,6 +258,19 @@ test('a side trip from a base stay: its nights come off the base, and the pair i
   for (const s of [base, side]) await call('DELETE', `/api/stays/${s.id}`);
 });
 
+test('flights without their airline\'s code: set aside all at once', async () => {
+  const made = [];
+  for (const [date, n] of [['2004-02-03', '151'], ['2004-02-09', '152']])
+    made.push(await (await call('POST', '/api/flights', { date, from: 'AMS', to: 'BCN', flight_number: n })).json());
+  const bare = async () => (await (await call('GET', '/api/health')).json()).flights.filter(f => made.some(m => m.id === f.id)).length;
+  assert.strictEqual(await bare(), 2);
+  const r = await (await call('POST', '/api/suggestions/dismiss', { keys: made.map(f => `health|flight|${f.id}`) })).json();
+  assert.deepStrictEqual(r, { ok: true, dismissed: 2 });
+  assert.strictEqual(await bare(), 0);
+  assert.strictEqual((await call('POST', '/api/suggestions/dismiss', { keys: [] })).status, 400);
+  for (const f of made) await call('DELETE', `/api/flights/${f.id}`);
+});
+
 test('a book from the Goodreads export is where you slept the night you finished it; a book without the day is nowhere', async () => {
   const stay = await (await call('POST', '/api/stays', { code: 'book-stay', what: 'stay', place: 'Chernivtsi', start: '2019-03-01', end: '2019-03-04', lat: 48.29, lon: 25.94 })).json();
   const csv = 'Book Id,Title,Author,My Rating,Date Read,Date Added,Exclusive Shelf\n7,"Read, On The Road",Ann Example,4,2019/03/02,2019/01/01,read\n8,Undated,Bo Sample,0,,2019/01/01,read\n';
