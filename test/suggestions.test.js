@@ -19,9 +19,9 @@ const t = s => Date.parse(s) / 1000;
 const photos = [['a', t('2019-07-12T10:00:00Z'), 48.86, 2.35], ['b', t('2019-07-12T15:00:00Z'), 48.85, 2.34],
   ['c', t('2019-07-13T11:00:00Z'), 50.85, 4.35], ['d', t('2019-08-01T10:00:00Z'), 52.01, 4.36], ['e', t('2019-08-01T18:00:00Z'), 51.44, 5.48]];
 
-function make(groundTrips = []) {
+function make(groundTrips = [], fromPlane) {
   return suggestions.create({ towns: () => grid, cities, photos: () => photos, flights: () => [], airports: () => ({ EIN: { lat: 51.45, lon: 5.39 } }),
-    groundTrips: () => groundTrips, activities: () => [], stays: () => [], homeAirports: () => ['EIN'], dismissedFile: path.join(dir, 'dismissed.json') });
+    groundTrips: () => groundTrips, activities: () => [], stays: () => [], homeAirports: () => ['EIN'], dismissedFile: path.join(dir, 'dismissed.json'), fromPlane });
 }
 
 test('Paris to Brussels is suggested; not Brussels to Delft (19 days later: unknown) nor Delft to Eindhoven (at home)', () => {
@@ -29,6 +29,11 @@ test('Paris to Brussels is suggested; not Brussels to Delft (19 days later: unkn
   assert.deepStrictEqual(list.map(s => `${s.from}>${s.to}`), ['Paris>Brussels']);
   const s = list[0];
   assert.deepStrictEqual([s.from_day, s.to_day, s.photos, s.last_photo, s.first_photo], ['2019-07-12', '2019-07-13', [2, 1], 'b', 'c']);
+});
+
+test('a photo taken from a plane is no stop: Brussels seen from above is no journey from Paris', () => {
+  const above = (time, at) => time === t('2019-07-13T11:00:00Z') && at[0] === 50.85;
+  assert.ok(!make([], above).list().some(s => s.from === 'Paris'));
 });
 
 test('a train between them, or saying it was no trip, takes it away', () => {

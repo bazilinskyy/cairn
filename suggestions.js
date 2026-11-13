@@ -2,7 +2,8 @@
 // Journeys your photos show but nothing else does: your photos, day by day, put you in towns; where they jump from
 // one town to another far away (Paris one day, Brussels the next) and no flight, train, bus, ferry or ride of your own
 // connects them, that leg is suggested, to add with a click (a bus tour around Europe, a train to St Petersburg).
-// Not suggested: moves inside your home countries (to work, to family) and on days with a rental car (drives).
+// Not suggested: moves inside your home countries (to work, to family) and on days with a rental car (drives), nor
+// from photos taken from a plane (fromPlane: the land below, on the way, with the camera's clock a few hours out).
 // Legs you said were no trip are kept in data/suggestions.dismissed.json.
 
 const fs = require('fs');
@@ -12,8 +13,10 @@ const MIN_KM = 60;      // a move shorter than this is a day out, not a journey
 const MAX_DAYS = 6;     // photos further apart than this: we do not know what happened between
 const MAX_KMH = 900;    // faster than this (between the photos' times) is a clock or a place gone wrong
 const MAX_GROUND_KMH = 200, MIN_FLIGHT_KM = 400;
+const AIRPORT_KM = 100;  // a flight explains a move from a town this near its airport
 
-function create({ towns, cities, photos, flights, airports, groundTrips, activities, stays, homeAirports, dismissedFile }) {
+// fromPlane: (unix time, [lat, lon]) => whether a photo then and there was taken from a plane
+function create({ towns, cities, photos, flights, airports, groundTrips, activities, stays, homeAirports, dismissedFile, fromPlane = () => false }) {
   let memo = { key: null, list: [] };
   const dismissed = () => { try { return new Set(JSON.parse(fs.readFileSync(dismissedFile, 'utf8'))); } catch (_) { return new Set(); } };
   const keyOf = s => `${s.from_day}|${s.from_id}|${s.to_id}`;
@@ -30,7 +33,7 @@ function create({ towns, cities, photos, flights, airports, groundTrips, activit
     const driving = (d0, d1) => cars.some(c => c.start <= d1 && (c.end || c.start) >= d0);
     // the photos as a chain of stops: one per run of photos in the same town
     const stops = [], cache = new Map();
-    for (const p of [...ph].filter(p => p[2] != null).sort((a, b) => a[1] - b[1])) {
+    for (const p of [...ph].filter(p => p[2] != null && !fromPlane(p[1], [p[2], p[3]])).sort((a, b) => a[1] - b[1])) {
       const c = `${p[2].toFixed(2)},${p[3].toFixed(2)}`;
       if (!cache.has(c)) cache.set(c, cities.townAt(grid, p[2], p[3]));
       const t = cache.get(c);
@@ -47,9 +50,10 @@ function create({ towns, cities, photos, flights, airports, groundTrips, activit
       if (last && last.town === s.town) { last.t1 = s.t1; last.n += s.n; last.lastPhoto = s.lastPhoto; } else merged.push({ ...s });
     }
     // what already connects two days: flights, ground trips, rides and walks from one town to the other
-    const near = (a, b) => ground.km(a, b) < 40;
+    // (an airport serves a wider area than a station: Fuerteventura's for the south of the island, Schiphol for Delft)
+    const near = (a, b) => ground.km(a, b) < 40, nearAirport = (a, b) => ground.km(a, b) < AIRPORT_KM;
     const connects = (a, b, d0, d1) =>
-      fl.some(f => { const x = ap[f.from], y = ap[f.to], d = (f.date || '').slice(0, 10); return x && y && d >= d0 && d <= d1 && (near([x.lat, x.lon], a) || near([y.lat, y.lon], b)); }) ||
+      fl.some(f => { const x = ap[f.from], y = ap[f.to], d = (f.date || '').slice(0, 10); return x && y && d >= d0 && d <= d1 && (nearAirport([x.lat, x.lon], a) || nearAirport([y.lat, y.lon], b)); }) ||
       gt.some(t => { const d = (t.date || '').slice(0, 10); return t.from_lat != null && d >= d0 && d <= d1 && (near([t.from_lat, t.from_lon], a) || near([t.to_lat, t.to_lon], b)); }) ||
       acts.some(x => { const d = (x.date || '').slice(0, 10); return x.at && d >= d0 && d <= d1 && (x.distance || 0) >= ground.km(a, b) * 0.6; });
     const out = [];

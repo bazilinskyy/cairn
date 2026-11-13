@@ -1819,10 +1819,22 @@ const bases = require('./bases').create({
   homes: () => Object.values(homePlaces()).filter(Boolean).map(t => [t.lat, t.lon]),
   townAt: at => (loadTowns() && cities.townAt(towns, at[0], at[1])) || null
 });
+// A photo taken from a plane, for the journeys photos suggest: within PLANE_SLACK_S of a flight's time in the air (a
+// camera's clock can be a few hours out), over PLANE_AIRPORT_KM from both airports, and on the way between them
+// (at most PLANE_DETOUR times the flight's length, plus PLANE_WIDE_KM): looser than the rule for your days, as a
+// journey suggested from a photo of the land below is worse than one left out
+const PLANE_SLACK_S = 3 * 3600, PLANE_AIRPORT_KM = 60, PLANE_DETOUR = 1.1, PLANE_WIDE_KM = 100;
+let planeMemo = { n: '', spans: [] };
+function fromPlane(t, p) {
+  if (planeMemo.n !== `${flights.length}|${dataVersion}`) planeMemo = { n: `${flights.length}|${dataVersion}`, spans: flyingSpans() };
+  return planeMemo.spans.some(([off, on, x, y]) => t > off - PLANE_SLACK_S && t < on + PLANE_SLACK_S
+    && ground.km(p, x) > PLANE_AIRPORT_KM && ground.km(p, y) > PLANE_AIRPORT_KM
+    && ground.km(x, p) + ground.km(p, y) <= ground.km(x, y) * PLANE_DETOUR + PLANE_WIDE_KM);
+}
 const suggestions = require('./suggestions').create({
   towns: loadTowns, cities,
   photos: ownPlacePhotos, flights: () => flights, airports: () => airports, groundTrips: () => trips, activities: () => activities.list(),
-  stays: () => stays, homeAirports,
+  stays: () => stays, homeAirports, fromPlane,
   dismissedFile: path.join(DATA_DIR, 'suggestions.dismissed.json')
 });
 app.get('/api/suggestions', (_req, res) => res.json(suggestions.list()));

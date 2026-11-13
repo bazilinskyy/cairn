@@ -1022,7 +1022,7 @@ Moving to MongoDB later only needs the data layer in `app.js` (the `flights` arr
 | `POST` | `/api/health/dedupe` | remove the stays that copy another |
 | `POST` | `/api/ground/:id/retry`, `/api/stays/:id/retry` | look a trip's or a stay's place (and track) up again |
 | `GET` | `/api/suggestions/todos`, `/api/suggestions/tripdocs` | trips your to-dos mention that nothing else knows; trip-doc rows not on the map |
-| `GET` | `/api/suggestions` | legs your photos show and nothing else connects: `from`, `to` (towns, with ids, countries and places), `from_day`, `to_day`, `km`, `hours`, `photos` (counts), `last_photo`, `first_photo`, `mode` (a guess), `key` |
+| `GET` | `/api/suggestions` | legs your photos show and nothing else connects (a flight connects towns up to 100 km from its airports; photos taken from a plane, on the way of a flight within a few hours of it, are left out): `from`, `to` (towns, with ids, countries and places), `from_day`, `to_day`, `km`, `hours`, `photos` (counts), `last_photo`, `first_photo`, `mode` (a guess), `key` |
 | `POST` | `/api/suggestions/dismiss` | `{ "key" }`: that leg (or album) was no trip |
 | `GET` | `/api/suggestions/albums` | albums whose photos have no places: `key`, `album`, `photos`, `placed`, `place`, `year`, `first`, `last`, `lat`, `lon` (`{ "pending": true }` while they are read) |
 | `GET` | `/api/suggestions/albums/cover?key=` | an album's cover photo, small |
