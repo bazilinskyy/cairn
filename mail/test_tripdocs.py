@@ -290,10 +290,42 @@ def test_new_docs_are_noted_and_shared_by_link():
 
         def call(self, method, url, body=None, data=None, ctype="application/json"):
             self.calls.append((method, url.rsplit("/", 2)[-2:], body))
-            return {"id": "doc9"}
+            return {"id": "doc9", "body": {"content": []}}
     c = Calls()
     assert c.create("folder", "Faro 2027") == "doc9"
     assert ("POST", ["doc9", "permissions"], {"type": "anyone", "role": "writer", "allowFileDiscovery": False}) in c.calls
+
+
+def test_restyle_gives_new_docs_the_users_look():
+    def para(start, text, named="NORMAL_TEXT", **style):
+        return {"startIndex": start, "endIndex": start + len(text) + 1, "paragraph": {
+            "paragraphStyle": {"namedStyleType": named, **style}, "elements": [{"textRun": {"content": text + "\n"}}]}}
+
+    def table(start, head, pad, widths):
+        cell = lambda t: {"startIndex": start, "endIndex": start + 2, "tableCellStyle": {k: {"unit": "PT", **({"magnitude": pad} if pad else {})} for k in tripdocs.PADS},
+                          "content": [{"paragraph": {"elements": [{"startIndex": start + 1, "textRun": {"content": t + "\n"}}]}}]}
+        return {"startIndex": start, "table": {"tableRows": [{"tableCells": [cell(h) for h in head]}],
+                "tableStyle": {"tableColumnProperties": [{"width": {"magnitude": w}} for w in widths]}}}
+    pt = {"magnitude": 24, "unit": "PT"}
+    made = {"body": {"content": [para(1, "Information", "HEADING_1"), para(13, "", spaceBelow=pt),
+                                 para(14, "Plan", "HEADING_1", spaceAbove={"unit": "PT"}),
+                                 table(20, ["Place", "Dates", "Accommodation", "Price", "Comments"], 0, [93.6] * 5),
+                                 para(90, "Transport", "HEADING_1"), table(100, ["Transport", "Date", "Price", "Comments"], 0, [93.6] * 4)]}}
+    r = tripdocs.restyle(made)
+    paras = [x["updateParagraphStyle"] for x in r if "updateParagraphStyle" in x]
+    assert [(p["range"]["startIndex"], p["fields"], p["paragraphStyle"]) for p in paras] == [
+        (1, "alignment", {"alignment": "CENTER"}), (13, "spaceBelow", {}), (14, "spaceAbove,alignment", {"alignment": "CENTER"}),
+        (90, "alignment", {"alignment": "CENTER"})]
+    pads = [x["updateTableCellStyle"] for x in r if "updateTableCellStyle" in x]
+    assert [p["tableStartLocation"]["index"] for p in pads] == [20, 100]
+    assert pads[0]["tableCellStyle"]["paddingTop"] == {"magnitude": 5, "unit": "PT"}
+    widths = [(x["updateTableColumnProperties"]["tableStartLocation"]["index"], x["updateTableColumnProperties"]["tableColumnProperties"]["width"]["magnitude"])
+              for x in r if "updateTableColumnProperties" in x]
+    assert widths == [(20, w) for w in tripdocs.WIDTHS["plan"]] + [(100, w) for w in tripdocs.WIDTHS["transport"]]
+    # the user's own doc: centred headings, padded cells, widths of their own: nothing to do
+    own = {"body": {"content": [para(1, "Plan", "HEADING_1", alignment="CENTER"),
+                                table(6, ["Place", "Dates", "Accommodation", "Price", "Comments"], 5, [125, 88, 106, 72, 165])]}}
+    assert tripdocs.restyle(own) == []
 
 class ParaGoogle(FakeGoogle):
     """A doc with a Plan table and then paragraphs, kept as one string with a style and a bullet flag per paragraph;

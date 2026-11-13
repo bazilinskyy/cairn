@@ -5,7 +5,9 @@ tripmail fills them from the bookings it reads: a hotel or Airbnb goes into the 
 (empty cells only) or a new row in date order; a rental car into the Comments of the row of its pick-up day; each
 flight into a Transport row. A cancelled stay empties the Accommodation and Price cells. A trip without a doc gets
 a new one, named like "Portugal 2026", that anyone with its link can edit (and a Things to-do, by tripmail.py).
-Tables with no data yet get three empty rows. Text the user wrote is never changed.
+Tables with no data yet get three empty rows. New docs look like the user's own: Normal text and Heading styles with
+no spacing of their own, the three headings centred, 5 pt cell padding and their column widths. Text the user
+wrote is never changed.
 
 Suggestions: when the doc of a trip that is not over yet changes (the user's edits or tripmail's), Claude (`claude
 -p`) is asked for things to do around where the user sleeps and a day-by-day itinerary, new to them: it is told where
@@ -52,6 +54,10 @@ PAGE = {"updateDocumentStyle": {"documentStyle": {
     "pageSize": {"width": {"magnitude": 595.2755905511812, "unit": "PT"}, "height": {"magnitude": 841.8897637795277, "unit": "PT"}},
     "marginTop": CM, "marginBottom": CM, "marginLeft": CM, "marginRight": CM, "documentFormat": {"documentMode": "PAGELESS"}},
     "fields": "pageSize,marginTop,marginBottom,marginLeft,marginRight,documentFormat"}}
+# and their tables: 5 pt cell padding, these column widths (Drive's import gives 0 padding and even widths)
+PADS = ("paddingTop", "paddingBottom", "paddingLeft", "paddingRight")
+PADDING = {"magnitude": 5, "unit": "PT"}
+WIDTHS = {"plan": (125.25, 87.75, 106.5, 72, 165), "transport": (177, 123, 47.25, 208.5)}
 
 
 # --- Google (OAuth refresh token + JSON calls) ---
@@ -108,7 +114,7 @@ class Google:
                 f"--{boundary}\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n{html}\r\n--{boundary}--").encode()
         doc_id = self.call("POST", "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart", data=data,
                            ctype=f"multipart/related; boundary={boundary}")["id"]
-        self.batch(doc_id, [PAGE])
+        self.batch(doc_id, [PAGE] + restyle(self.get(doc_id)))
         self.share(doc_id)
         return doc_id
 
@@ -122,7 +128,7 @@ class Google:
                                      html.encode(), method="PATCH",
                                      headers={"Authorization": "Bearer " + self._token(), "Content-Type": "text/html"})
         urllib.request.urlopen(req, timeout=60).close()
-        self.batch(doc_id, [PAGE])
+        self.batch(doc_id, [PAGE] + restyle(self.get(doc_id)))
 
 
 def _post_form(url, fields):
@@ -282,6 +288,39 @@ def clear(table, r, cols):
 def add_row(table, after):
     return [{"insertTableRow": {"tableCellLocation": {"tableStartLocation": {"index": table["start"]},
                                                        "rowIndex": after, "columnIndex": 0}, "insertBelow": True}}]
+
+
+def restyle(doc):
+    """Requests that make a doc made from html look like the user's own: plain Normal text and Heading paragraphs
+    (no spacing of their own over the style, which Drive's import leaves), the Information, Plan and Transport
+    headings centred, 5 pt padding in every table cell and the user's column widths where the import's even ones are."""
+    out, kinds = [], {t["start"]: k for k, t in tables(doc).items()}
+    for el in doc["body"]["content"]:
+        if "paragraph" in el:
+            p = el["paragraph"]
+            ps, text = p["paragraphStyle"], "".join(e.get("textRun", {}).get("content", "") for e in p["elements"]).strip()
+            fields, style = [k for k in ("spaceAbove", "spaceBelow") if k in ps], {}
+            if ps.get("namedStyleType") == "HEADING_1" and text in ("Information", "Plan", "Transport") \
+                    and ps.get("alignment") != "CENTER":
+                fields.append("alignment")
+                style["alignment"] = "CENTER"
+            if fields:
+                out.append({"updateParagraphStyle": {"range": {"startIndex": el["startIndex"], "endIndex": el["endIndex"]},
+                                                     "paragraphStyle": style, "fields": ",".join(fields)}})
+        elif "table" in el:
+            at = {"index": el["startIndex"]}
+            cells = [c.get("tableCellStyle", {}) for r in el["table"]["tableRows"] for c in r["tableCells"]]
+            # no padding in a cell is Google's default, 5 pt; Drive's import writes 0 ({"unit": "PT"} alone)
+            if any(c.get(k, PADDING).get("magnitude", 0) != PADDING["magnitude"] for c in cells for k in PADS):
+                out.append({"updateTableCellStyle": {"tableStartLocation": at, "tableCellStyle": {k: PADDING for k in PADS},
+                                                     "fields": ",".join(PADS)}})
+            cols = el["table"].get("tableStyle", {}).get("tableColumnProperties", [])
+            widths = WIDTHS.get(kinds.get(el["startIndex"]), ())
+            if len(widths) == len(cols) and len({c.get("width", {}).get("magnitude") for c in cols}) == 1:
+                out += [{"updateTableColumnProperties": {"tableStartLocation": at, "columnIndices": [i], "fields": "width,widthType",
+                         "tableColumnProperties": {"widthType": "FIXED_WIDTH", "width": {"magnitude": w, "unit": "PT"}}}}
+                        for i, w in enumerate(widths)]
+    return out
 
 
 def over(name, days, today):
