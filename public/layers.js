@@ -1058,6 +1058,27 @@ function drawHome() {
   });
 }
 
+// The map's standing labels (your places, the ten towns you spent most days in) never on top of each other: where
+// two would meet, the one that matters less (a town further down the ten) gives way until the map moves again
+function declutterLabels() {
+  const rank = el => (el.classList.contains('home-label') ? 0 : +(/^(\d+)\./.exec(el.textContent) || [, 99])[1]);
+  const els = [...document.querySelectorAll('#map .leaflet-tooltip.home-label, #map .leaflet-tooltip.city-label')].sort((a, b) => rank(a) - rank(b));
+  const kept = [];
+  els.forEach(el => {
+    el.classList.remove('label-hidden');
+    const r = el.getBoundingClientRect();
+    if (!r.width) return;
+    const meets = kept.some(k => r.left < k.right + 2 && r.right > k.left - 2 && r.top < k.bottom + 1 && r.bottom > k.top - 1);
+    if (meets) el.classList.add('label-hidden'); else kept.push(r);
+  });
+}
+let declutterAsked = false;
+function askDeclutter() {
+  if (declutterAsked) return;
+  declutterAsked = true;
+  requestAnimationFrame(() => { declutterAsked = false; declutterLabels(); });
+}
+
 // --- countries visited ---
 
 // The countries of the list chosen in the settings (ISO codes, sovereign countries, or the Travelers' Century Club's

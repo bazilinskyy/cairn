@@ -715,6 +715,8 @@ The library export has the authors and pages and the day you finished each book,
 
 ### Curiosities
 
+The **Stats** tab's **Flights per year** has every year from your first flight to your last booked one, those without a flight too, so a gap shows as one; flights still to come stand lighter on top of those flown.
+
 The **Stats** tab ends with curiosities from every day Cairn knows a place for (up to today): days by the sea (within 2 km of [Natural Earth](https://www.naturalearthdata.com)'s coastline, `data/coastline.geojson`, 10 MB, downloaded on first use) and days above 1,000, 2,000 and 3,000 m, the highest place, the highest you went on foot or by bike, the highest night (the ground's height at each place from the AWS Terrain Tiles, kept in `data/heights.json`; the first time takes a minute or two), the farthest you went north, south, east and west and from home, days in the southern and western hemispheres and the tropics, the capitals you have been to, how far you went by each means (trains between the towns you live and work in, from your places, count apart as 🔁 commutes; and how many times around the earth that is), the most countries in a day, the longest stay, nights per kind of bed (a friend's place and family each count apart), where each New Year's Eve was, the hottest, coldest, wettest and windiest rides, and your sleep, resting heart rate and steps away and at home. **Time zones**: how many hours your flights moved your clock (forward going east, back going west; each airport's zone on that day, summer time included), the trips that took you farthest from your home clock (each day's town against your first home airport) with the jet lag they are said to take (a day an hour going east, two thirds of one going west, from 3 hours), and what your sleep says about it: Garmin's sleep the 3 nights after a flight across 4 or more hours, against the 2 weeks before.
 
 ### Days per country, and Schengen
@@ -838,7 +840,7 @@ Add `--send mini:repos/contrail/data/<file>.json` to copy the result to the Mac 
 
 With those imports, **💡 To check** also lists the [days abroad on Spotify](#more-of-your-life-data-downloads) no trip explains and **Your Wallet**: seats and booking codes for your flights, and boarding passes and tickets Cairn has no trip for.
 
-On a phone the tabs scroll sideways, the cards stand two abreast and the map's **Period** and **Layers** fold behind a button each.
+On a phone the tabs scroll sideways (on a small one **+ Add** is a **+**), the cards stand two abreast, a trip's coming week of weather in one row, and the map's **Period** and **Layers** fold behind a button each. Elsewhere the number cards stand in even rows (six in one, eight in two of four). The map's standing labels (your places, the ten towns you spent most days in) never cover each other: where two would meet, the town further down the ten gives way until you zoom in. The tab you open first is drawn before the map, which takes a few seconds with a hundred thousand points; Cairn's bigger answers (the trains' tracks, the flights) are sent gzipped.
 
 ### Backup
 

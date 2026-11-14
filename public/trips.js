@@ -507,6 +507,8 @@ window.addEventListener('load', () => {
     if (location.hash.startsWith('#trip=')) history.replaceState(null, '', location.pathname + location.search);
     if (b.dataset.tab === 'trips') renderTrips();
   }));
+  // /trips opened or reloaded: the tab may have been shown before this listener was there
+  if (document.querySelector('.tab[data-tab="trips"]').classList.contains('active')) renderTrips();
   const m = /^#trip=(\d{4}-\d\d-\d\d)$/.exec(location.hash);
   if (m) setTimeout(() => openTrip(m[1]), 300);
 });

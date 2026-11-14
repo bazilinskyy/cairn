@@ -394,6 +394,23 @@ app.use((req, res, next) => {
   next();
 });
 app.use(express.json({ limit: '10mb' }));
+// the bigger answers (the trains' tracks are megabytes) gzipped for a browser that takes it: a tenth as much through
+// the ssh tunnel or to a phone
+app.use('/api', (req, res, next) => {
+  if (!/\bgzip\b/.test(req.headers['accept-encoding'] || '')) return next();
+  const json = res.json.bind(res);
+  res.json = body => {
+    const text = JSON.stringify(body);
+    if (text === undefined || text.length < 16384) return json(body);
+    zlib.gzip(text, { level: 6 }, (err, buf) => {
+      if (err || res.headersSent) return err && !res.headersSent ? json(body) : undefined;
+      res.set({ 'Content-Type': 'application/json; charset=utf-8', 'Content-Encoding': 'gzip', Vary: 'Accept-Encoding' });
+      res.send(buf);
+    });
+    return res;
+  };
+  next();
+});
 app.use(express.static(path.join(__dirname, 'public')));
 // each tab has its own address (public/index.html): the page itself there too, so a link to /sports opens Sports
 app.get(['/stats', '/sports', '/trips', '/flights', '/add'], (_req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));

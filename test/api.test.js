@@ -697,3 +697,21 @@ test('code: your commits by place, once imported', async () => {
   assert.deepStrictEqual([c.commits, c.repos, c.first, c.hours[9]], [1, 1, '2026-11-17', 1]);
   fs.rmSync(path.join(dir, 'data', 'github.json'));
 });
+
+test('a big answer is gzipped for a browser that takes it, a small one and one for another client not', async () => {
+  const made = [];
+  for (let i = 0; i < 150; i++)  // enough flights for /api/flights to pass 16 kB
+    made.push(await (await call('POST', '/api/flights', { date: `2003-0${1 + (i % 9)}-1${i % 10}`, from: 'AMS', to: 'BCN', flight_number: `XX${100 + i}`, notes: 'a made-up flight '.repeat(8) })).json());
+  const http = require('http');
+  const get = (p, enc) => new Promise((ok, no) => http.get(BASE + p, { headers: enc ? { 'Accept-Encoding': enc } : {} }, res => {
+    const parts = []; res.on('data', c => parts.push(c)); res.on('end', () => ok({ res, body: Buffer.concat(parts) }));
+  }).on('error', no));
+  const big = await get('/api/flights', 'gzip, deflate');
+  assert.strictEqual(big.res.headers['content-encoding'], 'gzip');
+  const flights = JSON.parse(require('zlib').gunzipSync(big.body));
+  assert.ok(flights.length > 50);
+  assert.strictEqual((await get('/api/flights')).res.headers['content-encoding'], undefined);
+  assert.deepStrictEqual(JSON.parse((await get('/api/flights')).body), flights);
+  assert.strictEqual((await get('/api/settings', 'gzip')).res.headers['content-encoding'], undefined);
+  for (const f of made) await call('DELETE', `/api/flights/${f.id}`);
+});

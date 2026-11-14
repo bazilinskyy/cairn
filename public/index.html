@@ -772,6 +772,63 @@
       .view-switch { margin-bottom: 12px; }
     }
     @media (prefers-reduced-motion: reduce) { .trip-card, .tc-pic img, .stat-card, .btn, .cover-grid img { transition: none; } .trip-card:hover { transform: none; } }
+
+    /* the browser's own controls (date boxes, lists, scrollbars) in the page's light or dark */
+    :root { color-scheme: dark; }
+    :root[data-theme="light"] { color-scheme: light; }
+
+    /* number cards in even rows: as many across as there are (up to six), else two rows of the same length */
+    .stat-cards { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
+    @media (min-width: 701px) {
+      .stat-cards:has(> :nth-child(6):last-child) { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+      .stat-cards:has(> :nth-child(7):last-child), .stat-cards:has(> :nth-child(8):last-child) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+      .stat-cards:has(> :nth-child(9):last-child), .stat-cards:has(> :nth-child(10):last-child) { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+    }
+    @media (min-width: 701px) and (max-width: 1100px) {
+      .stat-cards:has(> :nth-child(6):last-child) { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    }
+
+    /* links that look like buttons are not underlined; links without a style of their own wear the accent */
+    a.btn, a.btn:hover { text-decoration: none; }
+    a:not([class]) { color: var(--accent); text-underline-offset: 2px; text-decoration-color: color-mix(in srgb, currentColor 45%, transparent); }
+
+    /* Add: the kinds as one segmented row, Place photos (a page of its own) after a divider */
+    .add-kinds { display: inline-flex; flex-wrap: wrap; gap: 2px; padding: 4px; border-radius: 12px; background: var(--surface); border: 1px solid var(--border); }
+    .add-kinds .btn { border: none !important; background: none; color: var(--text2); padding: 7px 12px; font-size: 13px; font-weight: 600; border-radius: 9px; box-shadow: none; }
+    .add-kinds .btn:hover { color: var(--text); background: var(--surface2); }
+    .add-kinds .btn.btn-primary { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+    .add-kinds > a.btn { position: relative; margin-left: 9px; }
+    .add-kinds > a.btn::before { content: ''; position: absolute; left: -6px; top: 7px; bottom: 7px; border-left: 1px solid var(--border); }
+
+    /* the map's own buttons and boxes in the page's colours (the dark mode's inversion is for Leaflet's white ones) */
+    .leaflet-control.map-ctrl-row { filter: none; }
+    .map-ctrl-btn { background: color-mix(in srgb, var(--surface) 86%, transparent) !important; color: var(--text) !important; border-radius: 99px;
+      padding: 6px 12px; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); box-shadow: var(--shadow); transition: border-color .15s, color .15s; }
+    .map-ctrl-btn:hover { border-color: color-mix(in srgb, var(--accent) 55%, transparent) !important; color: var(--accent) !important; }
+    .leaflet-control.map-legend { border-radius: 12px; box-shadow: var(--shadow); background: color-mix(in srgb, var(--surface) 90%, transparent);
+      backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); padding: 8px 12px; }
+    .map-legend select, .map-legend input[type="date"] { font: inherit; font-size: 12px; color: var(--text); background: var(--surface2); border: 1px solid var(--border);
+      border-radius: 7px; padding: 2px 6px; height: 24px; }
+    .map-legend select:focus-visible, .map-legend input[type="date"]:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent); outline-offset: 1px; }
+    .leaflet-tooltip.city-label, .leaflet-tooltip.home-label { border-radius: 6px; transition: opacity .15s; }
+    .leaflet-tooltip.label-hidden { opacity: 0 !important; pointer-events: none; }
+
+    @media (max-width: 700px) {
+      .add-kinds { display: flex; }
+      .add-kinds .btn { padding: 6px 9px; font-size: 12.5px; }
+      .prep-weather { display: grid; grid-template-columns: repeat(auto-fill, minmax(40px, 1fr)); gap: 4px; }
+      .prep-weather span { min-width: 0; padding: 4px 2px; }
+    }
+    /* small phones: the logo's mark and Add's word give way, so every tab fits in the bar */
+    @media (max-width: 480px) {
+      .logo { display: none; }
+      nav { gap: 4px; padding: 0 6px; }
+      .tabs { gap: 2px; }
+      .tab { padding: 6px 7px; }
+      .nav-right .theme-btn { padding: 4px 3px; }
+      .tab-add { font-size: 0 !important; padding: 4px 10px !important; margin-left: 2px; }
+      .tab-add::before { content: '+'; font-size: 18px; line-height: 1; font-weight: 600; }
+    }
   </style>
 </head>
 <body>
@@ -784,7 +841,7 @@
     <button class="tab" data-tab="sports">Sports</button>
     <button class="tab" data-tab="trips">Trips</button>
     <button class="tab" data-tab="flights">Flights</button>
-    <button class="tab tab-add" data-tab="add">+ Add</button>
+    <button class="tab tab-add" data-tab="add" aria-label="Add">+ Add</button>
   </div>
   <div class="nav-right">
     <button class="theme-btn" onclick="openSettings()" title="Settings" aria-label="Settings">⚙️</button>
@@ -1709,6 +1766,7 @@ function initMap() {
   });
   new MapButtons().addTo(map);
   showClusterMode();
+  map.on('zoomend moveend layeradd layerremove resize', askDeclutter);  // layers.js: labels never on top of each other
 
   // Which lines to show; remembered in this browser
   let hidden = [];
@@ -2078,26 +2136,39 @@ function renderStats() {
   document.getElementById('s-airlines').textContent  = airlines.size;
 
   // Yearly chart
-  const byYear = {};
+  // every year from the first to the last, those without a flight too (a gap shows as one); flights still to come
+  // stacked on those flown, lighter
+  const today = new Date().toISOString().slice(0, 10);
+  const flown = {}, booked = {};
   allFlights.forEach(f => {
     const yr = f.date ? f.date.substring(0, 4) : null;
-    if (yr && /^\d{4}$/.test(yr)) byYear[yr] = (byYear[yr] || 0) + 1;
+    if (yr && /^\d{4}$/.test(yr)) (f.date.slice(0, 10) > today ? booked : flown)[yr] = ((f.date.slice(0, 10) > today ? booked : flown)[yr] || 0) + 1;
   });
-  const years = Object.keys(byYear).sort();
+  const known = [...Object.keys(flown), ...Object.keys(booked)].map(Number);
+  const years = known.length ? Array.from({ length: Math.max(...known) - Math.min(...known) + 1 }, (_, i) => String(Math.min(...known) + i)) : [];
+  const anyBooked = Object.keys(booked).length > 0;
+  const accent = getCSSVar('--accent');
 
   if (chartYear) chartYear.destroy();
   chartYear = new Chart(document.getElementById('yearChart').getContext('2d'), {
     type: 'bar',
     data: {
       labels: years,
-      datasets: [{ data: years.map(y => byYear[y]), backgroundColor: 'rgba(79,195,247,0.55)', borderColor: '#4fc3f7', borderWidth: 1 }]
+      datasets: [
+        { label: 'Flown', data: years.map(y => flown[y] || 0), backgroundColor: accent, borderRadius: 4, borderSkipped: 'start', maxBarThickness: 28 },
+        ...(anyBooked ? [{ label: 'Booked', data: years.map(y => booked[y] || 0), backgroundColor: accent + '55', borderColor: accent, borderWidth: 1, borderRadius: 4, borderSkipped: 'start', maxBarThickness: 28 }] : [])
+      ]
     },
     options: {
       responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: anyBooked, align: 'end', labels: { color: getCSSVar('--chart-tick'), boxWidth: 10, boxHeight: 10, font: { size: 11 } } },
+        tooltip: { callbacks: { label: c => c.raw ? ` ${c.dataset.label}: ${c.raw}` : null, footer: items => items.length > 1 ? `${items.reduce((n, i) => n + i.raw, 0)} flights` : '' } }
+      },
       scales: {
-        x: { ticks: { color: getCSSVar('--chart-tick'), font: { size: 11 } }, grid: { color: getCSSVar('--chart-grid') } },
-        y: { ticks: { color: getCSSVar('--chart-tick'), font: { size: 11 } }, grid: { color: getCSSVar('--chart-grid') }, beginAtZero: true }
+        x: { stacked: true, ticks: { color: getCSSVar('--chart-tick'), font: { size: 11 }, autoSkip: true, maxRotation: 0 }, grid: { display: false } },
+        y: { stacked: true, ticks: { color: getCSSVar('--chart-tick'), font: { size: 11 }, precision: 0 }, grid: { color: getCSSVar('--chart-grid') }, border: { display: false }, beginAtZero: true }
       }
     }
   });
@@ -2379,27 +2450,23 @@ window.showAirportFlights = function(iata) {
 
 async function init() {
   const optional = (url, empty) => fetch(url).then(r => r.ok ? r.json() : empty).catch(() => empty);
-  [allFlights, allAirports, allTrips, allStays, allPhotos, allTimeline, settings, stravaStatus, allCheckins] = await Promise.all([
+  [allFlights, allAirports, allTrips, allStays, allPhotos, allTimeline, settings, stravaStatus, allCheckins, allBooks, allCode, allMusic] = await Promise.all([
     fetch('/api/flights').then(r => r.json()),
     fetch('/api/airports').then(r => r.json()),
     optional('/api/ground', []), optional('/api/stays', []), optional('/api/photos', []),
     optional('/api/timeline', { visits: [], paths: [] }), optional('/api/settings', { home_airports: [] }),
-    optional('/api/activities/status', {}), optional('/api/checkins', [])
+    optional('/api/activities/status', {}), optional('/api/checkins', []),
+    optional('/api/books', []), optional('/api/code/places', []), optional('/api/music/places', [])
   ]);
-  allBooks = await optional('/api/books', []);
-  allCode = await optional('/api/code/places', []);
-  allMusic = await optional('/api/music/places', []);
   computeJourneys();
 
+  // the tab you opened first: the map's hundred thousand points take seconds to draw, and another tab need not wait
+  const tabs = () => { renderStats(); renderTopCities(); renderCountryStats(); renderCountryYears(); initSports(); renderTable(); };
+  if (tabOfPath() !== 'map') { tabs(); await new Promise(r => setTimeout(r, 50)); }
   initMap();
   loadStrava();  // thousands of activities: after the rest of the map is up
   fetch('/api/drives').then(r => (r.ok ? r.json() : [])).then(d => { allDrives = d; drawGround(); }).catch(() => {});  // takes a few seconds the first time
-  renderStats();
-  renderTopCities();
-  renderCountryStats();
-  renderCountryYears();
-  initSports();
-  renderTable();
+  if (tabOfPath() === 'map') tabs();
 
   // Default table sort header indicator
   document.querySelector('#flights-table th[data-col="date"]').classList.add('sort-desc');
