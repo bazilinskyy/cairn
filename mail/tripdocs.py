@@ -10,6 +10,9 @@ Tables with no data yet get three empty rows. New docs are copies of a template 
 with no spacing of their own, the three headings centred, 5 pt cell padding, their column widths, table text in
 Helvetica Neue. Text the user wrote is never changed.
 
+Prices: under a price in another currency ("773760 VND") a line "≈ 25.39€" at the day's rate (open.er-api.com), and
+under each table a line "Total: 123.45€", kept up to date in the docs of trips not over yet.
+
 Suggestions: when the doc of a trip that is not over yet changes (the user's edits or tripmail's), Claude (`claude
 -p`) is asked for things to do around where the user sleeps and a day-by-day itinerary, new to them: it is told where
 they have been near the trip's places before (Cairn's towns and what they did there). Written into a "Suggestions"
@@ -189,21 +192,27 @@ def _cell(c):
     return {"start": paras[0]["elements"][0]["startIndex"] if paras and paras[0].get("elements") else c["startIndex"] + 1,
             "end": c["endIndex"] - 1,  # the cell's last newline, which stays
             "text": "".join(e["textRun"]["content"] for e in runs).strip(),
+            "paras": [{"start": q["elements"][0].get("startIndex", 0), "end": q["elements"][-1].get("endIndex", 0),
+                       "text": "".join(e.get("textRun", {}).get("content", "") for e in q["elements"]).strip()}
+                      for q in paras if q.get("elements")],
             "links": [e["textRun"].get("textStyle", {}).get("link", {}).get("url", "") for e in runs
                       if e["textRun"].get("textStyle", {}).get("link")]}
 
 
 def tables(doc):
-    """{"plan": table, "transport": table} found by their header rows; a table is {start, cols, rows: [[cell]]}."""
-    out = {}
-    for el in doc["body"]["content"]:
+    """{"plan": table, "transport": table} found by their header rows; a table is {start, cols, rows: [[cell]], after:
+    the paragraph that follows it}."""
+    out, body = {}, doc["body"]["content"]
+    for k, el in enumerate(body):
         if "table" not in el:
             continue
         rows = [[_cell(c) for c in r["tableCells"]] for r in el["table"]["tableRows"]]
         head = [c["text"].lower() for c in rows[0]] if rows else []
         kind = {"place": "plan", "transport": "transport"}.get(head[0] if head else "")
         if kind and kind not in out:
-            out[kind] = {"start": el["startIndex"], "cols": {h: i for i, h in enumerate(head)}, "rows": rows}
+            nxt = body[k + 1] if k + 1 < len(body) and "paragraph" in body[k + 1] else None
+            out[kind] = {"start": el["startIndex"], "cols": {h: i for i, h in enumerate(head)}, "rows": rows,
+                         "after": nxt and {"start": nxt["startIndex"], "end": nxt["endIndex"], "text": _ptext(nxt), "style": _pstyle(nxt)}}
     return out
 
 
@@ -672,6 +681,36 @@ class TripDocs:
             self.add(doc_id, spec)
             done[i] = {"doc": doc_id, "spec": spec}
 
+    def prices(self, state, now, rates=None):
+        """Euros under the prices in other currencies and a total under each table, in the docs of trips not over
+        yet that changed since the last look, but not in the last half hour (the user may still be typing)."""
+        reg = state.setdefault("docs", {}).setdefault("priced", {})
+        today, cache = now.date(), state["docs"].get("rates") or {}
+        for f in self.g.docs_in(self.folder):
+            self.names[f["id"]] = f["name"]
+            modified = f.get("modifiedTime", "")
+            if reg.get(f["id"]) == modified and modified or modified and now - _local(modified) < QUIET:
+                continue
+            doc = self.g.get(f["id"])
+            days = span(doc)
+            if not days or days[1] < today:
+                reg[f["id"]] = modified
+                continue
+            if cache.get("day") != today.isoformat():
+                try:
+                    cache = state["docs"]["rates"] = {"day": today.isoformat(), "rates": (rates or fetch_rates)()}
+                except Exception as e:  # tried again next run
+                    self.log(f"no exchange rates, prices in euros wait: {e!r}")
+                    return
+            requests = price_requests(doc, cache["rates"])
+            if requests and self.dry:
+                self.log(f"would write prices in euros in doc {f['name']!r}")
+            elif requests:
+                self.g.batch(f["id"], requests)
+                self.log(f"prices in euros written in doc {f['name']!r}")
+            if not self.dry:
+                reg[f["id"]] = self.g.modified(f["id"]) if requests else modified
+
     def suggest(self, state, now, ask, history=None, limit=3):
         """Suggestions in the docs of trips not over yet that changed since the last look, but not in the last half
         hour (the user may still be typing; tripmail's own edits of this run wait an hour too). At most limit
@@ -690,7 +729,7 @@ class TripDocs:
                 reg[f["id"]] = {"modified": modified}
                 continue
             text = without_suggestions(self.g.export(f["id"]))
-            digest = hashlib.sha256(text.encode()).hexdigest()[:16]
+            digest = hashlib.sha256(without_euros(text).encode()).hexdigest()[:16]
             if seen and seen.get("hash") == digest or not seen and section(doc):  # only the suggestions changed
                 reg[f["id"]] = {"modified": modified, "hash": digest}
                 continue
@@ -711,6 +750,129 @@ class TripDocs:
             self.log(f"suggestions written in doc {f['name']!r}: things to do in {len(data['things_to_do'])} place(s), "
                      f"{len(data['itinerary'])} day(s)")
             reg[f["id"]] = {"modified": self.g.modified(f["id"]), "hash": digest}
+
+
+# --- prices in euros: "≈ 25.39€" under a price in another currency, "Total: 123.45€" under each table ---
+
+RATES = "https://open.er-api.com/v6/latest/EUR"  # free, no key, every currency (the ECB's rates have no VND or LAK)
+SYMBOLS = {"US$": "USD", "HK$": "HKD", "€": "EUR", "$": "USD", "£": "GBP", "฿": "THB", "₫": "VND", "₭": "LAK",
+           "₺": "TRY", "₹": "INR", "¥": "JPY", "zł": "PLN"}
+CUR_RX = re.compile("|".join(re.escape(k) for k in SYMBOLS) + r"|\b[A-Z]{3}\b")
+NUM_RX = re.compile(r"\d[\d.,]*")
+EURO_RX = re.compile(r"≈\s*(\d[\d.,]*)\s*€")
+TOTAL = "Total: "
+STALE = 0.05  # a conversion this far off today's rate is written again (the price was changed); less is left alone
+
+
+def _number(num):
+    """'773760', '773.760', '1,234.56', '18,90' as a float: a separator before exactly 3 last digits groups thousands."""
+    num = num.rstrip(".,")
+    if "," in num and "." in num:
+        dec = max(num.rfind(","), num.rfind("."))
+        return float(re.sub(r"[.,]", "", num[:dec]) + "." + num[dec + 1:])
+    if re.fullmatch(r"\d{1,3}([.,]\d{3})+", num):
+        return float(re.sub(r"[.,]", "", num))
+    return float(num.replace(",", "."))
+
+
+def in_euros(text, rates):
+    """(euros, foreign) of a price cell's text: '10.45 USD', '773760 VND', '99€', '€64', '~€3', '20 USD + 5'; a part
+    without a currency has the cell's other one. (None, False) when it has no number or no currency known."""
+    parts, total, foreign = [], 0.0, False
+    for term in text.split("+"):
+        num, cur = NUM_RX.search(term), CUR_RX.search(term)
+        if num:
+            parts.append((_number(num.group()), SYMBOLS.get(cur.group(), cur.group()) if cur else None))
+    known = {c for _, c in parts if c}
+    if not parts or not known or (len(known) > 1 and any(c is None for _, c in parts)):
+        return None, False
+    for value, cur in parts:
+        cur = cur or next(iter(known))
+        if cur != "EUR" and cur not in rates:
+            return None, False
+        total += value if cur == "EUR" else value / rates[cur]
+        foreign |= cur != "EUR"
+    return round(total, 2), foreign
+
+
+def _euros(x):
+    return f"{x:.2f}€"
+
+
+def _plain_text(at, text, para=False):
+    style = {"updateTextStyle": {"range": {"startIndex": at, "endIndex": at + _len(text)}, "textStyle": {"bold": False, **CELL_FONT},
+                                 "fields": "bold,italic,underline,link,foregroundColor,weightedFontFamily"}}
+    if para:  # a line under a table: Normal text, not the heading it was split from
+        return [{"updateParagraphStyle": {"range": {"startIndex": at, "endIndex": at + _len(text)},
+                                          "paragraphStyle": {"namedStyleType": "NORMAL_TEXT", "alignment": "START"},
+                                          "fields": "namedStyleType,alignment"}},
+                {"updateTextStyle": {"range": {"startIndex": at, "endIndex": at + _len(text)}, "textStyle": {},
+                                     "fields": "bold,italic,underline,link,foregroundColor"}}]
+    return [style]
+
+
+def price_requests(doc, rates):
+    """Requests that keep, in each table with a Price column, a line "≈ x€" under every price in another currency
+    (written again when more than STALE off) and a line "Total: x€" right under the table (with the prices it could
+    not read). From the end of the doc backwards, so each request's indexes still hold."""
+    out = []
+    for t in sorted(tables(doc).values(), key=lambda t: -t["start"]):
+        col = t["cols"].get("price")
+        if col is None:
+            continue
+        cells, total, counted, skipped = [], 0.0, 0, []
+        for row in t["rows"][1:]:
+            cell = row[col]
+            paras = cell["paras"]
+            own = paras[-1] if len(paras) > 1 and EURO_RX.fullmatch(paras[-1]["text"]) else None
+            text = " ".join(q["text"] for q in (paras[:-1] if own else paras)).strip()
+            eur, foreign = in_euros(text, rates) if text else (None, False)
+            if eur is not None:
+                total, counted = total + eur, counted + 1
+            elif text:
+                skipped.append(text)
+            cells.append((cell, own, eur if foreign else None, paras))
+        line = None
+        if counted:
+            line = TOTAL + _euros(total) + (f" (not counted: {', '.join(skipped)})" if skipped else "")
+        after = t["after"]
+        if after and after["text"].startswith(TOTAL.strip()) and after["style"] == "NORMAL_TEXT":
+            if line is None:
+                out.append({"deleteContentRange": {"range": {"startIndex": after["start"], "endIndex": after["end"]}}})
+            elif after["text"] != line:
+                out.append({"deleteContentRange": {"range": {"startIndex": after["start"], "endIndex": after["end"] - 1}}})
+                out += [{"insertText": {"location": {"index": after["start"]}, "text": line}}] + _plain_text(after["start"], line, True)
+        elif line and after:
+            out += [{"insertText": {"location": {"index": after["start"]}, "text": line + "\n"}}] + _plain_text(after["start"], line, True)
+        for cell, own, eur, paras in reversed(cells):
+            want = "≈ " + _euros(eur) if eur is not None else None
+            if own:
+                old = _number(EURO_RX.fullmatch(own["text"]).group(1))
+                if want and abs(old - eur) <= STALE * max(eur, 0.01):
+                    continue
+                if want:  # the line's text replaced
+                    out.append({"deleteContentRange": {"range": {"startIndex": own["start"], "endIndex": own["end"] - 1}}})
+                    out += [{"insertText": {"location": {"index": own["start"]}, "text": want}}] + _plain_text(own["start"], want)
+                else:  # no foreign price left: the line goes, with the newline before it
+                    out.append({"deleteContentRange": {"range": {"startIndex": paras[-2]["end"] - 1, "endIndex": own["end"] - 1}}})
+            elif want:
+                at = cell["end"]
+                out += [{"insertText": {"location": {"index": at}, "text": "\n" + want}}] + _plain_text(at + 1, want)
+    return out
+
+
+def fetch_rates():
+    """{currency: units per euro}, today's."""
+    with urllib.request.urlopen(RATES, timeout=30) as r:
+        data = json.load(r)
+    if data.get("result") != "success":
+        raise ValueError(f"rates: {data.get('error-type') or data.get('result')}")
+    return data["rates"]
+
+
+def without_euros(text):
+    """A doc's text without the lines tripmail writes for prices: they change nothing about the trip."""
+    return re.sub(r"(?m)^.*\bTotal: [\d.]+€.*$", "", EURO_RX.sub("", text))
 
 
 # --- suggestions: things to do and an itinerary by Claude, in a section of the doc that is tripmail's own ---

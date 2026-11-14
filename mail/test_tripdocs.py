@@ -517,6 +517,132 @@ def test_reply_and_markdown_helpers():
     assert tripdocs._plain("| ✈️ U21234 | 03.05.31 07:00 |  | Booking code: ABC123, 26002 |") == "| ✈️ U21234 | 03.05.31 07:00 |  | |"
 
 
+# --- prices in euros ---
+
+RATES = {"USD": 1.16, "VND": 30500.0, "LAK": 25000.0}
+
+
+def flat_doc(blocks):
+    """(doc JSON with real indexes, its characters): blocks are ("p", text, style) or ("t", [[cell paragraphs]]);
+    table, row and cell starts take one index each, as in the API."""
+    i, body, chars = 1, [], ["\x00"]
+
+    def para(text, style="NORMAL_TEXT"):
+        nonlocal i
+        el = {"startIndex": i, "endIndex": i + len(text) + 1, "paragraph": {"paragraphStyle": {"namedStyleType": style},
+              "elements": [{"startIndex": i, "endIndex": i + len(text) + 1, "textRun": {"content": text + "\n"}}]}}
+        chars.extend(text + "\n")
+        i += len(text) + 1
+        return el
+
+    for b in blocks:
+        if b[0] == "p":
+            body.append(para(*b[1:]))
+            continue
+        el, rows = {"startIndex": i}, []
+        chars.append("\x00")
+        i += 1
+        for row in b[1]:
+            chars.append("\x00")
+            i += 1
+            cells = []
+            for cell in row:
+                start = i
+                chars.append("\x00")
+                i += 1
+                content = [para(t) for t in (cell if isinstance(cell, list) else [cell])]
+                cells.append({"startIndex": start, "endIndex": i, "content": content})
+            rows.append({"tableCells": cells})
+        el["table"], el["endIndex"] = {"tableRows": rows}, i
+        body.append(el)
+    return {"body": {"content": body}}, chars
+
+
+def applied(chars, requests):
+    chars = list(chars)
+    for q in requests:
+        if "insertText" in q:
+            k = q["insertText"]["location"]["index"]
+            chars[k:k] = list(q["insertText"]["text"])
+        elif "deleteContentRange" in q:
+            del chars[q["deleteContentRange"]["range"]["startIndex"]:q["deleteContentRange"]["range"]["endIndex"]]
+    return "".join(c if c != "\x00" else "|" for c in chars)
+
+
+def test_prices_in_euros():
+    ok = lambda text, eur, foreign: tripdocs.in_euros(text, RATES) == (eur, foreign)  # noqa: E731
+    assert ok("10.45 USD", 9.01, True) and ok("773760 VND", 25.37, True) and ok("773.760 VND", 25.37, True)
+    assert ok("99€", 99, False) and ok("€64", 64, False) and ok("~€3", 3, False) and ok("18,90€", 18.9, False)
+    assert ok("1,234.50 EUR", 1234.5, False) and ok("20 USD + 5", 21.55, True) and ok("$10", 8.62, True)
+    assert ok("130+45", None, False) and ok("12 XYZ", None, False) and ok("free", None, False)
+
+
+def test_euro_lines_and_totals_under_the_tables():
+    plan = ["Place", "Dates", "Accommodation", "Price", "Comments"]
+    blocks = [("p", "Plan", "HEADING_1"),
+              ("t", [plan, ["Vang Vieng", "20–21.12.26", "Hotel", "10.45 USD", ""], ["Hue", "", "", "99€", ""],
+                     ["X", "", "", "130+45", ""]]),
+              ("p", "Transport", "HEADING_1"), ("t", [["Transport", "Date", "Price", "Comments"], ["Bus", "", "", ""]]),
+              ("p", "")]
+    doc, chars = flat_doc(blocks)
+    out = applied(chars, tripdocs.price_requests(doc, RATES))
+    assert "10.45 USD\n≈ 9.01€\n|" in out and "99€\n|" in out and "≈ 85" not in out, out
+    assert "\nTotal: 108.01€ (not counted: 130+45)\nTransport\n" in out, out
+    assert out.count("Total") == 1, out  # nothing under a table without prices
+    reqs = tripdocs.price_requests(doc, RATES)
+    styled = [q for q in reqs if "updateParagraphStyle" in q]
+    assert styled and styled[0]["updateParagraphStyle"]["paragraphStyle"]["namedStyleType"] == "NORMAL_TEXT"
+    # written already: nothing to do, also when today's rate moved a little
+    blocks[1] = ("t", [plan, ["Vang Vieng", "", "", ["10.45 USD", "≈ 9.20€"], ""], ["Hue", "", "", "99€", ""], ["X", "", "", "130+45", ""]])
+    blocks.insert(2, ("p", "Total: 108.01€ (not counted: 130+45)"))
+    doc, chars = flat_doc(blocks)
+    assert tripdocs.price_requests(doc, RATES) == []
+    # the price changed: its line and the total are written again; a line left under a price in euros goes
+    blocks[1] = ("t", [plan, ["Vang Vieng", "", "", ["30 USD", "≈ 9.01€"], ""], ["Hue", "", "", ["99€", "≈ 5.00€"], ""]])
+    doc, chars = flat_doc(blocks)
+    out = applied(chars, tripdocs.price_requests(doc, RATES))
+    assert "30 USD\n≈ 25.86€\n|" in out and "|99€\n|" in out and "\nTotal: 124.86€\nTransport" in out, out
+    # no prices left: the total goes
+    blocks[1] = ("t", [plan, ["Hue", "", "", "", ""]])
+    doc, chars = flat_doc(blocks)
+    out = applied(chars, tripdocs.price_requests(doc, RATES))
+    assert "Total" not in out and "|\nTransport\n" in out, out
+
+
+def test_prices_only_in_coming_trips_that_changed():
+    class G:
+        def __init__(self):
+            self.batches, self.stamp = [], "2026-11-01T10:00:00Z"
+
+        def docs_in(self, folder):
+            return [{"id": "a", "name": "Asia", "modifiedTime": self.stamp}]
+
+        def get(self, doc_id):
+            return flat_doc([("p", "Plan", "HEADING_1"), ("t", [["Place", "Dates", "Accommodation", "Price", "Comments"],
+                                                                  ["Hue", "20–21.12.26", "", "10 USD", ""]]), ("p", "")])[0]
+
+        def batch(self, doc_id, requests):
+            self.batches.append(requests)
+
+        def modified(self, doc_id):
+            return "2026-11-14T10:00:00Z"
+
+    g, state, calls = G(), {}, []
+    docs = tripdocs.TripDocs(g, "folder", lambda m: None)
+    rates = lambda: calls.append(1) or RATES  # noqa: E731
+    docs.prices(state, datetime(2026, 11, 14, 12), rates)
+    assert len(g.batches) == 1 and state["docs"]["priced"]["a"] == "2026-11-14T10:00:00Z" and calls == [1]
+    g.stamp = "2026-11-14T10:00:00Z"
+    docs.prices(state, datetime(2026, 11, 14, 13), rates)  # its own edit: not looked at again
+    assert len(g.batches) == 1 and calls == [1]
+    g.stamp = "2026-11-14T12:50:00Z"
+    docs.prices(state, datetime(2026, 11, 14, 13), rates)  # the user may still be typing
+    assert len(g.batches) == 1
+    docs.prices(state, datetime(2027, 1, 14, 13), rates)  # the trip is over
+    assert len(g.batches) == 1
+    assert tripdocs.without_euros("| 10 USD ≈ 8.62€ |\nTotal: 8.62€\nmine") == "| 10 USD  |\n\nmine"
+
+
 if __name__ == "__main__":
     tests = [f for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
     for t in tests:

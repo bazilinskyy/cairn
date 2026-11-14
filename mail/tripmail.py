@@ -836,6 +836,8 @@ def run(args, cfg, sec):
             docs.run(work, airports, now(), cfg.get("home_airports", ["AMS", "EIN", "RTM"]))
             if extras and cfg.get("trip_todos", True):
                 trip_todos(work, docs.created, Logged(extras[0], "things", args.dry_run), now())
+            if cfg.get("trip_prices", True):
+                docs.prices(work, now())
             if cfg.get("trip_suggestions", True):
                 claude = cfg.get("claude_path") or shutil.which("claude") or str(Path.home() / ".local/bin/claude")
                 model = cfg.get("suggestions_model", "sonnet")
