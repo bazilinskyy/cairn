@@ -9,7 +9,7 @@ const path = require('path');
 
 const BATCH = /^[a-z0-9]{8,32}$/;
 
-// sources: { key: { label, what, accept, note, file (what it writes, for when it was last changed, also by the script
+// sources: { key: { label, what, accept, note, changed() (when its data last changed, for one read by itself), file (what it writes, for when it was last changed, also by the script
 // run by hand), run: async files => message } }
 function create({ dir, statusFile, sources, log = console.log }) {
   const running = new Map();  // key -> since (ms)
@@ -61,7 +61,7 @@ function create({ dir, statusFile, sources, log = console.log }) {
     const status = readStatus();
     const changed = f => { try { return fs.statSync(f).mtime.toISOString(); } catch (_) { return ''; } };
     return Object.entries(sources).map(([key, s]) => ({ key, label: s.label, what: s.what, accept: s.accept || '', note: s.note || '',
-      running: running.has(key), last: status[key] || null, changed: s.file ? changed(s.file) : '' }));
+      running: running.has(key), last: status[key] || null, changed: s.changed ? s.changed() : s.file ? changed(s.file) : '' }));
   };
   return { receive, start, list };
 }

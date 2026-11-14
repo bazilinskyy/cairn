@@ -1681,7 +1681,7 @@ const imports = require('./uploads').create({
     health: { file: path.join(DATA_DIR, 'health.json'), label: '❤️ Apple Health', accept: '.zip', what: 'Health app → your picture → Export All Health Data: export.zip, as it came',
       note: 'Replaces what was kept. Workouts Garmin or Strava do not have, with their routes; steps on the days Garmin has none.',
       run: files => py('health.py', [files.find(f => /\.zip$/i.test(f)) || files[0], ...outTo('health.json')]) },
-    wallet: { label: '🎫 Apple Wallet', accept: '.pkpass,.zip',
+    wallet: { label: '🎫 Apple Wallet', accept: '.pkpass,.zip', changed: () => wallet.changed(),
       get what() { return wallet.available() ? `This Mac's Wallet is read by itself (iCloud keeps every pass there, the expired ones too): ${wallet.list().length} passes. For a phone that shares no Wallet with this Mac: a pass → ⋯ → Share, the .pkpass files`
         : 'A pass → ⋯ → Share: the .pkpass files (or a zip of them)'; },
       note: 'Boarding passes give the flights their seats and booking codes, and with train and bus tickets list what may be missing (+ Add → 💡 To check); tickets to events go to their days.',

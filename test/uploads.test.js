@@ -33,3 +33,17 @@ test('a batch of files is read by its import, then removed; how it went is kept'
   assert.strictEqual(u.start('notes', 'zzzzzzzz').status, 400);  // nothing uploaded
   await assert.rejects(u.receive('nope', 'abcdefgh', 'a', Readable.from(['x'])), /no import called nope/);
 });
+
+test('a source read by itself tells when its data last changed; one that writes a file, by that file', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cairn-uploads-')), kept = path.join(dir, 'kept.json');
+  fs.writeFileSync(kept, '{}');
+  const u = uploads.create({ dir: path.join(dir, 'uploads'), statusFile: path.join(dir, 'uploads.json'), log: () => {}, sources: {
+    passes: { label: 'Passes', changed: () => '2026-03-04T05:06:07.000Z', run: async () => '' },
+    books: { label: 'Books', file: kept, run: async () => '' },
+    nothing: { label: 'Nothing yet', file: path.join(dir, 'none.json'), run: async () => '' }
+  } });
+  const [passes, books, nothing] = u.list();
+  assert.strictEqual(passes.changed, '2026-03-04T05:06:07.000Z');
+  assert.strictEqual(books.changed, fs.statSync(kept).mtime.toISOString());
+  assert.strictEqual(nothing.changed, '');
+});

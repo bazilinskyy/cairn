@@ -165,7 +165,9 @@ function create({ dir = () => 'auto', uploads, names = () => [], log = console.l
     fs.writeFileSync(path.join(uploads, `${String(d.serialNumber || path.basename(file, '.pkpass')).replace(/[^\w.-]+/g, '_').slice(0, 80)}.pkpass`), buf);
     return d;
   }
-  return { list, keep, folder, available: () => !!folder() && fs.existsSync(folder()) };
+  // when a pass last came or changed, read by itself or given: for the settings' "last changed"
+  const changed = () => { const t = entries().reduce((m, e) => Math.max(m, e.mtime), 0); return t ? new Date(t).toISOString() : ''; };
+  return { list, keep, folder, changed, available: () => !!folder() && fs.existsSync(folder()) };
 }
 
 module.exports = { create, parse, bcbp, readJson, dayOf, dayOfYear, yours };

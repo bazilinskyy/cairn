@@ -1,6 +1,10 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const wallet = require('../wallet');
 const { bcbp, parse, readJson, yours } = require('../wallet');
 
 test('a boarding pass\'s barcode: route, flight, day of the year, seat and booking code', () => {
@@ -30,4 +34,17 @@ test('your passes and those of the people you travel with', () => {
   const mine = n => yours({ passenger: n }, ['Jane Doe']);
   assert.deepStrictEqual(['DOE/JANEMRS', 'J.DOE', 'Doe/Jane A', 'DOE/JOHN', 'Johnny Doe', 'passenger_list', ''].map(mine),
     [true, true, true, false, false, true, true]);
+});
+
+test('when a pass last came: the newest of the Wallet folder and the passes given; none, nothing', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cairn-wallet-')), cards = path.join(dir, 'Cards'), given = path.join(dir, 'given');
+  fs.mkdirSync(path.join(cards, 'a.pkpass'), { recursive: true });
+  fs.mkdirSync(given);
+  const w = wallet.create({ dir: () => cards, uploads: given, log: () => {} });
+  fs.utimesSync(path.join(cards, 'a.pkpass'), new Date('2025-01-02T03:04:05Z'), new Date('2025-01-02T03:04:05Z'));
+  assert.strictEqual(w.changed(), '2025-01-02T03:04:05.000Z');
+  fs.writeFileSync(path.join(given, 'b.pkpass'), 'x');
+  fs.utimesSync(path.join(given, 'b.pkpass'), new Date('2026-06-07T08:09:10Z'), new Date('2026-06-07T08:09:10Z'));
+  assert.strictEqual(w.changed(), '2026-06-07T08:09:10.000Z');
+  assert.strictEqual(wallet.create({ dir: () => '', uploads: path.join(dir, 'none'), log: () => {} }).changed(), '');
 });

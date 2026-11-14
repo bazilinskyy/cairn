@@ -106,6 +106,9 @@ flowchart LR
     timeline["Google Maps<br>Timeline"]
     lastfm["Last.fm"]
     things["Things to-dos"]
+    downloads["Data downloads: Spotify,<br>Apple Health, bank, check-ins,<br>calendars, OV-chipkaart, Goodreads"]
+    wallet["Apple Wallet"]
+    github["GitHub commits"]
   end
 
   subgraph importers["Importers"]
@@ -114,6 +117,7 @@ flowchart LR
     gpy["imports/garmin.py<br>(nightly 02:30)"]
     srv["Cairn's own fetchers<br>(Strava, Last.fm, weather)"]
     ppy["imports/photos.py,<br>timeline.py, saved_places.py"]
+    ipy["Settings → Imports<br>(imports/*.py)"]
   end
 
   subgraph data["data/ (plain JSON)"]
@@ -121,6 +125,7 @@ flowchart LR
     acts["garmin, strava, tracks,<br>wellness, weather"]
     pics["photo_points, timeline,<br>saved_places"]
     more["lastfm, climb_ascents,<br>drives"]
+    life["payments, check-ins,<br>books, music, code, health"]
   end
 
   subgraph cairn["Cairn server"]
@@ -143,8 +148,11 @@ flowchart LR
   lastfm --> srv --> more
   photos --> ppy --> pics
   timeline --> ppy
+  downloads --> ipy --> life
+  wallet --> ipy
+  github --> once
   things -. read-only .-> build
-  trav & acts & pics & more --> places --> build
+  trav & acts & pics & more & life --> places --> build
   build --> map & tp & st & plan
   fm -. writes .-> out["Calendar events, check-in to-dos,<br>trip docs, Discord alerts"]
 ```
