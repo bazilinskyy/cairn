@@ -79,6 +79,11 @@ class FakeGoogle:
                 t = next(n for n, el in enumerate(doc["body"]["content"]) if el["startIndex"] == loc["tableStartLocation"]["index"])
                 table = self.docs[doc_id]["tables"][t]
                 table.insert(loc["rowIndex"] + 1, [{"text": ""} for _ in table[0]])
+            elif "deleteTableRow" in q:
+                loc = q["deleteTableRow"]["tableCellLocation"]
+                doc, _ = self._build(doc_id)
+                t = next(n for n, el in enumerate(doc["body"]["content"]) if el["startIndex"] == loc["tableStartLocation"]["index"])
+                del self.docs[doc_id]["tables"][t][loc["rowIndex"]]
 
     def create(self, folder, name):
         doc_id = f"new{len(self.created) + 1}"
@@ -285,8 +290,8 @@ def test_new_docs_are_noted_and_shared_by_link():
     assert docs.created == {"new1": "Portugal 2026"}
 
     class Calls(tripdocs.Google):
-        def __init__(self):
-            self.calls = []
+        def __init__(self, template=None):
+            self.calls, self.template = [], template
 
         def call(self, method, url, body=None, data=None, ctype="application/json"):
             self.calls.append((method, url.rsplit("/", 2)[-2:], body))
@@ -294,6 +299,10 @@ def test_new_docs_are_noted_and_shared_by_link():
     c = Calls()
     assert c.create("folder", "Faro 2027") == "doc9"
     assert ("POST", ["doc9", "permissions"], {"type": "anyone", "role": "writer", "allowFileDiscovery": False}) in c.calls
+    c = Calls("tpl")  # with a template doc: a copy of it in the folder, shared, and nothing else
+    assert c.create("folder", "Faro 2027") == "doc9"
+    assert [m for m, *_ in c.calls] == ["POST", "POST"]
+    assert c.calls[0] == ("POST", ["tpl", "copy"], {"name": "Faro 2027", "parents": ["folder"]})
 
 
 def test_restyle_gives_new_docs_the_users_look():
@@ -301,10 +310,10 @@ def test_restyle_gives_new_docs_the_users_look():
         return {"startIndex": start, "endIndex": start + len(text) + 1, "paragraph": {
             "paragraphStyle": {"namedStyleType": named, **style}, "elements": [{"textRun": {"content": text + "\n"}}]}}
 
-    def table(start, head, pad, widths):
+    def table(start, head, pad, widths, font={}):
         cell = lambda t: {"startIndex": start, "endIndex": start + 2, "tableCellStyle": {k: {"unit": "PT", **({"magnitude": pad} if pad else {})} for k in tripdocs.PADS},
-                          "content": [{"paragraph": {"elements": [{"startIndex": start + 1, "textRun": {"content": t + "\n"}}]}}]}
-        return {"startIndex": start, "table": {"tableRows": [{"tableCells": [cell(h) for h in head]}],
+                          "content": [{"paragraph": {"elements": [{"startIndex": start + 1, "textRun": {"content": t + "\n", "textStyle": font}}]}}]}
+        return {"startIndex": start, "endIndex": start + 60, "table": {"tableRows": [{"tableCells": [cell(h) for h in head]}],
                 "tableStyle": {"tableColumnProperties": [{"width": {"magnitude": w}} for w in widths]}}}
     pt = {"magnitude": 24, "unit": "PT"}
     made = {"body": {"content": [para(1, "Information", "HEADING_1"), para(13, "", spaceBelow=pt),
@@ -319,13 +328,28 @@ def test_restyle_gives_new_docs_the_users_look():
     pads = [x["updateTableCellStyle"] for x in r if "updateTableCellStyle" in x]
     assert [p["tableStartLocation"]["index"] for p in pads] == [20, 100]
     assert pads[0]["tableCellStyle"]["paddingTop"] == {"magnitude": 5, "unit": "PT"}
+    fonts = [x["updateTextStyle"] for x in r if "updateTextStyle" in x]
+    assert [(f["range"]["startIndex"], f["textStyle"]) for f in fonts] == [(20, tripdocs.CELL_FONT), (100, tripdocs.CELL_FONT)]
     widths = [(x["updateTableColumnProperties"]["tableStartLocation"]["index"], x["updateTableColumnProperties"]["tableColumnProperties"]["width"]["magnitude"])
               for x in r if "updateTableColumnProperties" in x]
     assert widths == [(20, w) for w in tripdocs.WIDTHS["plan"]] + [(100, w) for w in tripdocs.WIDTHS["transport"]]
     # the user's own doc: centred headings, padded cells, widths of their own: nothing to do
     own = {"body": {"content": [para(1, "Plan", "HEADING_1", alignment="CENTER"),
-                                table(6, ["Place", "Dates", "Accommodation", "Price", "Comments"], 5, [125, 88, 106, 72, 165])]}}
+                                table(6, ["Place", "Dates", "Accommodation", "Price", "Comments"], 5, [125, 88, 106, 72, 165], tripdocs.CELL_FONT)]}}
     assert tripdocs.restyle(own) == []
+    assert len(tripdocs.restyle(own, widths=True)) == 5  # the user's widths for a doc tripmail made earlier
+
+
+def test_template_keeps_the_layout_only():
+    g = FakeGoogle({"d": {"name": "Faro 2026", "tables": [
+        rows(PLAN, ["Faro", "01–03.12.26", "Hotel", "€90", ""], ["Lagos", "03–05.12.26", "", "", "x"],
+             ["Sagres", "05–06.12.26", "", "", ""], ["Tavira", "06–08.12.26", "", "", ""]),
+        rows(TRANSPORT, ["✈️ TP1", "01.12.26 10:00", "", ""])]}})
+    g.batch("d", tripdocs.template_requests(g.get("d")))
+    g.batch("d", tripdocs.pad(g.get("d")))
+    plan, transport = g.docs["d"]["tables"]
+    assert texts(plan) == [PLAN] + [["", "", "", "", ""]] * 3 and texts(transport) == [TRANSPORT] + [["", "", "", ""]] * 3
+
 
 class ParaGoogle(FakeGoogle):
     """A doc with a Plan table and then paragraphs, kept as one string with a style and a bullet flag per paragraph;

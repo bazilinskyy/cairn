@@ -5,9 +5,10 @@ tripmail fills them from the bookings it reads: a hotel or Airbnb goes into the 
 (empty cells only) or a new row in date order; a rental car into the Comments of the row of its pick-up day; each
 flight into a Transport row. A cancelled stay empties the Accommodation and Price cells. A trip without a doc gets
 a new one, named like "Portugal 2026", that anyone with its link can edit (and a Things to-do, by tripmail.py).
-Tables with no data yet get three empty rows. New docs look like the user's own: Normal text and Heading styles with
-no spacing of their own, the three headings centred, 5 pt cell padding and their column widths. Text the user
-wrote is never changed.
+Tables with no data yet get three empty rows. New docs are copies of a template doc (`python mail/tripdocs.py template
+<doc id>` makes one from a trip doc), else made from html and given the user's look: Normal text and Heading styles
+with no spacing of their own, the three headings centred, 5 pt cell padding, their column widths, table text in
+Helvetica Neue. Text the user wrote is never changed.
 
 Suggestions: when the doc of a trip that is not over yet changes (the user's edits or tripmail's), Claude (`claude
 -p`) is asked for things to do around where the user sleeps and a day-by-day itinerary, new to them: it is told where
@@ -39,6 +40,7 @@ body { font-family: Arial; font-size: 11pt; }
 h1 { font-size: 18pt; font-weight: bold; margin-top: 24pt; margin-bottom: 6pt; }
 h2 { font-size: 14pt; font-weight: bold; margin-top: 18pt; margin-bottom: 4pt; }
 h3 { font-size: 12pt; font-weight: bold; color: #666666; margin-top: 14pt; margin-bottom: 4pt; }
+td { font-family: "Helvetica Neue"; }
 </style>"""
 EMPTY_ROWS = 3  # a table with no data yet has this many empty rows to write in
 TEMPLATE = f"""<html><head>{STYLE}</head><body>
@@ -54,18 +56,22 @@ PAGE = {"updateDocumentStyle": {"documentStyle": {
     "pageSize": {"width": {"magnitude": 595.2755905511812, "unit": "PT"}, "height": {"magnitude": 841.8897637795277, "unit": "PT"}},
     "marginTop": CM, "marginBottom": CM, "marginLeft": CM, "marginRight": CM, "documentFormat": {"documentMode": "PAGELESS"}},
     "fields": "pageSize,marginTop,marginBottom,marginLeft,marginRight,documentFormat"}}
-# and their tables: 5 pt cell padding, these column widths (Drive's import gives 0 padding and even widths)
+# and their tables (those of "Asia winter 2026"): 5 pt cell padding, these column widths (Drive's import gives 0
+# padding and even widths), text in Helvetica Neue. A template doc (Google.template) has all of it, and moves the
+# tables a little to the left, which neither the Docs API nor the import can do.
 PADS = ("paddingTop", "paddingBottom", "paddingLeft", "paddingRight")
 PADDING = {"magnitude": 5, "unit": "PT"}
-WIDTHS = {"plan": (125.25, 87.75, 106.5, 72, 165), "transport": (177, 123, 47.25, 208.5)}
+WIDTHS = {"plan": (101.25, 104.25, 97.5, 48.75, 243), "transport": (142.5, 90.75, 48.75, 312)}
+CELL_FONT = {"weightedFontFamily": {"fontFamily": "Helvetica Neue", "weight": 400}}
 
 
 # --- Google (OAuth refresh token + JSON calls) ---
 
 class Google:
-    def __init__(self, client_file, token_file):
+    def __init__(self, client_file, token_file, template=None):
         self.client = json.loads(Path(client_file).read_text())["installed"]
         self.token_file, self.access, self.expires = Path(token_file), None, 0
+        self.template = template  # the id of a doc new docs are copies of (make_template), else they are made from html
 
     def _token(self):
         if not self.access or time.time() > self.expires - 60:
@@ -107,7 +113,12 @@ class Google:
             self.call("POST", DOCS + doc_id + ":batchUpdate", {"requests": requests})
 
     def create(self, folder, name, html=TEMPLATE):
-        """A new Google Doc in the folder, converted from html by Drive, on the page of the user's docs."""
+        """A new Google Doc in the folder: a copy of the template doc, or else converted from html by Drive and given
+        the look of the user's docs (PAGE, restyle)."""
+        if self.template:
+            doc_id = self.call("POST", f"{DRIVE}/{self.template}/copy", {"name": name, "parents": [folder]})["id"]
+            self.share(doc_id)
+            return doc_id
         boundary = "tripmail-boundary"
         meta = {"name": name, "mimeType": "application/vnd.google-apps.document", "parents": [folder]}
         data = (f"--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n{json.dumps(meta)}\r\n"
@@ -248,9 +259,10 @@ def _len(text):
 def _write(cell, text, link=None):
     """Insert text at the start of an empty cell, not bold, linked or not."""
     i = cell["start"]
-    style = {"bold": False, **({"link": {"url": link}} if link else {})}
+    style = {"bold": False, **CELL_FONT, **({"link": {"url": link}} if link else {})}
     return [{"insertText": {"location": {"index": i}, "text": text}},
-            {"updateTextStyle": {"range": {"startIndex": i, "endIndex": i + _len(text)}, "textStyle": style, "fields": "bold,link"}}]
+            {"updateTextStyle": {"range": {"startIndex": i, "endIndex": i + _len(text)}, "textStyle": style,
+                                 "fields": "bold,link,weightedFontFamily"}}]
 
 
 def car_requests(cell, car):
@@ -258,7 +270,8 @@ def car_requests(cell, car):
     i, lead = (cell["end"], " ") if cell["text"] else (cell["start"], "")
     text = lead + "Rental car " + car_text(car)
     out = [{"insertText": {"location": {"index": i}, "text": text}},
-           {"updateTextStyle": {"range": {"startIndex": i, "endIndex": i + _len(text)}, "textStyle": {"bold": False}, "fields": "bold,link"}}]
+           {"updateTextStyle": {"range": {"startIndex": i, "endIndex": i + _len(text)}, "textStyle": {"bold": False, **CELL_FONT},
+                                "fields": "bold,link,weightedFontFamily"}}]
     if car["link"]:
         out.append({"updateTextStyle": {"range": {"startIndex": i + _len(lead), "endIndex": i + _len(lead + "Rental car")},
                                         "textStyle": {"link": {"url": car["link"]}}, "fields": "link"}})
@@ -290,10 +303,11 @@ def add_row(table, after):
                                                        "rowIndex": after, "columnIndex": 0}, "insertBelow": True}}]
 
 
-def restyle(doc):
+def restyle(doc, widths=False):
     """Requests that make a doc made from html look like the user's own: plain Normal text and Heading paragraphs
     (no spacing of their own over the style, which Drive's import leaves), the Information, Plan and Transport
-    headings centred, 5 pt padding in every table cell and the user's column widths where the import's even ones are."""
+    headings centred, 5 pt padding in every table cell, table text in CELL_FONT, and the user's column widths where
+    the import's even ones are (or always, with widths)."""
     out, kinds = [], {t["start"]: k for k, t in tables(doc).items()}
     for el in doc["body"]["content"]:
         if "paragraph" in el:
@@ -314,13 +328,56 @@ def restyle(doc):
             if any(c.get(k, PADDING).get("magnitude", 0) != PADDING["magnitude"] for c in cells for k in PADS):
                 out.append({"updateTableCellStyle": {"tableStartLocation": at, "tableCellStyle": {k: PADDING for k in PADS},
                                                      "fields": ",".join(PADS)}})
+            runs = [e["textRun"] for r in el["table"]["tableRows"] for c in r["tableCells"] for p in c.get("content", [])
+                    for e in p.get("paragraph", {}).get("elements", []) if "textRun" in e]
+            if any(r.get("textStyle", {}).get("weightedFontFamily", {}).get("fontFamily") != CELL_FONT["weightedFontFamily"]["fontFamily"]
+                   for r in runs):
+                out.append({"updateTextStyle": {"range": {"startIndex": el["startIndex"], "endIndex": el["endIndex"]},
+                                                "textStyle": CELL_FONT, "fields": "weightedFontFamily"}})
             cols = el["table"].get("tableStyle", {}).get("tableColumnProperties", [])
-            widths = WIDTHS.get(kinds.get(el["startIndex"]), ())
-            if len(widths) == len(cols) and len({c.get("width", {}).get("magnitude") for c in cols}) == 1:
+            want = WIDTHS.get(kinds.get(el["startIndex"]), ())
+            have = [c.get("width", {}).get("magnitude") for c in cols]
+            if len(want) == len(cols) and list(want) != have and (widths or len(set(have)) == 1):
                 out += [{"updateTableColumnProperties": {"tableStartLocation": at, "columnIndices": [i], "fields": "width,widthType",
                          "tableColumnProperties": {"widthType": "FIXED_WIDTH", "width": {"magnitude": w, "unit": "PT"}}}}
-                        for i, w in enumerate(widths)]
+                        for i, w in enumerate(want)]
     return out
+
+
+def template_requests(doc):
+    """Requests that empty a trip doc down to its layout: the Information section to one empty line, each table to its
+    header row and EMPTY_ROWS empty rows, nothing after the last table; every style stays. From the end backwards,
+    so each request's place holds."""
+    body = doc["body"]["content"]
+    plain = lambda at: [{"updateParagraphStyle": {"range": {"startIndex": at, "endIndex": at + 1},
+                                                  "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"}, "fields": "namedStyleType"}},
+                        {"deleteParagraphBullets": {"range": {"startIndex": at, "endIndex": at + 1}}}]
+    out, last = [], max(i for i, el in enumerate(body) if "table" in el)
+    if body[-1]["endIndex"] - 1 > body[last]["endIndex"]:
+        out += [{"deleteContentRange": {"range": {"startIndex": body[last]["endIndex"], "endIndex": body[-1]["endIndex"] - 1}}}]
+        out += plain(body[last]["endIndex"])
+    for t in sorted(tables(doc).values(), key=lambda t: -t["start"]):
+        out += [{"deleteTableRow": {"tableCellLocation": {"tableStartLocation": {"index": t["start"]}, "rowIndex": r, "columnIndex": 0}}}
+                for r in range(len(t["rows"]) - 1, EMPTY_ROWS, -1)]
+        out += [{"deleteContentRange": {"range": {"startIndex": c["start"], "endIndex": c["end"]}}}
+                for row in reversed(t["rows"][1:EMPTY_ROWS + 1]) for c in reversed(row) if c["end"] > c["start"]]
+    heads = [el for el in body if "paragraph" in el and el["paragraph"]["paragraphStyle"].get("namedStyleType") == "HEADING_1"]
+    info = next((i for i, el in enumerate(body) if el in heads[:1]), None)
+    if info is not None and info + 1 < len(body) and body[info + 1] not in heads and "paragraph" in body[info + 1]:
+        start, end = body[info + 1]["startIndex"], next(el for el in body[info + 1:] if el in heads or "table" in el)["startIndex"] - 1
+        if end > start:
+            out.append({"deleteContentRange": {"range": {"startIndex": start, "endIndex": end}}})
+        out += plain(start)
+    return out
+
+
+def make_template(google, source, name="Trip template (tripmail)"):
+    """A copy of the trip doc source, emptied by template_requests and padded to EMPTY_ROWS rows, in My Drive (not in
+    the trips folder, so it is not taken for a trip); returns its id, for "trip_docs_template" in config."""
+    doc_id = google.call("POST", f"{DRIVE}/{source}/copy", {"name": name, "parents": ["root"]})["id"]
+    google.batch(doc_id, template_requests(google.get(doc_id)))
+    google.batch(doc_id, pad(google.get(doc_id)))
+    return doc_id
 
 
 def over(name, days, today):
@@ -847,5 +904,9 @@ if __name__ == "__main__":
         d = Path.home() / ".flightmail"  # tripmail's folder: by its older name for an install from before the rename
         d = d if d.is_dir() else Path.home() / ".tripmail"
         authorize(d / "google_client.json", d / "google_token.json")
+    elif sys.argv[1:2] == ["template"] and len(sys.argv) == 3:
+        d = Path.home() / ".flightmail"
+        d = d if d.is_dir() else Path.home() / ".tripmail"
+        print(make_template(Google(d / "google_client.json", d / "google_token.json"), sys.argv[2]))
     else:
-        sys.exit("usage: python mail/tripdocs.py auth")
+        sys.exit("usage: python mail/tripdocs.py auth | template <id of a trip doc to copy the layout of>")
