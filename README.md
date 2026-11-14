@@ -61,7 +61,7 @@ Two parts:
 | ![A trip day by day: rides with their weather, trains, where you slept, sleep and heart rate](docs/trip-story.jpg)<br><sub>A trip day by day</sub> | ![A year in review](docs/year.jpg)<br><sub>A year in review</sub> |
 | ![A town's page with its own map and photos](docs/city.jpg)<br><sub>A town's page</sub> | ![A country's page: its flag, its map with everything there, its towns](docs/country.jpg)<br><sub>A country's page</sub> |
 | ![A climb's page: the ways up, your ride up coloured by gradient, your times against your FTP, a top climber and the record](docs/climb.jpg)<br><sub>A climb's page: its ways up, your times, the record</sub> | ![Where you slept: the stays alone, by kind of bed (hotels, hostels, Airbnb, friends' places, Couchsurfing, camping)](docs/map-stays.jpg)<br><sub>Where you slept, by kind of bed</sub> |
-| ![What you spent: on stays, and by card and cash, per year, country, town and trip](docs/spending.jpg)<br><sub>What you spent: stays, card and cash</sub> | ![Placing photos that have no place: by day, in a town or on the map, or by Cairn itself](docs/place-photos.jpg)<br><sub>Placing photos that have no place</sub><br><br>![An airline's page: its logo and codes, a map of its routes, your flights, distance and hours in the air with it](docs/airline.jpg)<br><sub>An airline's page</sub> |
+| ![What you spent: on stays, and by card and cash, per year, country, town and trip](docs/spending.jpg)<br><sub>What you spent: stays, card and cash</sub> | ![Placing photos that have no place: by day, in a town or on the map, or by Cairn itself](docs/place-photos.jpg)<br><sub>Placing photos that have no place</sub><br><br>![An airline's page: its logo and codes, a map of its routes, your flights, distance and hours in the air with it](docs/airline.jpg)<br><sub>An airline's page</sub><br><br>![An activity's page: its route on the map, with its numbers, profile, climbs, photos and music below](docs/activity.jpg)<br><sub>An activity's page</sub> |
 
 <p align="center"><img src="docs/replay.jpg" alt="A trip's replay: the trip drawn on the map day by day, a photo where it was taken" width="900"><br><sub>A trip's replay, to watch or save as a video</sub></p>
 
@@ -973,6 +973,8 @@ At most one request a second goes to each service; a service that is down is tri
 Moving to MongoDB later only needs the data layer in `app.js` (the `flights` array, `saveFlights()` and `init()`) replaced by a Mongoose model; the API routes stay the same.
 
 ## API
+
+Answers of 16 kB or more go out gzipped to a client that asks for it (`Accept-Encoding: gzip`, as browsers do); smaller ones, and all for a client that does not, as plain JSON.
 
 | Method | Path | Description |
 |--------|------|-------------|
