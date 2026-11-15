@@ -301,6 +301,25 @@ def fill(table, r, values):
     return out
 
 
+def replace_cells(table, r, values):
+    """Requests that make a planned row (planned) the booked one: its Transport and Date cells rewritten, the price
+    written when its cell is empty, the booking code put above your comments; last cell first."""
+    out = []
+    for col in sorted((c for c in values if c in table["cols"]), key=lambda c: -table["cols"][c]):
+        cell, text = table["rows"][r][table["cols"][col]], values[col]
+        if not text:
+            continue
+        if col in ("transport", "date"):
+            if cell["end"] > cell["start"]:
+                out.append({"deleteContentRange": {"range": {"startIndex": cell["start"], "endIndex": cell["end"]}}})
+            out += _write(cell, text)
+        elif not cell["text"]:
+            out += _write(cell, text)
+        elif col == "comments" and text not in cell["text"]:
+            out += _write(cell, text + "\n")
+    return out
+
+
 def clear(table, r, cols):
     out = []
     for col in sorted((c for c in cols if c in table["cols"]), key=lambda c: -table["cols"][c]):
@@ -452,15 +471,41 @@ def car_row(plan, car):
     return best
 
 
+def _ends(title):
+    """The two ends of a Transport title, run together without accents, or None: "✈️ VJ341: Ho Chi Minh City -
+    Phuquoc" -> ("hochiminhcity", "phuquoc"), "Phú Quốc - Nha Trang" -> ("phuquoc", "nhatrang")."""
+    parts = re.split(r"\s[-–—]\s|\s*→\s*", title.split(": ", 1)[-1])
+    ends = tuple(re.sub(r"[^a-z]", "", _norm(p.replace("Đ", "D").replace("đ", "d"))) for p in parts)
+    return ends if len(ends) == 2 and all(ends) else None
+
+
+def planned(row, cols, leg):
+    """Whether a row of yours plans this trip before it was booked: its first cell names the same two ends in the
+    same order ("Phú Quốc - Nha Trang" for "✈️ 9G2952: Phuquoc - Nhatrang"; one may hold the other, as a station's
+    name its town's) and no flight or train of its own (no ":"), and its Date cell is that day without a time."""
+    first, mine = row[0]["text"], _ends(leg["title"])
+    date_cell = row[cols["date"]]["text"] if "date" in cols else ""
+    theirs = _ends(first) if ":" not in first else None
+    days = parse_dates(date_cell)
+    return bool(mine and theirs and days and days[0] == _when(leg["date"])[0] and not re.search(r"\d:\d\d", date_cell)
+                and all(a in b or b in a for a, b in zip(mine, theirs)))
+
+
 def leg_row(transport, leg):
     """("done", row) if a Transport row has this trip on this day (same title, or same flight or train number);
-    else its place in time order: ("fill", row) when that row is empty, or ("insert", row to insert below)."""
+    ("replace", row) for a row of yours that planned it (planned); else its place in time order: ("fill", row) when
+    that row is empty, or ("insert", row to insert below)."""
     rows, me, after = transport["rows"], _when(leg["date"]), 0
     for r, row in enumerate(rows[1:], 1):
         text = " ".join(c["text"] for c in row)
         same = row[0]["text"] == leg["title"] or (leg["flight"] and leg["flight"] in row[0]["text"].replace(" ", ""))
         if same and leg["date"][:8] in text:
             return "done", r
+    for r, row in enumerate(rows[1:], 1):
+        if planned(row, transport["cols"], leg):
+            return "replace", r
+    for r, row in enumerate(rows[1:], 1):
+        text = " ".join(c["text"] for c in row)
         when = _when(text)
         if when and when <= me:
             after = r
@@ -608,6 +653,8 @@ class TripDocs:
                       "comments": "Booking code: " + ", ".join(spec["codes"]) if spec["codes"] else ""}
             if how == "fill":
                 self.batch(doc_id, fill(t, r, values))
+            elif how == "replace":
+                self.batch(doc_id, replace_cells(t, r, values))
             elif how == "insert":
                 self._insert_and_fill(doc_id, "transport", r, values)
             return
@@ -668,8 +715,10 @@ class TripDocs:
         elif spec["what"] == "leg":
             t = self._table(doc_id, "transport")
             how, r = leg_row(t, spec) if t else (None, None)
-            if how == "done":
-                self.batch(doc_id, clear(t, r, list(t["cols"])))
+            if how == "done":  # your comments stay (from a row you planned it in); tripmail's booking code goes
+                comments = t["rows"][r][t["cols"]["comments"]]["text"] if "comments" in t["cols"] else ""
+                mine = not comments or re.fullmatch(r"Booking code: [^\n]*", comments)
+                self.batch(doc_id, clear(t, r, [c for c in t["cols"] if c != "comments" or mine]))
         else:
             self.log(f"rental car {spec['code']} cancelled: check doc {self.names.get(doc_id, doc_id)!r} by hand")
 

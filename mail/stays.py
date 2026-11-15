@@ -122,7 +122,8 @@ def _booking(subject, lines, html, received):
     cancelled = re.search(r"reservation at (.+?) has been cancell?ed", text) or re.match(r"Booking cancell?ed for", subject)
     if not (confirmed or cancelled):
         return None
-    code = _after(lines, r"Booking number") or _after(lines, r"Confirmation number")
+    code = _after(lines, r"Booking number") or _after(lines, r"Confirmation number") \
+        or _after(lines, r"Confirmation(?=\s*:)")  # the newer layout (partner offers): "Confirmation: 1111222233334444555"
     name = re.sub(r"^.*?(?:confirmed at|cancell?ed for)\s+", "", subject)
     address = next((l for l in lines if l.count(",") >= 3 and re.search(r"\d", l) and l != name and "expecting you" not in l), "")
     parts = [p.strip() for p in address.split(",")]
@@ -133,8 +134,9 @@ def _booking(subject, lines, html, received):
     if cancelled:
         return Stay("cancel", "stay", **common)
     room = next((l for l in lines if re.match(r"(?i)\d+\s.*\b(room|bed|apartment|studio|suite|dorm|house|villa)\b", l)), "")
-    return Stay("booking", "stay", **common, type=type_of(name, room), price=price(_after(lines, r"Total price") or _after(lines, r"Price")),
-                link=_link(html, r"^Modify your booking$", r"booking\.com/confirmation"))
+    return Stay("booking", "stay", **common, type=type_of(name, room),
+                price=price(_after(lines, r"Total price") or _after(lines, r"You paid") or _after(lines, r"Price")),
+                link=_link(html, r"^(?:Modify your booking|See confirmation online)", r"booking\.com/(?:tpi_)?confirmation"))
 
 
 def _airbnb(subject, lines, html, received):

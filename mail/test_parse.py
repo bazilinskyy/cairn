@@ -319,6 +319,7 @@ def test_booking_price():
     assert parse.booking_price(["Ticket price: 13.90€"]) == "13.90€"
     assert parse.booking_price(["Totaalbedrag € 1.234,56"]) == "1234.56€"
     assert parse.booking_price(["Booking code ABC123", "PIN 708383"]) == ""
+    assert parse.booking_price(["Ticket Price Taxes and Fees", "270.00 EUR EUR 954.60", "Payment Amount", "EUR 1,224.60"]) == "1224.60€"
     assert parsed("booking_flights_jsonld").price == "29.92€"
 
 

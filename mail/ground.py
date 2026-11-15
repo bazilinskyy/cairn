@@ -5,10 +5,12 @@ each has a small rule. A station's time zone comes from the biggest GeoNames tow
 name ("Bruxelles Midi" -> Brussels), else the home time zone.
 """
 import csv
+import io
 import re
 import subprocess
 import tempfile
 import unicodedata
+import zipfile
 from dataclasses import replace
 from datetime import datetime, timedelta
 from math import cos, radians
@@ -256,17 +258,30 @@ PDF_TEXT = 'function run(a){ObjC.import("PDFKit");var d=$.PDFDocument.alloc.init
            'return d.isNil()?"":d.string.js}'
 
 
+def _pdfs(msg):
+    """The bytes of each PDF attached to the email, also those inside a zip (China Southern zips its itinerary)."""
+    for part in msg.walk():
+        name, kind = (part.get_filename() or "").lower(), part.get_content_type()
+        if kind == "application/pdf" or name.endswith(".pdf"):
+            yield part.get_payload(decode=True) or b""
+        elif kind in ("application/zip", "application/x-zip-compressed") or name.endswith(".zip"):
+            try:
+                with zipfile.ZipFile(io.BytesIO(part.get_payload(decode=True) or b"")) as z:
+                    for info in z.infolist():
+                        if info.filename.lower().endswith(".pdf") and info.file_size < 20_000_000:
+                            yield z.read(info)
+            except (zipfile.BadZipFile, OSError):
+                continue
+
+
 def pdf_lines(msg):
     """Lines of text of the email's PDF attachments, read by macOS PDFKit (through osascript); [] elsewhere or when
     a PDF cannot be read."""
     out = []
-    for part in msg.walk():
-        name = (part.get_filename() or "").lower()
-        if part.get_content_type() != "application/pdf" and not name.endswith(".pdf"):
-            continue
+    for data in _pdfs(msg):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "attachment.pdf"
-            path.write_bytes(part.get_payload(decode=True) or b"")
+            path.write_bytes(data)
             try:
                 r = subprocess.run(["osascript", "-l", "JavaScript", "-e", PDF_TEXT, str(path)], capture_output=True,
                                    text=True, timeout=60)

@@ -1,0 +1,37 @@
+From: Booking.com <noreply@booking.com>
+Subject: Thanks! Your booking is confirmed at Test Guesthouse
+Date: Fri, 13 Nov 2026 21:14:38 +0000
+To: jan.testers@example.com
+Content-Type: text/html; charset="utf-8"
+MIME-Version: 1.0
+
+<html><body>
+<table role="presentation"><tr><td>
+<p>Confirmation: <strong>1111222233334444555</strong></p>
+<p>PIN: <strong>000000</strong></p>
+<h1>Thanks, Jan! Your booking in Bangkok is confirmed.</h1>
+<p>Test Guesthouse is expecting you on Wed, Dec 16</p>
+<p>Use the link below to easily modify or cancel your booking</p>
+<p><a href="https://secure.booking.com/tpi_confirmation.en-us.html?aid=1;auth_key=TESTKEY">See confirmation online &raquo;</a></p>
+<p>Check-in number 9999000011112222</p>
+<h2>About your booking</h2>
+<p>Partner Offer</p>
+<p>Your booking is with TEST PARTNER LIMITED.</p>
+<p>8.5</p>
+<p><a href="https://example.com/hotel">Test Guesthouse</a></p>
+<p>1 Test Road, Dusit, 10300 Bangkok, Thailand</p>
+<p>Phone: +66 00 000 0000</p>
+<h2>Booking details</h2>
+<p>2 nights,</p><p>1 room</p>
+<p>Room type</p><p>Double Fan Room with Shared Bathroom</p>
+<p>Guest name</p><p>Jan Testers</p>
+<p>Check-in</p><p>Wednesday, December 16, 2026 (14:00-23:30)</p>
+<p>Check-out</p><p>Friday, December 18, 2026 (12:00)</p>
+<p>Cancellation cost</p><p>Until 23:59 on December 8, 2026</p><p>FREE</p>
+<p>From 00:00 on December 9, 2026</p><p>&euro; 20.00</p>
+<p>Meals</p><p>No meal is included in this room rate.</p>
+<p>You paid</p><p>&euro; 20.00</p><p>Includes taxes and fees</p>
+<p><a href="https://example.com/manage">Manage my booking &raquo;</a></p>
+<p>Booking.com</p><p>Oosterdokskade 163</p><p>1011 DL Amsterdam</p><p>The Netherlands</p>
+</td></tr></table>
+</body></html>

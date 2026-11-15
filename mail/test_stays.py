@@ -15,6 +15,13 @@ def load(name):
     return stays.parse_email(email.message_from_bytes((FIX / name).read_bytes()))
 
 
+def test_booking_partner_offer():  # the newer layout: "Confirmation:", "You paid", "See confirmation online"
+    s = load("booking_partner_offer.eml")
+    assert (s.kind, s.provider, s.code, s.place, s.country) == ("booking", "Booking.com", "1111222233334444555", "Bangkok", "Thailand"), s
+    assert (s.start, s.end, s.price) == (date(2026, 12, 16), date(2026, 12, 18), "20€"), s
+    assert s.link == "https://secure.booking.com/tpi_confirmation.en-us.html?aid=1;auth_key=TESTKEY", s
+
+
 def test_booking_hotel():
     s = load("hotel_booking.eml")
     assert (s.kind, s.what, s.provider, s.code) == ("booking", "stay", "Booking.com", "5000000001"), s

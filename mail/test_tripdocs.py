@@ -544,6 +544,38 @@ def test_transport_prices_and_a_price_that_comes_later():
     assert texts(g.docs["d1"]["tables"][1])[2][3] == "Booking code: XYZ789 Window seats"  # your text still there
 
 
+def test_a_booked_flight_takes_over_the_row_you_planned_it_in():
+    g = FakeGoogle({"d1": {"name": "Asia 2026", "tables": [rows(PLAN, ["Phú Quốc", "25–28.12.26", "", "", ""]), rows(
+        TRANSPORT, ["Phú Quốc - Nha Trang", "28.12.26", "", "Only one airline flies direct"],
+        ["Phú Quốc - Nha Trang", "29.12.26", "", "another day: not this one"],
+        ["Nha Trang - Da Lat", "28.12.26", "", ""])]}})
+    seen = {"9G2952@2026-12-28": {"flight": "9G2952", "dep": "PQC", "arr": "CXR", "dep_local": "2026-12-28T12:10:00",
+                                  "arr_local": "2026-12-28T13:30:00", "codes": ["F45IGA"], "price": "75.30€"}}
+    ap = {**AIRPORTS, "PQC": Airport("Phu Quoc International Airport", "Phuquoc", "Asia/Saigon", "Vietnam"),
+          "CXR": Airport("Cam Ranh International Airport", "Nhatrang", "Asia/Saigon", "Vietnam")}
+    state = {"seen": seen}
+    docs = tripdocs.TripDocs(g, "folder", lambda m: None)
+    docs.run(state, ap, NOW, ["AMS"])
+    got = texts(g.docs["d1"]["tables"][1])
+    assert got[1] == ["✈️ 9G2952: Phuquoc - Nhatrang", "28.12.26 12:10", "75.30€", "Booking code: F45IGA\nOnly one airline flies direct"], got
+    assert got[2:] == [["Phú Quốc - Nha Trang", "29.12.26", "", "another day: not this one"],
+                       ["Nha Trang - Da Lat", "28.12.26", "", ""]], got  # no row added, the others left alone
+    del seen["9G2952@2026-12-28"]  # cancelled: the booking goes, your comment stays
+    docs.run(state, ap, NOW, ["AMS"])
+    assert texts(g.docs["d1"]["tables"][1])[1] == ["", "", "", "Booking code: F45IGA\nOnly one airline flies direct"]
+
+
+def test_planned_rows():
+    leg = {"title": "🚆 D88: Vientiane Railway Station - Luang Prabang Railway Station", "date": "21.12.26 08:00"}
+    row = lambda a, b: [{"text": a}, {"text": b}]  # noqa: E731
+    cols = {"transport": 0, "date": 1}
+    assert tripdocs.planned(row("Vientiane - Luang Prabang", "21.12.26"), cols, leg)
+    assert not tripdocs.planned(row("Luang Prabang - Vientiane", "21.12.26"), cols, leg)  # the other way
+    assert not tripdocs.planned(row("Vientiane - Luang Prabang", "21.12.26 08:00"), cols, leg)  # a booked one
+    assert not tripdocs.planned(row("✈️ QV101: Vientiane - Luang Prabang", "21.12.26"), cols, leg)
+    assert tripdocs._ends("Đà Nẵng → Hội An") == ("danang", "hoian")
+
+
 # --- prices in euros ---
 
 RATES = {"USD": 1.16, "VND": 30500.0, "LAK": 25000.0, "HKD": 9.0}

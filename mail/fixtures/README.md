@@ -37,3 +37,4 @@ tables and wording are the airline's own.
 | `airbnb_cancel.eml` | Airbnb cancellation | written by hand; the confirmation code only in the receipt link |
 | `discovercars_nl.eml` | DiscoverCars rental car (Dutch) | written by hand in the same layout |
 | `vipcars_nl.eml` | VIPCars pick-up reminder (Dutch) | written by hand in the same layout; comma decimals (`THB 4.500,00`) |
+| `booking_partner_offer.eml` | Booking.com confirmation in the newer layout (partner offers: "Confirmation:", "You paid", "See confirmation online") | written by hand in the same layout |

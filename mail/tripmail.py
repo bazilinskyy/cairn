@@ -980,12 +980,13 @@ def main(argv=None):
             store = EventKit.EKEventStore.alloc().init()
             for c in store.calendarsForEntityType_(EventKit.EKEntityTypeEvent):
                 print(f"account: {c.source().title()!r:30} calendar: {c.title()!r}")
-        elif args.command == "history":
-            history(args, cfg, sec)
         elif args.command == "events":
             dump_events(args, cfg)
-        else:
-            run(args, cfg, sec)
+        else:  # one run at a time: the hourly one and one started by hand both edit the state and the docs, and a
+            import fcntl  # doc edited by another run in between gets text at the wrong places; the second one waits
+            with open(home() / "run.lock", "w") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+                history(args, cfg, sec) if args.command == "history" else run(args, cfg, sec)
     except Exception as e:
         log(f"FAILED: {e!r}")
         traceback.print_exc()

@@ -572,7 +572,7 @@ def named_airports(lines, flight, airports):
 
 # the line that gives a booking's price: its total first, else a price or fare
 PRICE_LABELS = (r"(?:grand |order |booking )?total(?: price| amount| cost| fare| paid| charged| to pay)?|totaal(?:bedrag|prijs)?|"
-                r"amount (?:paid|charged)|you paid|betaald bedrag|te betalen(?: bedrag)?|paid",
+                r"(?:payment )?amount (?:paid|charged|due|payable)|payment amount|you paid|betaald bedrag|te betalen(?: bedrag)?|paid",
                 r"(?:ticket |total )?(?:price|prijs|fare)s?")
 
 
@@ -636,8 +636,10 @@ def parse_email(msg, airports, airlines, places=None, home_tz="Europe/Amsterdam"
         legs = text_legs
     import ground
     pdf = None
-    if any(l.flight and not l.dep and not l.arr for l in legs):  # no codes and towns in another language: their names,
-        fixed = []                                                # in the email, else in its PDF (Vliegwinkel)
+    # one flight with no airport codes, its towns in another language: the airports' names, in the email, else in its
+    # PDF (Vliegwinkel). Not for several flights: their names near each flight number are a mix of all of them
+    if len(legs) == 1 and legs[0].flight and not legs[0].dep and not legs[0].arr:
+        fixed = []
         for l in legs:
             if l.flight and not l.dep and not l.arr:
                 found = named_airports(lines, l.flight, airports)
