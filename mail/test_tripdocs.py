@@ -576,6 +576,16 @@ def test_planned_rows():
     assert tripdocs._ends("Đà Nẵng → Hội An") == ("danang", "hoian")
 
 
+def test_a_stay_goes_to_the_row_it_shares_nights_with():
+    plan = {"cols": {"place": 0, "dates": 1, "stay": 2}, "rows": [[{"text": h, "links": []} for h in ("Place", "Dates", "Stay")]] + [
+        [{"text": a, "links": []}, {"text": b, "links": []}, {"text": "", "links": []}]
+        for a, b in [("North Phú Quốc", "25–26.12.26"), ("South Phú Quốc", "26–28.12.26"), ("Nha Trang", "28–29.12.26")]]}
+    stay = lambda s, e: {"code": "X", "link": "", "place": "Phú Quốc", "start": s, "end": e}  # noqa: E731
+    assert tripdocs.stay_row(plan, stay("2026-12-26", "2026-12-28")) == ("fill", 2)
+    assert tripdocs.stay_row(plan, stay("2026-12-25", "2026-12-26")) == ("fill", 1)
+    assert tripdocs.stay_row(plan, stay("2026-12-25", "2026-12-28")) == ("fill", 2)  # two nights in the south, one in the north
+
+
 # --- prices in euros ---
 
 RATES = {"USD": 1.16, "VND": 30500.0, "LAK": 25000.0, "HKD": 9.0}

@@ -433,18 +433,24 @@ def stay_row(plan, stay):
     """("fill", row) for the Plan row that already links to the booking, else for the row of this place and dates;
     else its place in date order: ("fill", row) when that row is empty, or ("insert", row to insert below). Filling
     writes only empty cells."""
-    after = 0
+    after, best, most = 0, None, 0
+    start, end = date.fromisoformat(stay["start"]), date.fromisoformat(stay["end"])
     for r, row in enumerate(plan["rows"][1:], 1):
         cell = lambda name: row[plan["cols"][name]] if name in plan["cols"] else {"text": "", "links": []}
         if any(stay["code"] in l or l == stay["link"] for l in cell("stay")["links"]):
             return "fill", r
         days = parse_dates(cell("dates")["text"])
-        if days and days[0] <= date.fromisoformat(stay["start"]):
+        if days and days[0] <= start:
             after = r
         place = _norm(cell("place")["text"])
-        if days and place and (place in _norm(stay["place"]) or _norm(stay["place"]) in place) \
-                and days[0] < date.fromisoformat(stay["end"]) and date.fromisoformat(stay["start"]) < days[1] + timedelta(days=1):
-            return "fill", r
+        if days and place and (place in _norm(stay["place"]) or _norm(stay["place"]) in place):
+            # the nights it shares with the stay ("North Phú Quốc 25–26" shares none with a stay from the 26th:
+            # that one is "South Phú Quốc 26–28"); a row of one day counts as that night
+            nights = (min(end, max(days[1], days[0] + timedelta(days=1))) - max(start, days[0])).days
+            if nights > most:
+                best, most = r, nights
+    if best:
+        return "fill", best
     if after + 1 < len(plan["rows"]) and not any(c["text"] for c in plan["rows"][after + 1]):
         return "fill", after + 1  # an empty row in its place
     return "insert", after
