@@ -28,7 +28,7 @@ before(async () => {
   fs.copyFileSync(path.join(ROOT, 'activities.js'), path.join(dir, 'activities.js'));
   fs.copyFileSync(path.join(ROOT, 'regions.js'), path.join(dir, 'regions.js'));
   fs.copyFileSync(path.join(ROOT, 'country-lists.json'), path.join(dir, 'country-lists.json'));
-  ['climbs.js', 'ascents.js', 'efforts.js', 'climbs.json', 'climbs_extra.json', 'photos.js', 'climb_records.json', 'trips.js', 'weather.js', 'stats.js', 'lastfm.js', 'suggestions.js', 'backup.js', 'albums.js', 'things.js', 'todotrips.js', 'prep.js', 'spending.js', 'review.js', 'bases.js', 'books.js', 'uploads.js', 'report.js', 'onthisday.js', 'tripexport.js', 'wallet.js', 'code.js', 'activitypage.js'].forEach(f => fs.copyFileSync(path.join(ROOT, f), path.join(dir, f)));
+  ['climbs.js', 'ascents.js', 'efforts.js', 'climbs.json', 'climbs_extra.json', 'photos.js', 'climb_records.json', 'trips.js', 'weather.js', 'stats.js', 'lastfm.js', 'suggestions.js', 'backup.js', 'albums.js', 'things.js', 'todotrips.js', 'prep.js', 'spending.js', 'review.js', 'bases.js', 'books.js', 'uploads.js', 'report.js', 'onthisday.js', 'tripexport.js', 'wallet.js', 'code.js', 'activitypage.js', 'sites.js', 'unesco.json', 'parks.json'].forEach(f => fs.copyFileSync(path.join(ROOT, f), path.join(dir, f)));
   fs.copyFileSync(path.join(ROOT, 'default.config'), path.join(dir, 'default.config'));
   fs.cpSync(path.join(ROOT, 'public'), path.join(dir, 'public'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'data'));
@@ -714,4 +714,12 @@ test('a big answer is gzipped for a browser that takes it, a small one and one f
   assert.deepStrictEqual(JSON.parse((await get('/api/flights')).body), flights);
   assert.strictEqual((await get('/api/settings', 'gzip')).res.headers['content-encoding'], undefined);
   for (const f of made) await call('DELETE', `/api/flights/${f.id}`);
+});
+
+test('World Heritage sites and national parks: all of them, none been to from flights alone', async () => {
+  const d = await (await fetch(`${BASE}/api/sites`)).json();
+  assert.ok(d.unesco.length > 1000 && d.park.length > 3000, `${d.unesco.length} sites, ${d.park.length} parks`);
+  assert.ok(d.unesco.every(s => s.id && s.name && s.pts.length && Array.isArray(s.days)));
+  // the fixtures only fly AMS → LIS → AMS: no site from those days (sites.test.js has a site at an airport)
+  assert.deepStrictEqual(d.unesco.filter(s => s.days.some(x => x.startsWith('2026-11-16') || x.startsWith('2026-11-20'))).map(s => s.name), []);
 });

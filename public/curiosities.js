@@ -22,6 +22,12 @@ async function renderCuriosities() {
   const act = a => `<a href="#activity=${a.id}" class="sp-link" onclick="event.preventDefault(); openActivity('${a.id}')">${escapeHTML(a.name || '')}</a>, ${fmtDate(a.date)}`;
   const hm = s => `${Math.floor(s / 3600)}:${String(Math.round(s % 3600 / 60)).padStart(2, '0')}`;
   const h = c.heights, x = c.extremes, d = c.distance;
+  if (typeof loadSites === 'function') await loadSites();
+  // World Heritage sites and national parks you have been to, the latest first
+  const been = kind => (typeof allSites !== 'undefined' ? allSites[kind] : []).filter(s => s.days.length)
+    .sort((a, b) => b.days[b.days.length - 1].localeCompare(a.days[a.days.length - 1]));
+  const heritage = been('unesco'), parks = been('park');
+  const latest = list => list.slice(0, 2).map(s => `${flagOf(s.cc)}${escapeHTML(s.name)}`).join(', ') + (list.length > 2 ? '…' : '');
 
   let html = '<div class="chart-section" style="margin-top:24px"><h3>Curiosities</h3><div class="stat-cards curio-cards">' +
     card('Days by the sea', c.sea.days.toLocaleString(), `${pct(c.sea.days)}: within ${c.sea.km} km of a coast`) +
@@ -41,6 +47,8 @@ async function renderCuriosities() {
     (c.crossings && (c.crossings.equator || c.crossings.dateLine) ? card('Flown over the equator', c.crossings.equator,
       `${c.crossings.dateLine} time${c.crossings.dateLine === 1 ? '' : 's'} over the date line`) : '') +
     card('Capitals', c.capitals.length, c.capitals.slice(-3).reverse().map(t => escapeHTML(t.name)).join(', ') + (c.capitals.length > 3 ? '…' : '')) +
+    (heritage.length ? card('World Heritage sites', heritage.length, `of ${allSites.unesco.length.toLocaleString()} · ${latest(heritage)}`) : '') +
+    (parks.length ? card('National parks', parks.length, `of ${allSites.park.length.toLocaleString()} · ${latest(parks)}`) : '') +
     card('Distance, every means', fmtDist(d.total), `${d.earth}× around the earth · ${d.moon}% of the way to the moon`) +
     (c.mostCountries ? card('Most countries in a day', c.mostCountries.count, `${c.mostCountries.countries.map(cc => flagOf(cc).trim()).join(' ')} ${fmtDate(c.mostCountries.day)}`) : '') +
     (c.longest ? card('Longest stay', `${c.longest.nights} nights`, `${escapeHTML(c.longest.place || '')}, from ${fmtDate(c.longest.start)}`) : '') +
@@ -79,11 +87,17 @@ async function renderCuriosities() {
   if (c.leapDays?.length) html += `<p><b>29 February:</b> ${c.leapDays.map(n => `${n.year} ${flagOf(n.country)}<a href="#" class="sp-link" onclick="event.preventDefault(); openCityReport(${n.id})">${escapeHTML(n.town)}</a>`).join(' · ')}</p>`;
   html += timeZoneTrips(c.timeZones);
   if (c.capitals.length) html += `<p><b>Capitals:</b> ${c.capitals.map(t => `${flagOf(t.country)}<a href="#" class="sp-link" onclick="event.preventDefault(); openCityReport(${t.id})">${escapeHTML(t.name)}</a>`).join(' · ')}</p>`;
+  const siteList = (list, kind) => list.map(s => `${flagOf(s.cc)}<a href="${kind === 'unesco' ? `https://whc.unesco.org/en/list/${encodeURIComponent(s.id)}` : `https://www.wikidata.org/wiki/${encodeURIComponent(s.id)}`}" ` +
+    `target="_blank" rel="noopener" class="sp-link" title="${s.days.length} day${s.days.length !== 1 ? 's' : ''}, first ${fmtDate(s.days[0])}">${escapeHTML(s.name)}</a>`).join(' · ');
+  // folded: hundreds of names
+  if (heritage.length) html += `<details class="curio-list"><summary><b>World Heritage sites</b> (${heritage.length})</summary><p>${siteList(heritage, 'unesco')}</p></details>`;
+  if (parks.length) html += `<details class="curio-list"><summary><b>National parks</b> (${parks.length})</summary><p>${siteList(parks, 'park')}</p></details>`;
   html += `<p class="sp-note">From every day Cairn knows a place for (${c.days.toLocaleString()} days since ${fmtDate(c.first)}): flights, trains, stays, activities, photos and Timeline. ` +
     `By the sea: Natural Earth's coastline. Heights: the ground's height at the place (AWS Terrain Tiles), so a flight counts where it landed, not in the air; ` +
     `below sea level only inland, more than 2 km from a coast (the tiles give the sea's depth too). How far from home: from your home airports, each day's farthest place. ` +
     `Ride weather: Open-Meteo's history. Sleep and heart: Garmin, on trip days and on the others. ` +
-    `Time zones: each airport's and town's zone on that day (summer time included), against your first home airport's.</p></div>`;
+    `Time zones: each airport's and town's zone on that day (summer time included), against your first home airport's. ` +
+    `World Heritage sites and national parks: Wikidata's, each place within its reach (a circle of its area) of a photo, check-in, stay, Timeline visit or activity track, not an airport; near a park's edge that can mean nearby.</p></div>`;
   box.innerHTML = html;
 }
 

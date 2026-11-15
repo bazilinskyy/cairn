@@ -72,6 +72,8 @@
       --code:     #7986cb;
       --music:    #ec407a;
       --climb:    #c0ca33;
+      --unesco:   #ff8a65;
+      --park:     #66bb6a;
     }
 
     /* lines and markers on the satellite map (its own tone, set on the map's panes, layers.js mapTone): vivid, with a
@@ -80,7 +82,7 @@
       --surface: #111111; --surface2: #222222; --text: #ffffff; --text2: #dddddd; --accent: #00e5ff; --accent2: #d500f9;
       --train: #ffab00; --commute: #d7ccc8; --bus: #76ff03; --ferry: #ea80fc; --hitch: #ff9e80; --cable: #c6ff00; --checkin: #ffe57f; --stay: #ff4f93; --stay2: #b388ff; --stay3: #ffa040; --car: #ffea00; --drive: #40c4ff; --photo: #18ffff;
       --timeline: #ffffff; --country: #b388ff; --ride: #ff6e40; --run: #b388ff; --walk: #ff80ab; --sport: #ffd740;
-      --tile: #69f0ae; --city: #ffffff; --home: #ffc400; --climb: #eeff41; --book: #64ffda; --code: #8c9eff; --music: #ff80ab;
+      --tile: #69f0ae; --city: #ffffff; --home: #ffc400; --climb: #eeff41; --unesco: #ff6d00; --park: #00e676; --book: #64ffda; --code: #8c9eff; --music: #ff80ab;
     }
     .leaflet-pane[data-theme="sat"] > :is(svg, canvas) { filter: drop-shadow(0 0 1.2px rgba(0,0,0,0.95)); }
 
@@ -121,6 +123,8 @@
       --code:      #3949ab;
       --music:     #ad1457;
       --climb:     #827717;
+      --unesco:    #d84315;
+      --park:      #2e7d32;
     }
 
     html, body { height: 100%; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; }
@@ -812,6 +816,9 @@
     .map-legend select:focus-visible, .map-legend input[type="date"]:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent); outline-offset: 1px; }
     .leaflet-tooltip.city-label, .leaflet-tooltip.home-label { border-radius: 6px; transition: opacity .15s; }
     .leaflet-tooltip.label-hidden { opacity: 0 !important; pointer-events: none; }
+    .curio-list { margin: 10px 0; }
+    .curio-list > summary { cursor: pointer; }
+    .curio-list > p { margin-top: 6px; }
 
     @media (max-width: 700px) {
       .add-kinds { display: flex; }

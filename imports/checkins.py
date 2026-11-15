@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Places you were at a known time, from data downloads, into Cairn: check-ins and posts with a place (Facebook), posts
 and photos with a place (Instagram), photos and posts with a place (VK, where its archive gives one), your Google Maps
-reviews, and your Uber and Bolt rides (where they picked you up and dropped you off). Cairn counts them for your towns,
+reviews, your Foursquare Swarm check-ins, and your Uber and Bolt rides (where they picked you up and dropped you off). Cairn counts them for your towns,
 countries and trips, and shows them as the 📍 Check-ins layer.
 
 Give it the downloads as they came (zip files or unpacked folders), any number and mixed; it finds what each holds:
@@ -249,7 +249,7 @@ def from_reviews(data):
 def parse_time(s):
     """'2019-09-16 12:34:56 +0000 UTC', '2019-09-16T12:34:56Z', '16.09.2019 12:34' -> unix seconds, or None."""
     s = (s or "").strip().replace(" UTC", "")
-    for fmt in ("%Y-%m-%d %H:%M:%S %z", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S.%f%z", "%Y-%m-%dT%H:%M:%S",
+    for fmt in ("%Y-%m-%d %H:%M:%S %z", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S.%f%z", "%Y-%m-%dT%H:%M:%S",
                 "%Y-%m-%d %H:%M", "%d.%m.%Y %H:%M", "%d/%m/%Y %H:%M", "%m/%d/%Y %H:%M"):
         try:
             d = datetime.strptime(s.replace("Z", "+0000"), fmt)
@@ -257,6 +257,27 @@ def parse_time(s):
         except ValueError:
             continue
     return None
+
+
+def from_swarm(data):
+    """Foursquare Swarm's data download (foursquare.com → Privacy settings → Download my data): checkins1.json, ... each
+    {"items": [{"createdAt": unix seconds or "2015-06-01 12:34:56.000000" (UTC), "venue": {"name", ...}, "lat", "lng"}]};
+    the place from the check-in itself, else its venue's."""
+    try:
+        doc = json.loads(data)
+    except ValueError:
+        return []
+    out = []
+    for it in items(doc):
+        if not isinstance(it, dict) or it.get("type", "checkin") != "checkin":
+            continue
+        made = it.get("createdAt")
+        t = int(number(made)) if number(made) and number(made) > 1e8 else parse_time(str(made or ""))
+        venue = it.get("venue") if isinstance(it.get("venue"), dict) else {}
+        got = place_in({k: v for k, v in it.items() if k != "venue"}) or place_in(venue)
+        if t and got:
+            out.append({"t": t, "lat": got[0], "lon": got[1], "name": fix_text(venue.get("name") or got[2] or ""), "source": "swarm", "kind": "check-in"})
+    return out
 
 
 def from_rides(name, data, source):
@@ -322,6 +343,8 @@ def read(paths, lookups=None):
         if n.endswith("places_you_have_been_tagged_in.json"):
             tagged += from_tagged(data)
             seen.add("facebook")
+        elif n.endswith(".json") and b'"venue"' in data and b'"createdAt"' in data:  # Foursquare Swarm
+            got = from_swarm(data)
         elif n.endswith(".json") and ("reviews" in n.split("/")[-1]):
             got = from_reviews(data)
         elif n.endswith(".json") and ("instagram" in n or "/media/" in n or n.split("/")[-1].startswith(("posts_", "stories", "media"))) and "facebook" not in n:

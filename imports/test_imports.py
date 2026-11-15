@@ -270,6 +270,26 @@ def test_checkins_facebook_instagram_reviews_rides():
     assert all(c["kind"] in ("post", "check-in", "review", "ride") for c in got)
 
 
+def test_checkins_swarm():
+    import zipfile
+    import checkins
+    with tempfile.TemporaryDirectory() as d:
+        z4 = Path(d, "foursquare-export.zip")
+        with zipfile.ZipFile(z4, "w") as z:
+            z.writestr("checkins1.json", json.dumps({"count": 3, "items": [
+                {"id": "a", "createdAt": "2015-06-01 12:34:56.000000", "type": "checkin", "timeZoneOffset": 120,
+                 "venue": {"id": "v1", "name": "Café Example"}, "lat": 51.2194, "lng": 4.4025},
+                {"id": "b", "createdAt": 1433200000, "type": "checkin",
+                 "venue": {"id": "v2", "name": "Old Harbour", "location": {"lat": 43.2965, "lng": 5.3698}}},
+                {"id": "c", "createdAt": 1433300000, "type": "checkin", "venue": {"id": "v3", "name": "Nowhere"}}]}))
+            z.writestr("tips.json", json.dumps({"items": [{"id": "t", "text": "nice"}]}))
+        got, sources = checkins.read([z4])
+    assert sources == {"swarm"}, sources
+    assert [(c["name"], c["lat"], c["lon"], c["kind"]) for c in got] == [
+        ("Café Example", 51.2194, 4.4025, "check-in"), ("Old Harbour", 43.2965, 5.3698, "check-in")], got
+    assert got[0]["t"] == 1433162096  # 2015-06-01 12:34:56 UTC
+
+
 def test_checkins_facebook_tagged_places_looked_up_once():
     import checkins
     asked = []

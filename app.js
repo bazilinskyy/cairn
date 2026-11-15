@@ -1118,6 +1118,12 @@ const climbs = require('./climbs').create({
   towns: loadTowns
 });
 app.get('/api/climbs', (_req, res) => res.json(climbs.list()));
+
+// UNESCO World Heritage sites and national parks, and the days you were at each (sites.js): { unesco: [...], park: [...] }
+const sites = require('./sites').create({
+  places: () => placesBeen().filter(p => !p.guess), activities: () => activities.list(), ccAt: (lat, lon) => townOfAt([lat, lon])?.cc
+});
+app.get('/api/sites', (_req, res) => res.json(sites.list()));
 // One activity in full, for its page (activitypage.js)
 const activityPage = require('./activitypage').create({
   list: () => activities.list(), track: require('./efforts').tracks(path.join(DATA_DIR, 'tracks')), weather: () => weather.all(),
@@ -1284,7 +1290,7 @@ function batchPosted(checkins) {
 function allPlacesAndDays(withStays) {
   const from = '', to = '';
   const pts = [], inPeriod = d => d && (!from || d >= from) && (!to || d <= to);
-  const add = (at, d, city, guess) => { if (at && inPeriod(d)) pts.push(guess ? { at, day: d, city, guess } : { at, day: d, city }); };
+  const add = (at, d, city, guess, air) => { if (at && inPeriod(d)) pts.push(guess ? { at, day: d, city, guess } : air ? { at, day: d, city, air } : { at, day: d, city }); };
   const eachDay = (a, b, fn) => {  // a stay or Timeline visit: every day from the first to the last, at most 90
     for (let t = Date.parse(a), n = 0; t <= Date.parse(b || a) && n < 90; t += 864e5, n++) fn(new Date(t).toISOString().slice(0, 10));
   };
@@ -1292,8 +1298,8 @@ function allPlacesAndDays(withStays) {
   const fl = flights.filter(f => f.date && at(f.from) && at(f.to)).sort((a, b) => a.date.localeCompare(b.date));
   const change = (a, b) => a && b && a.to === b.from && Math.abs(Date.parse(b.date.replace(' ', 'T')) - Date.parse(a.date.replace(' ', 'T'))) < 864e5;
   fl.forEach((f, i) => {  // airports where you only changed planes do not count
-    if (!change(fl[i - 1], f)) add(at(f.from), f.date.slice(0, 10), airports[f.from].city);
-    if (!change(f, fl[i + 1])) add(at(f.to), f.date.slice(0, 10), airports[f.to].city);
+    if (!change(fl[i - 1], f)) add(at(f.from), f.date.slice(0, 10), airports[f.from].city, false, true);
+    if (!change(f, fl[i + 1])) add(at(f.to), f.date.slice(0, 10), airports[f.to].city, false, true);
   });
   trips.forEach(t => {
     if (t.approx) return;  // only its year or month known: no day
@@ -1669,7 +1675,7 @@ const imports = require('./uploads').create({
       note: 'Replaces the Timeline kept: give all of it at once.', run: files => py('timeline.py', [...files, ...outTo('timeline.json')]) },
     saved: { file: path.join(DATA_DIR, 'saved_places.json'), label: '⭐ Google Maps saved places', accept: '.zip,.json,.csv', what: 'Google Takeout with "Maps (your places)" and "Saved": the zip(s)',
       note: 'Replaces the saved places kept.', run: files => py('saved_places.py', [...files, ...outTo('saved_places.json')]) },
-    checkins: { file: path.join(DATA_DIR, 'checkins.json'), label: '📍 Check-ins, posts and rides', accept: '.zip,.json,.csv', what: 'Data downloads of Facebook, Instagram, VK, Google Maps reviews (Takeout), Uber or Bolt: the zips or CSVs, mixed',
+    checkins: { file: path.join(DATA_DIR, 'checkins.json'), label: '📍 Check-ins, posts and rides', accept: '.zip,.json,.csv', what: 'Data downloads of Facebook, Instagram, VK, Google Maps reviews (Takeout), Foursquare Swarm, Uber or Bolt: the zips or CSVs, mixed',
       note: 'Replaces only the services in the files given.', run: files => py('checkins.py', [...files, ...outTo('checkins.json')]) },
     calendar: { file: path.join(DATA_DIR, 'calendar.json'), label: '📅 Calendars', accept: '.ics,.zip,.json', what: 'Google Takeout\'s Calendar, or .ics files from Outlook or Apple Calendar',
       note: 'Replaces the events kept: give all your calendars at once.', run: files => py('calendar_events.py', [...files, ...outTo('calendar.json')]) },
@@ -2748,7 +2754,7 @@ init().then(() => {
     lookUpTrips();
     setInterval(lookUpTrips, 3600e3).unref();  // retries what a service that was down left over
     // the slow lists worked out now, not while the first page waits for them
-    setTimeout(() => { try { activities.payload(); climbs.list(); tripStore.list(); } catch (e) { console.warn('[warm-up]', e.message); } }, 500);
+    setTimeout(() => { try { activities.payload(); climbs.list(); tripStore.list(); sites.list(); } catch (e) { console.warn('[warm-up]', e.message); } }, 500);
     setTimeout(() => weather.fill(), 60e3);
     setTimeout(() => curiosities.get(), 90e3);
     setTimeout(() => albums.list(), 100e3);  // the albums read and their places looked up before anyone asks

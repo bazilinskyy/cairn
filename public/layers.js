@@ -102,7 +102,7 @@ const mapVar = name => toneVar(mapTone(), name);
 // and places that takes seconds. The activities and tiles, painted on canvas, are painted again.
 const THEME_PAIRS = { grey: 'grey-dark', 'grey-dark': 'grey', 'vector-dark': 'vector-positron', 'vector-fiord': 'vector-positron', 'vector-positron': 'vector-dark' };
 const TONE_VARS = ['--accent', '--accent2', '--text', '--text2', '--surface', '--surface2', '--train', '--commute', '--bus', '--ferry', '--hitch', '--cable', '--checkin', '--stay', '--stay2',
-  '--stay3', '--car', '--drive', '--photo', '--timeline', '--country', '--ride', '--run', '--walk', '--sport', '--tile', '--city', '--home', '--book', '--code', '--music', '--climb'];
+  '--stay3', '--car', '--drive', '--photo', '--timeline', '--country', '--ride', '--run', '--walk', '--sport', '--tile', '--city', '--home', '--book', '--code', '--music', '--climb', '--unesco', '--park'];
 function themeBasemap(from, to) {
   const k = basemapKey(), b = BASEMAPS[k], memo = { ...(prefs.basemapFor || {}), [from]: k };
   let next = memo[to];
@@ -209,6 +209,8 @@ const stayLayers = Object.fromEntries(Object.keys(STAY_KINDS).map(k => [k, L.lay
 const carLayer = L.layerGroup(), scooterLayer = L.layerGroup(), photoLayer = L.layerGroup();  // rentals: cars, and scooters (and mopeds)
 const timelineLayer = L.layerGroup(), countryLayer = L.layerGroup(), activityLayer = L.layerGroup(), tileLayer = L.layerGroup();
 const climbLayer = L.layerGroup();
+const unescoLayer = L.layerGroup(), parkLayer = L.layerGroup();
+let allSites = { unesco: [], park: [] };  // World Heritage sites and national parks, with the days you were at each (/api/sites)
 let allClimbs = [];  // famous cycling climbs and the rides over them (/api/climbs); none without rides
 const cityLayer = L.layerGroup();
 const homeLayer = L.layerGroup();  // your places: hometown, where you live, where you work
@@ -251,6 +253,7 @@ function extraLayers() {
     car: ['🚗 Cars', carLayer, '--car', 'dot'], scooter: ['🛵 Scooters', scooterLayer, '--car', 'ring'],
     ...Object.fromEntries(Object.entries(ACT_KINDS).map(([k, label]) => ['act-' + k, [label, kindLayer[k], '--' + k]])),
     tile: ['🟩 Explored tiles', tileLayer, '--tile', 'area'], climb: ['⛰️ Climbs', climbLayer, '--climb', 'dot'],
+    unesco: ['🏛️ World Heritage', unescoLayer, '--unesco', 'dot'], park: ['🌲 National parks', parkLayer, '--park', 'dot'],
     country: ['🌍 Countries', countryLayer, '--country', 'area'], city: ['🏙️ Cities', cityLayer, '--city', 'dot'],
     checkin: ['📍 Check-ins', checkinLayer, '--checkin', 'dot'],
     photo: ['📷 Photos', photoLayer, '--photo', 'dot'], timeline: ['🧭 Timeline', timelineLayer, '--timeline', 'dot'], book: ['📚 Books', bookLayer, '--book', 'dot'],
@@ -274,7 +277,9 @@ function extraCounts() {
     book: allBooks.filter(b => b.at && inWin(b.finished)).length,
     code: allCode.filter(c => inWin(c.day)).reduce((s, c) => s + c.n, 0),
     music: allMusic.filter(c => inWin(c.day)).reduce((s, c) => s + c.n, 0),
-    climb: allClimbs.length ? `${allClimbs.filter(climbDone).length} / ${allClimbs.length}` : 0
+    climb: allClimbs.length ? `${allClimbs.filter(climbDone).length} / ${allClimbs.length}` : 0,
+    unesco: allSites.unesco.length ? `${allSites.unesco.filter(siteBeen).length} / ${allSites.unesco.length}` : 0,
+    park: allSites.park.length ? `${allSites.park.filter(siteBeen).length} / ${allSites.park.length}` : 0
   };
 }
 
@@ -291,6 +296,7 @@ function drawExtras() {
   drawCountries();
   drawCities();
   drawClimbs();
+  drawSites();
   drawHome();
   if (typeof map3d !== 'undefined' && map3d && !document.getElementById('map3d').hidden) refresh3D();  // the 3D view follows
 }
@@ -393,6 +399,45 @@ function drawClimbs() {
     });
     (c.other || []).filter(o => o.path && ridden(o.rides).length).forEach(o => {
       L.polyline(decodePath(o.path), { color, weight: 4, opacity: 0.85, interactive: false }).addTo(climbLayer);
+    });
+  });
+}
+
+// --- World Heritage sites and national parks ---
+
+// Been there in the period shown: a day there in it
+const siteBeen = s => s.days.length > 0 && (!win.from && !win.to || s.days.some(d => inWin(d)));
+
+let sitesReady = null;  // the sites' answer, asked once: by the map, or first by the Stats tab's curiosities
+function loadSites() {
+  sitesReady ||= fetch('/api/sites').then(r => (r.ok ? r.json() : null)).catch(() => null)
+    .then(d => { if (d) allSites = { unesco: d.unesco || [], park: d.park || [] }; });
+  return sitesReady.then(() => { drawSites(); drawLegend(); });
+}
+
+// the ones not been to only from SITES_ALL_ZOOM in: all over the world they hide the map
+const SITES_ALL_ZOOM = 6;
+let sitesAll = null;
+function drawSites() {
+  if (typeof map !== 'undefined' && map && sitesAll === null) map.on('zoomend', () => { if ((map.getZoom() >= SITES_ALL_ZOOM) !== sitesAll) drawSites(); });
+  sitesAll = typeof map !== 'undefined' && map ? map.getZoom() >= SITES_ALL_ZOOM : false;
+  [['unesco', unescoLayer, '🏛️'], ['park', parkLayer, '🌲']].forEach(([kind, layer, icon]) => {
+    layer.clearLayers();
+    const color = mapVar('--' + kind), ring = mapVar('--surface');
+    // the ones not been to first, faint, so the ones you have are drawn over them
+    [...allSites[kind]].filter(s => sitesAll || siteBeen(s)).sort((a, b) => siteBeen(a) - siteBeen(b)).forEach(s => {
+      const been = siteBeen(s), days = s.days.filter(d => inWin(d));
+      const link = kind === 'unesco' ? `https://whc.unesco.org/en/list/${encodeURIComponent(s.id)}` : `https://www.wikidata.org/wiki/${encodeURIComponent(s.id)}`;
+      const when = been
+        ? `${days.length} day${days.length !== 1 ? 's' : ''} there` + (days.length > 1 ? `, first ${fmtDate(days[0])}, last ${fmtDate(days[days.length - 1])}` : `, ${fmtDate(days[0])}`)
+        : 'not been yet';
+      L.circleMarker(been ? s.at : [s.pts[0][0], s.pts[0][1]], been
+        ? { radius: 5.5, color: ring, weight: 1.5, fillColor: color, fillOpacity: 0.95, renderer: canvasRenderer }
+        : { radius: 3, color, weight: 1.2, opacity: 0.45, fillOpacity: 0, renderer: canvasRenderer }
+      ).bindPopup(`<b>${icon} ${flagOf(s.cc)}${escapeHTML(s.name)}</b>${s.year ? ` · inscribed ${s.year}` : ''}<br><small>${when}` +
+        (s.pts.length > 1 ? ` · ${s.pts.length} parts` : '') +
+        `<br><a href="${link}" target="_blank" rel="noopener" class="popup-link">${kind === 'unesco' ? 'On UNESCO\'s list' : 'On Wikidata'} ↗</a></small>`, { maxWidth: 320 })
+        .addTo(layer);
     });
   });
 }
@@ -916,6 +961,7 @@ async function loadStrava() {
   drawCountries();
   drawLegend();
   loadClimbs();
+  loadSites();
   if (document.getElementById('tab-sports')?.classList.contains('active')) renderSports();
 }
 
