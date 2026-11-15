@@ -52,8 +52,8 @@ Two parts:
 
 | | |
 |---|---|
-| ![The map up close: the Randstad and Eindhoven, photos off](docs/map-randstad.jpg)<br><sub>The map up close: the Randstad and Eindhoven, with your places, photos off</sub> | ![The map in light mode](docs/map-screenshot.jpg)<br><sub>The map in light mode</sub> |
-| ![Photos as a heatmap](docs/map-photos-heatmap.jpg)<br><sub>Photos as a heatmap</sub> | ![A grey map with bold lines, countries counted as the Travelers' Century Club does](docs/map-grey-bold.jpg)<br><sub>Grey with bold lines; countries as the Travelers' Century Club counts them</sub> |
+| ![The map up close: the Randstad and Eindhoven, photos off](docs/map-randstad.jpg)<br><sub>Up close: the Randstad and Eindhoven, photos off</sub> | ![The map in light mode](docs/map-screenshot.jpg)<br><sub>The map in light mode</sub> |
+| ![Photos as a heatmap](docs/map-photos-heatmap.jpg)<br><sub>Photos as a heatmap</sub> | ![A grey map with bold lines, countries counted as the Travelers' Century Club does](docs/map-grey-bold.jpg)<br><sub>Grey, bold lines; countries the Travelers' Century Club way</sub> |
 | ![3D: the globe with real terrain and every layer](docs/globe-3d.jpg)<br><sub>3D: the globe with real terrain</sub> | ![3D: a flat, tilted map with flights along their rough path through the air](docs/flat-arcs-3d.jpg)<br><sub>3D: tilted, flights through the air</sub> |
 | ![The Stats tab: flights, airports, countries, airlines, flights per year](docs/stats.jpg)<br><sub>Stats: flights, airports, countries, per year</sub> | ![The Sports tab: activities, Eddington numbers, records, explored tiles](docs/sports.jpg)<br><sub>Sports</sub> |
 | ![The Flights tab: every flight, searchable and sortable](docs/flights.jpg)<br><sub>Flights: every flight, searchable</sub> | ![An airport's page: its routes, airlines and flights](docs/airport.jpg)<br><sub>An airport's page</sub> |
