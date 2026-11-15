@@ -137,6 +137,15 @@ def apply(parsed, sender, subject, received, state, cal, con, names, now, airpor
         return alerts
 
     complete = [l for l in parsed.legs if l.complete]
+    prices = state.setdefault("prices", {})  # booking code -> price, from a receipt that has no trip in it (12go)
+    price = getattr(parsed, "price", "")
+    if price and parsed.codes and not complete:
+        for c in parsed.codes:
+            prices[c] = price
+        for reg in (seen, ground):  # its trip came first: its first leg gets the price
+            mine = sorted((r for r in reg.values() if set(r.get("codes", [])) & set(parsed.codes)), key=lambda r: r["dep_local"] or "")
+            if mine and not any(r.get("price") for r in mine):
+                mine[0]["price"] = price
     if not complete:
         if about_future and parsed.looks_like_flight and not any(owned(l) for l in parsed.legs) and not re.search(INFO, subject):
             alerts.append(f"Could not read flight: {where}")
@@ -155,7 +164,7 @@ def apply(parsed, sender, subject, received, state, cal, con, names, now, airpor
     for leg in complete:
         if not all(leg.tz(airports)) or leg.instants(airports)[0] <= local_now:
             continue
-        see(leg, getattr(parsed, "price", "") if leg is first else "")
+        see(leg, (price or next((prices[c] for c in leg.codes if c in prices), "")) if leg is first else "")
         e = owned(leg)
         if e:
             if all(e[k] == v for k, v in _row(leg).items()):

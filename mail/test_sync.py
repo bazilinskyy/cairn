@@ -326,6 +326,18 @@ def test_the_bookings_price_on_its_first_leg():
     assert state["seen"]["KL1234@2026-11-16"]["price"] == "240€"
 
 
+def test_a_price_from_a_receipt_without_the_trip():
+    cal, con, state = FakeCalendar(), FakeCairn(), {}
+    receipt = replace(booking(kind="booking"), codes=("AAVF5829",), price="31.6€")
+    run(receipt, state, cal, con)  # the receipt first: kept for the ticket
+    run(booking(leg(codes=("AAVF5829",))), state, cal, con)
+    assert state["seen"]["KL1234@2026-11-16"]["price"] == "31.6€"
+    cal, con, state = FakeCalendar(), FakeCairn(), {}
+    run(booking(leg(codes=("XYZ1",))), state, cal, con)  # the ticket first: the receipt adds its price
+    run(replace(booking(), codes=("XYZ1",), price="12€"), state, cal, con)
+    assert state["seen"]["KL1234@2026-11-16"]["price"] == "12€"
+
+
 if __name__ == "__main__":
     tests = [f for n, f in sorted(globals().items()) if n.startswith("test_")]
     for t in tests:
