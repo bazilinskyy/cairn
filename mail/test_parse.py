@@ -314,6 +314,28 @@ def test_instants_dst():
     assert arr.astimezone(timezone.utc).replace(tzinfo=None) == datetime(2026, 10, 21, 11, 45)
 
 
+def test_booking_price():
+    assert parse.booking_price(["Flight KL1234", "Total price", "EUR 240.50", "Price per adult EUR 120"]) == "240.50€"
+    assert parse.booking_price(["Ticket price: 13.90€"]) == "13.90€"
+    assert parse.booking_price(["Totaalbedrag € 1.234,56"]) == "1234.56€"
+    assert parse.booking_price(["Booking code ABC123", "PIN 708383"]) == ""
+    assert parsed("booking_flights_jsonld").price == "29.92€"
+
+
+def test_airports_by_name_near_the_flight():
+    Airport = parse.Airport
+    ap = {"SGN": Airport("Tan Son Nhat International Airport", "Ho Chi Minh City", "Asia/Saigon", "Vietnam"),
+          "PQC": Airport("Phu Quoc International Airport", "Phuquoc", "Asia/Saigon", "Vietnam"),
+          "DAD": Airport("Da Nang International Airport", "Danang", "Asia/Saigon", "Vietnam"),
+          "AMS": Airport("Amsterdam Airport Schiphol", "Amsterdam", "Europe/Amsterdam", "Netherlands")}
+    pdf = ["Travix Nederland B.V.", "1102 BR Amsterdam"] + ["..."] * 20 + [
+        "25 december 2026", "Ho Chi Minhstad", "Internationale luchthaven Tan Son", "Nhat", "Phu Quoc",
+        "Internationale Luchthaven Phú", "Quốc", "VietJet Air", "Vluchtnummer: VJ341"]
+    assert parse.named_airports(pdf, "VJ341", ap) == ["SGN", "PQC"]  # not the address far from the flight
+    assert parse.named_airports(["Vertrek uit Đà Nẵng", "VJ 722", "Aankomst in Phu Quoc"], "VJ722", ap) == ["DAD", "PQC"]
+    assert parse.named_airports(["Vertrek uit Ho Chi Minhstad", "VJ341"], "VJ341", ap) == []
+
+
 if __name__ == "__main__":
     tests = [f for n, f in sorted(globals().items()) if n.startswith("test_")]
     for t in tests:

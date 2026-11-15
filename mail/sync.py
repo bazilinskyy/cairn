@@ -96,15 +96,19 @@ def apply(parsed, sender, subject, received, state, cal, con, names, now, airpor
                     and (not leg.codes or not r["codes"] or set(leg.codes) & set(r["codes"]))]:
             del ground[sid]
 
-    def see(leg):
+    def see(leg, price=""):
+        """price: the booking's, on its first leg only (one price per booking in the docs); kept when an email
+        about the same leg has none."""
         if leg.mode == "flight":
             sid = f"{leg.key}@{leg.when.isoformat()}"
             unsee(leg, keep=sid)
-            seen[sid] = {**_row(leg), "codes": list(leg.codes), "checkin_url": leg.checkin_url}
+            seen[sid] = {**_row(leg), "codes": list(leg.codes), "checkin_url": leg.checkin_url,
+                         "price": price or seen.get(sid, {}).get("price", "")}
         else:
             sid = f"{leg.key}@{leg.dep_local.isoformat()}"
             unsee_ground(leg, keep=sid)
-            ground[sid] = {**_row(leg), "codes": list(leg.codes), "mode": leg.mode, "tz": list(leg.tz(airports))}
+            ground[sid] = {**_row(leg), "codes": list(leg.codes), "mode": leg.mode, "tz": list(leg.tz(airports)),
+                           "price": price or ground.get(sid, {}).get("price", "")}
 
     def remove(e):
         if e["event_id"]:
@@ -147,10 +151,11 @@ def apply(parsed, sender, subject, received, state, cal, con, names, now, airpor
             remove(e)
 
     local_now = now.astimezone()
+    first = min(complete, key=lambda l: l.instants(airports)[0] if all(l.tz(airports)) else local_now)
     for leg in complete:
         if not all(leg.tz(airports)) or leg.instants(airports)[0] <= local_now:
             continue
-        see(leg)
+        see(leg, getattr(parsed, "price", "") if leg is first else "")
         e = owned(leg)
         if e:
             if all(e[k] == v for k, v in _row(leg).items()):

@@ -1,9 +1,9 @@
 """Trip documents in a Google Drive folder: one Google Doc per trip with an Information heading, a Plan table
-(Place | Dates | Accommodation | Price | Comments) and a Transport table (Transport | Date | Price | Comments).
+(Place | Dates | Stay | Price | Comments; "Accommodation" in older docs) and a Transport table (Transport | Date | Price | Comments).
 
 tripmail fills them from the bookings it reads: a hotel or Airbnb goes into the Plan row for that place and dates
 (empty cells only) or a new row in date order; a rental car into the Comments of the row of its pick-up day; each
-flight into a Transport row. A cancelled stay empties the Accommodation and Price cells. A trip without a doc gets
+flight into a Transport row. A cancelled stay empties the Stay and Price cells. A trip without a doc gets
 a new one, named like "Portugal 2026", that anyone with its link can edit (and a Things to-do, by tripmail.py).
 Tables with no data yet get three empty rows. New docs are copies of a template doc (`python mail/tripdocs.py template
 <doc id>` makes one from a trip doc), else made from html and given the user's look: Normal text and Heading styles
@@ -49,7 +49,7 @@ EMPTY_ROWS = 3  # a table with no data yet has this many empty rows to write in
 TEMPLATE = f"""<html><head>{STYLE}</head><body>
 <h1>Information</h1><p></p>
 <h1>Plan</h1>
-<table><tr><td><b>Place</b></td><td><b>Dates</b></td><td><b>Accommodation</b></td><td><b>Price</b></td><td><b>Comments</b></td></tr>{("<tr>" + "<td></td>" * 5 + "</tr>") * EMPTY_ROWS}</table>
+<table><tr><td><b>Place</b></td><td><b>Dates</b></td><td><b>Stay</b></td><td><b>Price</b></td><td><b>Comments</b></td></tr>{("<tr>" + "<td></td>" * 5 + "</tr>") * EMPTY_ROWS}</table>
 <h1>Transport</h1>
 <table><tr><td><b>Transport</b></td><td><b>Date</b></td><td><b>Price</b></td><td><b>Comments</b></td></tr>{("<tr>" + "<td></td>" * 4 + "</tr>") * EMPTY_ROWS}</table>
 </body></html>"""
@@ -199,6 +199,9 @@ def _cell(c):
                       if e["textRun"].get("textStyle", {}).get("link")]}
 
 
+HEADS = {"accommodation": "stay"}  # the column's name in docs made before it was "Stay"
+
+
 def tables(doc):
     """{"plan": table, "transport": table} found by their header rows; a table is {start, cols, rows: [[cell]], after:
     the paragraph that follows it}."""
@@ -207,7 +210,7 @@ def tables(doc):
         if "table" not in el:
             continue
         rows = [[_cell(c) for c in r["tableCells"]] for r in el["table"]["tableRows"]]
-        head = [c["text"].lower() for c in rows[0]] if rows else []
+        head = [HEADS.get(c["text"].lower(), c["text"].lower()) for c in rows[0]] if rows else []
         kind = {"place": "plan", "transport": "transport"}.get(head[0] if head else "")
         if kind and kind not in out:
             nxt = body[k + 1] if k + 1 < len(body) and "paragraph" in body[k + 1] else None
@@ -414,7 +417,7 @@ def stay_row(plan, stay):
     after = 0
     for r, row in enumerate(plan["rows"][1:], 1):
         cell = lambda name: row[plan["cols"][name]] if name in plan["cols"] else {"text": "", "links": []}
-        if any(stay["code"] in l or l == stay["link"] for l in cell("accommodation")["links"]):
+        if any(stay["code"] in l or l == stay["link"] for l in cell("stay")["links"]):
             return "fill", r
         days = parse_dates(cell("dates")["text"])
         if days and days[0] <= date.fromisoformat(stay["start"]):
@@ -430,7 +433,7 @@ def stay_row(plan, stay):
 
 def stay_cells(stay):
     s, e = date.fromisoformat(stay["start"]), date.fromisoformat(stay["end"])
-    return {"place": stay["place"], "dates": fmt_dates(s, e), "accommodation": (stay["type"], stay["link"] or None),
+    return {"place": stay["place"], "dates": fmt_dates(s, e), "stay": (stay["type"], stay["link"] or None),
             "price": stay["price"]}
 
 
@@ -511,7 +514,7 @@ def wanted(state, airports, now, home, skip=()):
                              "date": f"{datetime.fromisoformat(r['dep_local']):%d.%m.%y %H:%M}",
                              "title": f"✈️ {r['flight']}: {plan._city(r['dep'], airports)} - {plan._city(r['arr'], airports)}",
                              "codes": r.get("codes", []), "start": trip["start"] if trip else day, "end": trip["end"] if trip else r["arr_local"][:10],
-                             "name": trip["name"] if trip else plan._city(away, airports)}
+                             "name": trip["name"] if trip else plan._city(away, airports), "price": r.get("price", "")}
     for sid, r in state.get("ground", {}).items():
         if r["arr_local"][:10] < today:
             continue
@@ -522,8 +525,16 @@ def wanted(state, airports, now, home, skip=()):
                               "date": f"{datetime.fromisoformat(r['dep_local']):%d.%m.%y %H:%M}",
                               "title": f"{plan.EMOJI.get(r['mode'], '🚌')} {number + ': ' if number else ''}{r['dep']} - {r['arr']}",
                               "codes": r.get("codes", []), "start": trip["start"] if trip else day,
-                              "end": trip["end"] if trip else r["arr_local"][:10]}
+                              "end": trip["end"] if trip else r["arr_local"][:10], "price": r.get("price", "")}
     return out
+
+
+def _same_row(old, new):
+    """Whether two specs of a booking write the same row, but for its price: they differ only in the price (or
+    the older one was saved without one), or in what only picks or names the doc: the trip's name, and a flight's
+    or ride's trip dates (they grow when the trip gets another flight). Such a change never empties the row."""
+    keep = ("price", "name") + (("start", "end") if old.get("what") == "leg" else ())
+    return old != new and {**old, **dict.fromkeys(keep, "")} == {**new, **dict.fromkeys(keep, "")}
 
 
 def _stub(name):
@@ -532,7 +543,7 @@ def _stub(name):
         cells = [{"startIndex": start + 2 + 2 * i, "endIndex": start + 4 + 2 * i, "content": [{"paragraph": {"elements": [
             {"startIndex": start + 3 + 2 * i, "endIndex": start + 4 + 2 * i, "textRun": {"content": h + "\n"}}]}}]} for i, h in enumerate(heads)]
         return {"startIndex": start, "table": {"tableRows": [{"tableCells": cells}]}}
-    return {"title": name, "body": {"content": [table(10, ["Place", "Dates", "Accommodation", "Price", "Comments"]),
+    return {"title": name, "body": {"content": [table(10, ["Place", "Dates", "Stay", "Price", "Comments"]),
                                                   table(100, ["Transport", "Date", "Price", "Comments"])]}}
 
 
@@ -593,7 +604,7 @@ class TripDocs:
             if not t:
                 return
             how, r = leg_row(t, spec)
-            values = {"transport": spec["title"], "date": spec["date"],
+            values = {"transport": spec["title"], "date": spec["date"], "price": spec.get("price", ""),
                       "comments": "Booking code: " + ", ".join(spec["codes"]) if spec["codes"] else ""}
             if how == "fill":
                 self.batch(doc_id, fill(t, r, values))
@@ -620,6 +631,18 @@ class TripDocs:
         elif how == "insert":
             self._insert_and_fill(doc_id, "plan", r, stay_cells(spec))
 
+    def price(self, doc_id, spec):
+        """A booking's new price into the Price cell of its row, when that cell is empty (yours is kept)."""
+        if not spec.get("price"):
+            return
+        kind = "transport" if spec["what"] == "leg" else "plan"
+        t = self._table(doc_id, kind)
+        if not t:
+            return
+        how, r = leg_row(t, spec) if kind == "transport" else stay_row(t, spec)
+        if how in ("done", "fill") and any(c["text"] for c in t["rows"][r]):
+            self.batch(doc_id, fill(t, r, {"price": spec["price"]}))
+
     def _car_in_transport(self, doc_id, car):
         t = self._table(doc_id, "transport")
         if not t:
@@ -637,10 +660,10 @@ class TripDocs:
     def remove(self, doc_id, spec):
         if spec["what"] == "stay":
             t = self._table(doc_id, "plan")
-            col = t and t["cols"].get("accommodation")
+            col = t and t["cols"].get("stay")
             for r, row in enumerate(t["rows"][1:] if t else [], 1):
                 if col is not None and any(spec["code"] in l or l == spec["link"] for l in row[col]["links"]):
-                    self.batch(doc_id, clear(t, r, ["accommodation", "price"]))
+                    self.batch(doc_id, clear(t, r, ["stay", "price"]))
                     return
         elif spec["what"] == "leg":
             t = self._table(doc_id, "transport")
@@ -661,6 +684,11 @@ class TripDocs:
         waiting = [i for i in desired if i in done and not done[i]["doc"] and i not in steps["update"]]
         files = self.files(now.date())
         today = now.date().isoformat()
+        for i in [i for i in steps["update"] if _same_row(done[i]["spec"], desired[i])]:  # its price into its row,
+            steps["update"].remove(i)                                                     # nothing written again
+            if done[i]["doc"] in files and desired[i]["end"] >= today:
+                self.price(done[i]["doc"], desired[i])
+            done[i]["spec"] = desired[i]
         for i in steps["remove"] + steps["update"]:
             if done[i]["spec"]["end"] >= today and done[i]["doc"] in files:
                 self.remove(done[i]["doc"], done[i]["spec"])

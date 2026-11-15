@@ -2,6 +2,7 @@
 import csv
 import json
 import re
+import unicodedata
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 from html.parser import HTMLParser
@@ -65,6 +66,7 @@ class Parsed:
     old_legs: list = field(default_factory=list)  # legs a rebooking replaces
     latest_date: date | None = None               # latest date mentioned anywhere in the email
     codes: tuple = ()                             # booking codes of the email (also when no leg could be read)
+    price: str = ""                               # what the booking costs in all, like the docs write it: "99€", "770 MYR"
 
 
 def load_airports(path, zone=None):
@@ -523,6 +525,70 @@ def message_parts(msg):
     return subject, sender, received, html, plain
 
 
+def _fold(text):
+    """Lower case without accents: "Đà Nẵng" -> "da nang"."""
+    text = text.replace("Đ", "D").replace("đ", "d")
+    return "".join(c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c)).lower()
+
+
+_NAMED = {}
+AIRPORT_WORDS = r"\b(?:international|intl|airport|airfield|aerodrome|regional|domestic|air base)\b"
+
+
+def _airport_names(airports):
+    """{name without spaces: code}: each airport's name without words like "International Airport" ("tansonnhat")
+    and the city of a town with one airport ("phuquoc", "danang"), when only one airport has it."""
+    if id(airports) not in _NAMED:
+        keys, towns = {}, {}
+        for code, a in airports.items():
+            core = re.sub(r"[^a-z]", "", re.sub(AIRPORT_WORDS, " ", _fold(a.name)))
+            if len(core) >= 5:
+                keys.setdefault(core, set()).add(code)
+            towns.setdefault(re.sub(r"[^a-z]", "", _fold(a.city)), set()).add(code)
+        for town, codes in towns.items():
+            if len(town) >= 6 and len(codes) == 1:
+                keys.setdefault(town, set()).update(codes)
+        _NAMED[id(airports)] = {k: next(iter(c)) for k, c in keys.items() if len(c) == 1}
+    return _NAMED[id(airports)]
+
+
+def named_airports(lines, flight, airports):
+    """Airports named in words near the flight number (15 lines either side, or everywhere when it is not there), in
+    the order they come: one to four words that, run together, are an airport's name or its town's ("Tan Son" "Nhat",
+    "Phú Quốc", "Đà Nẵng"). For emails that give no airport codes and town names in their own language."""
+    at = [i for i, line in enumerate(lines) if flight and re.search(rf"\b{flight[:2]}\s?{flight[2:]}\b", line)]
+    near = sorted({j for i in at for j in range(max(0, i - 15), i + 16)}) if at else range(len(lines))
+    words = re.findall(r"[a-z]+", _fold(" ".join(lines[j] for j in near if j < len(lines))))
+    names, out = _airport_names(airports), []
+    for i in range(len(words)):
+        for n in (4, 3, 2, 1):
+            code = names.get("".join(words[i:i + n]))
+            if code:
+                if code not in out:
+                    out.append(code)
+                break
+    return out
+
+
+# the line that gives a booking's price: its total first, else a price or fare
+PRICE_LABELS = (r"(?:grand |order |booking )?total(?: price| amount| cost| fare| paid| charged| to pay)?|totaal(?:bedrag|prijs)?|"
+                r"amount (?:paid|charged)|you paid|betaald bedrag|te betalen(?: bedrag)?|paid",
+                r"(?:ticket |total )?(?:price|prijs|fare)s?")
+
+
+def booking_price(lines):
+    """The booking's total from its email: the first price on or within two lines after a line that starts with a
+    total's label, else with a price's; "" when none."""
+    import stays
+    for label in PRICE_LABELS:
+        for i, line in enumerate(lines):
+            if re.match(rf"(?i)\s*(?:{label})\b", line):
+                found = next((p for p in map(stays.price, [line] + lines[i + 1:i + 3]) if p), "")
+                if found:
+                    return found
+    return ""
+
+
 def parse_email(msg, airports, airlines, places=None, home_tz="Europe/Amsterdam"):
     """places: GeoNames towns (ground.load_cities) for the time zones of train, bus and ferry stations."""
     subject, sender, received, html, plain = message_parts(msg)
@@ -548,8 +614,12 @@ def parse_email(msg, airports, airlines, places=None, home_tz="Europe/Amsterdam"
         found = [Leg(l.flight, l.dep, l.arr, l.dep_local, l.arr_local, tuple(dict.fromkeys(list(l.codes) + list(codes))),
                      "", l.day, l.mode, l.dep_tz, l.arr_tz, l.arr_guess) for l in found]
         dates = [d for line in [subject] + lines for _, d in _dates(line, received)]
+        price = booking_price(lines)
+        if found and not price and lines is body:  # the price only on the PDF ticket
+            price = booking_price(ground.pdf_lines(msg))
         return Parsed(_kind(subject, lines), found, _passengers(body, []), bool(found), [],  # a PDF's table headers are no names
-                      max(dates).date() if dates else None, tuple(dict.fromkeys(list(codes) + [c for l in found for c in l.codes])))
+                      max(dates).date() if dates else None, tuple(dict.fromkeys(list(codes) + [c for l in found for c in l.codes])),
+                      price)
     structured = reservations(html) if html else []
     markup = jsonld_legs(html, airports) if html else []
     new, old = _labelled_legs(lines, airlines, airports, cities, received)
@@ -564,6 +634,20 @@ def parse_email(msg, airports, airlines, places=None, home_tz="Europe/Amsterdam"
                 arr_local=m.arr_local or t.arr_local, day=m.day or t.day))
     else:
         legs = text_legs
+    import ground
+    pdf = None
+    if any(l.flight and not l.dep and not l.arr for l in legs):  # no codes and towns in another language: their names,
+        fixed = []                                                # in the email, else in its PDF (Vliegwinkel)
+        for l in legs:
+            if l.flight and not l.dep and not l.arr:
+                found = named_airports(lines, l.flight, airports)
+                if len(found) < 2:
+                    pdf = ground.pdf_lines(msg) if pdf is None else pdf
+                    found = named_airports(pdf, l.flight, airports)
+                if len(found) >= 2:
+                    l = replace(l, dep=found[0], arr=found[1])
+            fixed.append(l)
+        legs = fixed
     agency = f"{_agency_name(sender)} {numbers[0]}" if numbers else ""
     out, seen = [], set()
     for l in legs:
@@ -576,6 +660,9 @@ def parse_email(msg, airports, airlines, places=None, home_tz="Europe/Amsterdam"
     old = [Leg(l.flight, l.dep, l.arr, l.dep_local, l.arr_local, tuple(dict.fromkeys(pnrs + numbers[:1])), agency, l.day) for l in old]
     dates = [d for line in [subject] + lines for _, d in _dates(line, received)]
     names = [((r.get("underName") or {}).get("name") or "").strip() for r in structured if isinstance(r.get("underName"), dict)]
+    price = booking_price(lines)
+    if out and not price:  # the price only on the PDF ticket (Travelfrom)
+        price = booking_price(ground.pdf_lines(msg) if pdf is None else pdf)
     return Parsed(_kind(subject, lines), out, _passengers(lines, names),
                   bool(out or _occurrences(lines, airlines, airports, cities)), old, max(dates).date() if dates else None,
-                  tuple(dict.fromkeys(pnrs + numbers[:1])))
+                  tuple(dict.fromkeys(pnrs + numbers[:1])), price)

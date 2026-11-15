@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import tripdocs  # noqa: E402
 from parse import Airport  # noqa: E402
 
-PLAN = ["Place", "Dates", "Accommodation", "Price", "Comments"]
+PLAN = ["Place", "Dates", "Stay", "Price", "Comments"]  # some tests below keep "Accommodation", as older docs have it
 TRANSPORT = ["Transport", "Date", "Price", "Comments"]
 
 
@@ -515,6 +515,33 @@ def test_reply_and_markdown_helpers():
     assert tripdocs.without_suggestions(md) == "# **Plan**\n\n| Faro |\n\n# **Notes**\n\nmine"
     assert tripdocs._plain("[Hostel](https://x.example/?a=1) 20€") == "Hostel 20€"
     assert tripdocs._plain("| ✈️ U21234 | 03.05.31 07:00 |  | Booking code: ABC123, 26002 |") == "| ✈️ U21234 | 03.05.31 07:00 |  | |"
+
+
+def test_transport_prices_and_a_price_that_comes_later():
+    g = FakeGoogle({"d1": {"name": "Portugal 2027", "tables": [rows(PLAN, ["Faro", "28.02–05.03.27", "", "", ""]), rows(TRANSPORT)]}})
+    seen = {"FR1@2027-02-28": {"flight": "FR1", "dep": "AMS", "arr": "FAO", "dep_local": "2027-02-28T10:00:00",
+                               "arr_local": "2027-02-28T12:00:00", "codes": ["ABC123"], "price": "120.50€"},
+            "FR2@2027-03-05": {"flight": "FR2", "dep": "FAO", "arr": "AMS", "dep_local": "2027-03-05T13:00:00",
+                               "arr_local": "2027-03-05T17:00:00", "codes": ["XYZ789"]}}
+    state = {"seen": seen}
+    docs = tripdocs.TripDocs(g, "folder", lambda m: None)
+    docs.run(state, AIRPORTS, NOW, ["AMS"])
+    rows_ = texts(g.docs["d1"]["tables"][1])
+    assert rows_[1] == ["✈️ FR1: Amsterdam - Faro", "28.02.27 10:00", "120.50€", "Booking code: ABC123"], rows_
+    assert rows_[2][2] == ""
+    g.docs["d1"]["tables"][1][2][3]["text"] += " Window seats"  # yours, kept
+    seen["FR2@2027-03-05"]["price"] = "80 GBP"  # read later: only the price is written, the row stays
+    docs.run(state, AIRPORTS, NOW, ["AMS"])
+    rows_ = texts(g.docs["d1"]["tables"][1])
+    assert rows_[2] == ["✈️ FR2: Faro - Amsterdam", "05.03.27 13:00", "80 GBP", "Booking code: XYZ789 Window seats"], rows_
+    assert state["docs"]["done"]["leg:FR2@2027-03-05"]["spec"]["price"] == "80 GBP"
+    del seen["FR1@2027-02-28"]["price"]  # saved before prices were read: no row written again
+    docs.run(state, AIRPORTS, NOW, ["AMS"])
+    assert texts(g.docs["d1"]["tables"][1])[1][2] == "120.50€"
+    for spec in (d["spec"] for d in state["docs"]["done"].values()):  # the trip got another name and longer dates
+        spec.update(name="Elsewhere", start="2027-02-01", end="2027-03-31")
+    docs.run(state, AIRPORTS, NOW, ["AMS"])
+    assert texts(g.docs["d1"]["tables"][1])[2][3] == "Booking code: XYZ789 Window seats"  # your text still there
 
 
 # --- prices in euros ---

@@ -1,5 +1,6 @@
 """Tests for sync.py with in-memory calendar and Cairn. Run: python mail/test_sync.py (no pytest needed)."""
 import sys
+from dataclasses import replace
 from datetime import date, datetime
 from pathlib import Path
 
@@ -314,6 +315,16 @@ def test_ground_legs_are_tracked_for_busy_blocks():
     state = {}
     run(booking(bus()), state, FakeCalendar(foreign_at={start}), con)
     assert len(state["ground"]) == 1
+
+def test_the_bookings_price_on_its_first_leg():
+    cal, con, state = FakeCalendar(), FakeCairn(), {}
+    back = leg("KL1235", D(2026, 11, 20, 10, 0), D(2026, 11, 20, 12, 0), "LIS", "AMS")
+    p = replace(booking(back, leg()), price="240€")
+    run(p, state, cal, con)
+    assert state["seen"]["KL1234@2026-11-16"]["price"] == "240€" and state["seen"]["KL1235@2026-11-20"]["price"] == ""
+    run(booking(leg()), state, cal, con)  # a later email without the price keeps it
+    assert state["seen"]["KL1234@2026-11-16"]["price"] == "240€"
+
 
 if __name__ == "__main__":
     tests = [f for n, f in sorted(globals().items()) if n.startswith("test_")]
