@@ -519,7 +519,7 @@ def test_reply_and_markdown_helpers():
 
 # --- prices in euros ---
 
-RATES = {"USD": 1.16, "VND": 30500.0, "LAK": 25000.0}
+RATES = {"USD": 1.16, "VND": 30500.0, "LAK": 25000.0, "HKD": 9.0}
 
 
 def flat_doc(blocks):
@@ -574,6 +574,7 @@ def test_prices_in_euros():
     assert ok("10.45 USD", 9.01, True) and ok("773760 VND", 25.37, True) and ok("773.760 VND", 25.37, True)
     assert ok("99€", 99, False) and ok("€64", 64, False) and ok("~€3", 3, False) and ok("18,90€", 18.9, False)
     assert ok("1,234.50 EUR", 1234.5, False) and ok("20 USD + 5", 21.55, True) and ok("$10", 8.62, True)
+    assert ok("671.22 HKD", 74.58, True) and ok("HK$ 671.22", 74.58, True)
     assert ok("130+45", None, False) and ok("12 XYZ", None, False) and ok("free", None, False)
 
 

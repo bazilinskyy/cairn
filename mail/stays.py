@@ -30,7 +30,10 @@ TYPES = [("Hostel", r"hostel|\bdorm|\bbed in\b|capsule"),
          ("Room", r"\broom\b|guest ?house|homestay|b&b|bed and breakfast|pension"),
          ("House", r"\bhouse\b|villa|\bhome\b|cottage|chalet|cabin|bungalow"),
          ("Hotel", r"hotel|\binn\b|resort|motel|lodge")]
-CURRENCY = {"€": "EUR", "$": "USD", "£": "GBP", "Rs.": "INR", "Rs": "INR", "₹": "INR", "Rp": "IDR"}
+DOLLARS = {"US$": "USD", "HK$": "HKD", "NZ$": "NZD", "NT$": "TWD", "AU$": "AUD", "CA$": "CAD", "MX$": "MXN",
+           "S$": "SGD", "A$": "AUD", "C$": "CAD", "R$": "BRL"}  # before "$" alone: "HK$ 671.22" is not US dollars
+CURRENCY = {"€": "EUR", **DOLLARS, "$": "USD", "£": "GBP", "Rs.": "INR", "Rs": "INR", "₹": "INR", "Rp": "IDR",
+            "₫": "VND", "฿": "THB", "₭": "LAK"}
 
 
 def type_of(*texts):
@@ -43,7 +46,8 @@ def type_of(*texts):
 
 
 def price(text):
-    m = re.search(r"(€|\$|£|₹|\bRs\.?|\bRp|\b[A-Z]{3}\b)\s*(\d[\d.,]*)|(\d[\d.,]*)\s*(€|\b[A-Z]{3}\b)", text or "")
+    dollars = "|".join(r"\b" + re.escape(d) for d in DOLLARS)
+    m = re.search(rf"({dollars}|€|\$|£|₹|₫|฿|₭|\bRs\.?|\bRp|\b[A-Z]{{3}}\b)\s*(\d[\d.,]*)|(\d[\d.,]*)\s*(€|₫|฿|₭|\b[A-Z]{{3}}\b)", text or "")
     if not m:
         return ""
     cur, num = (m.group(1), m.group(2)) if m.group(1) else (m.group(4), m.group(3))

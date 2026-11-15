@@ -755,8 +755,9 @@ class TripDocs:
 # --- prices in euros: "≈ 25.39€" under a price in another currency, "Total: 123.45€" under each table ---
 
 RATES = "https://open.er-api.com/v6/latest/EUR"  # free, no key, every currency (the ECB's rates have no VND or LAK)
-SYMBOLS = {"US$": "USD", "HK$": "HKD", "€": "EUR", "$": "USD", "£": "GBP", "฿": "THB", "₫": "VND", "₭": "LAK",
-           "₺": "TRY", "₹": "INR", "¥": "JPY", "zł": "PLN"}
+SYMBOLS = {"US$": "USD", "HK$": "HKD", "NZ$": "NZD", "NT$": "TWD", "AU$": "AUD", "CA$": "CAD", "MX$": "MXN", "S$": "SGD",
+           "A$": "AUD", "C$": "CAD", "R$": "BRL", "€": "EUR", "$": "USD", "£": "GBP", "฿": "THB", "₫": "VND", "₭": "LAK",
+           "₺": "TRY", "₹": "INR", "¥": "JPY", "zł": "PLN"}  # the dollars with a prefix before "$" alone
 CUR_RX = re.compile("|".join(re.escape(k) for k in SYMBOLS) + r"|\b[A-Z]{3}\b")
 NUM_RX = re.compile(r"\d[\d.,]*")
 EURO_RX = re.compile(r"≈\s*(\d[\d.,]*)\s*€")

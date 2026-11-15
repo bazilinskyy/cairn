@@ -82,6 +82,9 @@ def test_price():
     assert stays.price("9.00 EUR") == "9€"
     assert stays.price("Rs. 2,759.40") == "2759.40 INR"
     assert stays.price("Rp 240,241") == "240241 IDR"
+    assert stays.price("Total Price HK$ 671.22") == "671.22 HKD"  # not US dollars
+    assert stays.price("US$ 30") == "30 USD" and stays.price("$ 30") == "30 USD" and stays.price("S$45") == "45 SGD"
+    assert stays.price("773.760 ₫") == "773760 VND" and stays.price("฿ 1,200") == "1200 THB"
     assert stays.price("nothing") == ""
 
 
