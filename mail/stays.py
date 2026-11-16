@@ -47,7 +47,7 @@ def type_of(*texts):
 
 def price(text):
     dollars = "|".join(r"\b" + re.escape(d) for d in DOLLARS)
-    m = re.search(rf"({dollars}|€|\$|£|₹|₫|฿|₭|\bRs\.?|\bRp|\b[A-Z]{{3}}\b)\s*(\d[\d.,]*)|(\d[\d.,]*)\s*(€|₫|฿|₭|\b[A-Z]{{3}}\b)", text or "")
+    m = re.search(rf"({dollars}|€|\$|£|₹|₫|฿|₭|\bRs\.?|\bRp|\b[A-Z]{{3}}\b)\s*(\d[\d.,]*)|(\d[\d.,]*)\s*(€|₫|฿|₭|\$|£|\b[A-Z]{{3}}\b)", text or "")
     if not m:
         return ""
     cur, num = (m.group(1), m.group(2)) if m.group(1) else (m.group(4), m.group(3))
@@ -70,9 +70,9 @@ def _date(text, hint):
     found = _dates(text, hint)
     if found:
         return found[0][1].date()
-    m = re.search(r"\b(\d{1,2})-(\d{1,2})-(\d{4})\b", text)
+    m = re.search(r"\b(\d{1,2})([-.])(\d{1,2})\2(\d{4})\b", text)  # 05-08-2026, 29.12.2026
     if m:
-        return date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+        return date(int(m.group(4)), int(m.group(3)), int(m.group(1)))
     m = re.search(rf"(?i)\b(\d{{1,2}})-({MONTH})-(\d{{4}})\b", text)
     if m:
         return date(int(m.group(3)), MONTHS[m.group(2).lower()], int(m.group(1)))
@@ -228,6 +228,7 @@ RENTALS = {
     "hertz.com": ("Hertz", r"my hertz reservation", r"cancell?"),
     "thrifty.com": ("Thrifty", r"my thrifty reservation", r"cancell?"),
     "goldcar": ("Goldcar", r"^check-out", r"^$"),
+    "localrent.com": ("Localrent", r"car rental voucher", r"cancel"),
 }
 PICK_UP = (r"picking up your car|pick[- ]?up(?: details| location| date)?|pickup(?: details)?|ophalen|afhalen|ophaallocatie|vertrek|"
            r"recogida|levantamento|prise en charge|abholung|ritiro")
@@ -271,6 +272,13 @@ def _block(lines, label, received):
     return "", None
 
 
+def _transaction(lines):
+    """CarTrawler's payment summary: "Transactievaluta: EUR" and "Transactiebedrag: 14.75" on lines of their own."""
+    amount = _after(lines, r"Transactiebedrag|Transaction amount", reach=0)
+    currency = _after(lines, r"Transactievaluta|Transaction currency", reach=0)
+    return price(f"{amount} {currency}") if amount and re.fullmatch(r"[A-Z]{3}", currency) else ""
+
+
 def _rental(provider, confirm, cancel):
     def rule(subject, lines, html, received):
         code = re.search(r"(?i)(?:ref\.?:?|reference|referentie|verwijzing|voucher|reservation|reservering|contrat[oa]|contratto|"
@@ -299,8 +307,13 @@ def _rental(provider, confirm, cancel):
         if not start:
             return None
         where, _, country = place.rpartition(", ")
+        link = ""
+        if provider == "Localrent":  # "Nha Trang, Rental office": the town, then the desk
+            where, country = place.split(",")[0], ""
+            link = _link(html, r"^Open booking page$", r"localrent\.com/.*booking") if html else ""
         return Stay("booking", "car", place=where or country, country=country if where else "", start=start, end=end or start,
-                    price=price(_after(lines, r"Totaal(?:bedrag|prijs)?|Total(?: price| amount| cost)?|Prijs|Price")), **common)
+                    price=price(_after(lines, r"Totaal(?:bedrag|prijs)?|Total(?: price| amount| cost)?|Prijs|Price"))
+                    or _price_after(lines, r"Total service fee") or _transaction(lines), link=link, **common)
     return rule
 
 

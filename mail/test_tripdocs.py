@@ -177,25 +177,35 @@ def test_flights_go_to_transport_and_a_new_doc():
     assert texts(g.docs["new1"]["tables"][1])[2] == ["", "", "", ""]
 
 
-def test_rental_car_in_comments():
+def test_rental_car_in_transport():
     g = FakeGoogle({"d1": {"name": "Portugal 2026", "tables": [
-        rows(PLAN, ["Faro", "10–12.11.26", "", "", ""], ["Lagos", "12–14.11.26", "", "", "beach"]), rows(TRANSPORT)]}})
+        rows(PLAN, ["Faro", "10–12.11.26", "", "", ""], ["Lagos", "12–14.11.26", "", "", "beach"]),
+        rows(TRANSPORT, ["✈️ X1: Eindhoven - Faro", "10.11.26 13:45", "", ""], ["✈️ X2: Faro - Eindhoven", "16.11.26 18:00", "", ""])]}})
     car = {"what": "car", "code": "D1", "place": "Faro", "country": "Portugal", "start": "2026-11-12", "end": "2026-11-16",
            "type": "Rental car", "price": "50€", "link": "https://example.com/car"}
-    tripdocs.TripDocs(g, "folder", lambda m: None).run({"stays": {"D1": car}}, AIRPORTS, NOW, ["AMS"])
-    cell = g.docs["d1"]["tables"][0][2][4]
-    assert (cell["text"], cell["linked"], cell["link"]) == ("beach Rental car 12–16.11", "Rental car", "https://example.com/car"), cell
+    state = {"stays": {"D1": car}}
+    docs = tripdocs.TripDocs(g, "folder", lambda m: None)
+    docs.run(state, AIRPORTS, NOW, ["AMS"])
+    transport = g.docs["d1"]["tables"][1]
+    assert texts(transport)[1:] == [["✈️ X1: Eindhoven - Faro", "10.11.26 13:45", "", ""],
+                                    ["Rental car", "12–16.11.26", "50€", "Faro. Booking code: D1"],  # in date order
+                                    ["✈️ X2: Faro - Eindhoven", "16.11.26 18:00", "", ""]], texts(transport)
+    assert (transport[2][0]["linked"], transport[2][0]["link"]) == ("Rental car", "https://example.com/car")
+    assert texts(g.docs["d1"]["tables"][0])[2][4] == "beach"  # nothing in the Plan
+    car["cancelled"] = True
+    docs.run(state, AIRPORTS, NOW, ["AMS"])
+    assert texts(g.docs["d1"]["tables"][1])[2] == ["", "", "", ""]
 
 
-def test_rental_car_and_its_stay_of_the_same_day():  # booked together: the stay's new row first, the car in it
+def test_rental_car_after_the_flight_of_its_day():
     g = FakeGoogle({"d1": {"name": "Portugal 2026", "tables": [rows(PLAN), rows(TRANSPORT, ["✈️ X1: Eindhoven - Faro", "10.12.26 13:45", "", ""])]}})
     car = {"what": "car", "code": "C1", "place": "Faro - Airport", "country": "", "start": "2026-12-10", "end": "2026-12-14",
-           "type": "Rental car", "price": "", "link": "https://example.com/car"}
+           "type": "Rental car", "price": "", "link": ""}
     flat = stay("S1", "Lagos", "2026-12-10", "2026-12-14")
     tripdocs.TripDocs(g, "folder", lambda m: None).run({"stays": {"C1": car, "S1": flat}}, AIRPORTS, NOW, ["AMS"])
     plan, transport = g.docs["d1"]["tables"]
-    assert [c["text"] for c in plan[1]][:2] == ["Lagos", "10–14.12.26"] and "Rental car" in plan[1][4]["text"], plan
-    assert len(transport) == 2, transport
+    assert [c["text"] for c in plan[1]][:2] == ["Lagos", "10–14.12.26"], plan
+    assert texts(transport)[2] == ["Rental car", "10–14.12.26", "", "Faro - Airport. Booking code: C1"], texts(transport)
 
 def test_lone_flight_home_names_the_doc_after_where_it_left():
     g = FakeGoogle({})
@@ -232,14 +242,6 @@ def test_a_ride_without_a_doc_waits_for_one():
     docs.run(state, AIRPORTS, NOW, ["AMS"])  # the stay makes one, and the bus joins it
     assert g.created == ["Portugal 2026"]
     assert texts(g.docs["new1"]["tables"][1])[1] == ["🚌 Faro - Lagos", "12.11.26 15:30", "", "Booking code: B1"]
-
-
-def test_rental_car_without_its_stay_goes_to_transport():
-    g = FakeGoogle({"d1": {"name": "Portugal 2026", "tables": [rows(PLAN, ["Faro", "10–11.11.26", "", "", ""]), rows(TRANSPORT)]}})
-    car = {"what": "car", "code": "D2", "place": "Lagos", "country": "Portugal", "start": "2026-11-12", "end": "2026-11-16",
-           "type": "Rental car", "price": "50€", "link": "https://example.com/car"}
-    tripdocs.TripDocs(g, "folder", lambda m: None).run({"stays": {"D2": car}}, AIRPORTS, NOW, ["AMS"])
-    assert texts(g.docs["d1"]["tables"][1])[1] == ["Rental car", "12–16.11.26", "50€", "Lagos"]
 
 
 def test_dry_run_writes_nothing():

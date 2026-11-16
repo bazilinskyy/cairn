@@ -196,6 +196,20 @@ def test_stays_sent_once_and_cancellations_deleted():
     assert state["stays"]["C1"]["contrail"] is None
 
 
+def test_a_stay_cairn_keeps_out_is_not_sent_again():
+    class Keeping(StayCairn):
+        def add_stay(self, stay):
+            self.posted.append(stay)
+            return {"ignored": "deleted before", "code": stay["code"]} if stay["code"] == "X1" else {"id": len(self.posted)}
+    state = {"stays": {c: {"what": "stay", "provider": "Booking.com", "code": c, "place": "Faro", "country": "Portugal",
+                           "start": "2026-10-22", "end": "2026-10-23", "type": "Hotel", "price": ""} for c in ("X1", "X2")}}
+    con = Keeping()
+    tripmail.sync_stays(state, con)  # the one Cairn keeps out does not stop the others
+    assert [s["code"] for s in con.posted] == ["X1", "X2"] and state["stays"]["X1"]["contrail"][0] is None
+    tripmail.sync_stays(state, con)
+    assert len(con.posted) == 2
+
+
 def test_cairn_lookup():
     con = StubCairn({("POST", "/api/flights/lookup"): {"from": "MAD", "to": "AMS", "airline": "KLM",
                         "departure_time": "2026-11-16 16:10+01:00", "arrival_time": "2026-11-16 18:45+01:00"}})

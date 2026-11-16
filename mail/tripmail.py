@@ -517,7 +517,7 @@ def sync_stays(state, con, dry=False):
     for s in state.get("stays", {}).values():
         sent = s.get("contrail")
         if s.get("cancelled"):
-            if sent:
+            if sent and sent[0]:  # not one Cairn kept out (no id)
                 log(f"{'would delete' if dry else 'delete'} Cairn stay {s['place']} {s['start']} (cancelled)")
                 if not dry:
                     con.delete(f"stays/{sent[0]}")
@@ -529,7 +529,10 @@ def sync_stays(state, con, dry=False):
             continue
         log(f"{'would send' if dry else 'send'} Cairn stay {s['what']} {s['place']} {s['start']}..{s['end']}")
         if not dry:
-            s["contrail"] = [con.add_stay(body)["id"], signature]
+            answer = con.add_stay(body)  # {"ignored": ...} without an id: you deleted it in Cairn, or it is a car's
+            if "id" not in answer:      # counter contract; remembered all the same, so it is not sent again
+                log(f"Cairn kept stay {s['place']} {s['start']} out: {answer.get('ignored') or answer}")
+            s["contrail"] = [answer.get("id"), signature]
 
 
 def _ahead(kind, spec, now):

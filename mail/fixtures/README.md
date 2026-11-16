@@ -38,3 +38,4 @@ tables and wording are the airline's own.
 | `discovercars_nl.eml` | DiscoverCars rental car (Dutch) | written by hand in the same layout |
 | `vipcars_nl.eml` | VIPCars pick-up reminder (Dutch) | written by hand in the same layout; comma decimals (`THB 4.500,00`) |
 | `booking_partner_offer.eml` | Booking.com confirmation in the newer layout (partner offers: "Confirmation:", "You paid", "See confirmation online") | written by hand in the same layout |
+| `localrent_voucher.eml` | Localrent rental car voucher | written by hand in the same layout; dates `29.12.2026`, prices `100.00 $`, place "town, desk" |

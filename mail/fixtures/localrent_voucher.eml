@@ -1,0 +1,24 @@
+From: Localrent.com <mail@localrent.com>
+Subject: Car rental voucher No.1234567
+Date: Sun, 15 Nov 2026 10:40:53 +0000
+To: jan.testers@example.com
+Content-Type: text/html; charset="utf-8"
+MIME-Version: 1.0
+
+<html><body><table><tr><td>
+<h1>Car rental voucher &#8470; 1234567</h1>
+<p>Please find attached the voucher with the detailed description of your order.</p>
+<h2>Managing your booking</h2>
+<p>On the booking page you can:</p><ul><li>check status</li><li>make changes</li></ul>
+<p><a href="https://example.com/localrent-booking-page">Open booking page</a></p>
+<h2>To pick up your car, you'll need</h2>
+<p>An International Driving Permit (IDP) together with your national driving licence.</p>
+<p>Your order details: Test Car, Automatic</p>
+<p>The car is booked and waiting for you.</p>
+<p>Pickup</p><p>29.12.2026</p><p>Nha Trang, Rental office</p><p>09:00</p>
+<p>Drop off</p><p>01.01.2027</p><p>Nha Trang, Rental office</p><p>09:00</p>
+<p>Total service fee</p>
+<p>Amount Paid</p>
+<p>100.00 $</p>
+<p>15.00 $</p>
+</td></tr></table></body></html>

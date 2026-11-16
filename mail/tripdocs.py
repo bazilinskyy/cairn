@@ -2,7 +2,7 @@
 (Place | Dates | Stay | Price | Comments; "Accommodation" in older docs) and a Transport table (Transport | Date | Price | Comments).
 
 tripmail fills them from the bookings it reads: a hotel or Airbnb goes into the Plan row for that place and dates
-(empty cells only) or a new row in date order; a rental car into the Comments of the row of its pick-up day; each
+(empty cells only) or a new row in date order; each rental car and
 flight into a Transport row. A cancelled stay empties the Stay and Price cells. A trip without a doc gets
 a new one, named like "Portugal 2026", that anyone with its link can edit (and a Things to-do, by tripmail.py).
 Tables with no data yet get three empty rows. New docs are copies of a template doc (`python mail/tripdocs.py template
@@ -277,19 +277,6 @@ def _write(cell, text, link=None):
                                  "fields": "bold,link,weightedFontFamily"}}]
 
 
-def car_requests(cell, car):
-    """'Rental car 26–30.09' with 'Rental car' linked, at the end of the cell (after a space when it has text)."""
-    i, lead = (cell["end"], " ") if cell["text"] else (cell["start"], "")
-    text = lead + "Rental car " + car_text(car)
-    out = [{"insertText": {"location": {"index": i}, "text": text}},
-           {"updateTextStyle": {"range": {"startIndex": i, "endIndex": i + _len(text)}, "textStyle": {"bold": False, **CELL_FONT},
-                                "fields": "bold,link,weightedFontFamily"}}]
-    if car["link"]:
-        out.append({"updateTextStyle": {"range": {"startIndex": i + _len(lead), "endIndex": i + _len(lead + "Rental car")},
-                                        "textStyle": {"link": {"url": car["link"]}}, "fields": "link"}})
-    return out
-
-
 def fill(table, r, values):
     """Requests that write {column: text or (text, link)} into the empty cells of row r, last cell first."""
     out = []
@@ -467,14 +454,26 @@ def car_text(car):
     return f"{s:%d}–{e:%d.%m}" if (s.year, s.month) == (e.year, e.month) else f"{s:%d.%m}–{e:%d.%m}"
 
 
-def car_row(plan, car):
-    """The Plan row whose stay holds the pick-up day (the one starting that day first), else None."""
-    day, best = date.fromisoformat(car["start"]), None
-    for r, row in enumerate(plan["rows"][1:], 1):
-        days = parse_dates(row[plan["cols"]["dates"]]["text"]) if "dates" in plan["cols"] else None
-        if days and days[0] <= day <= days[1] and (best is None or days[0] == day):
-            best = r
-    return best
+def car_values(car):
+    """The Transport row of a rental car: "Rental car" linked to the booking, its days, its price, its town and code."""
+    days = car_text(car) + "." + car["end"][2:4]
+    return {"transport": ("Rental car", car["link"] or None), "date": days, "price": car["price"],
+            "comments": ". ".join(x for x in (car["place"], f"Booking code: {car['code']}") if x)}
+
+
+def car_transport_row(transport, car):
+    """("done", row) for the Transport row of this rental car (its code in a link or its comments); else its place in
+    date order, as leg_row: ("fill", row) for an empty row there, or ("insert", row to insert below)."""
+    rows, me, after = transport["rows"], (date.fromisoformat(car["start"]), "23:59"), 0  # after that day's flights
+    for r, row in enumerate(rows[1:], 1):
+        if any(car["code"] in l for c in row for l in c["links"]) or f"Booking code: {car['code']}" in " ".join(c["text"] for c in row):
+            return "done", r
+        when = _when(" ".join(c["text"] for c in row))
+        if when and when <= me:
+            after = r
+    if after + 1 < len(rows) and not any(c["text"] for c in rows[after + 1]):
+        return "fill", after + 1
+    return "insert", after
 
 
 def _ends(title):
@@ -664,19 +663,16 @@ class TripDocs:
             elif how == "insert":
                 self._insert_and_fill(doc_id, "transport", r, values)
             return
+        if spec["what"] == "car":  # a row of its own in Transport, so its price counts in the Transport total
+            t = self._table(doc_id, "transport")
+            how, r = car_transport_row(t, spec) if t else (None, None)
+            if how == "fill":
+                self.batch(doc_id, fill(t, r, car_values(spec)))
+            elif how == "insert":
+                self._insert_and_fill(doc_id, "transport", r, car_values(spec))
+            return
         t = self._table(doc_id, "plan")
         if not t:
-            return
-        if spec["what"] == "car":
-            r = car_row(t, spec)
-            col = "car" if "car" in t["cols"] else "comments"
-            if r is None or col not in t["cols"]:
-                self._car_in_transport(doc_id, spec)
-                return
-            cell = t["rows"][r][t["cols"][col]]
-            if any(spec["code"] in l or l == spec["link"] for l in cell["links"]):
-                return
-            self.batch(doc_id, car_requests(cell, spec))
             return
         how, r = stay_row(t, spec)
         if how == "fill":  # the place and dates too when the row has none
@@ -688,27 +684,13 @@ class TripDocs:
         """A booking's new price into the Price cell of its row, when that cell is empty (yours is kept)."""
         if not spec.get("price"):
             return
-        kind = "transport" if spec["what"] == "leg" else "plan"
+        kind = "plan" if spec["what"] == "stay" else "transport"
         t = self._table(doc_id, kind)
         if not t:
             return
-        how, r = leg_row(t, spec) if kind == "transport" else stay_row(t, spec)
+        how, r = {"leg": leg_row, "car": car_transport_row}.get(spec["what"], stay_row)(t, spec)
         if how in ("done", "fill") and any(c["text"] for c in t["rows"][r]):
             self.batch(doc_id, fill(t, r, {"price": spec["price"]}))
-
-    def _car_in_transport(self, doc_id, car):
-        t = self._table(doc_id, "transport")
-        if not t:
-            return
-        if any(car["code"] in l for row in t["rows"] for c in row for l in c["links"]):
-            return
-        values = {"transport": ("Rental car", car["link"] or None), "date": car_text(car) + "." + car["end"][2:4],
-                  "price": car["price"], "comments": car["place"]}
-        empty = next((r for r, row in enumerate(t["rows"][1:], 1) if not any(c["text"] for c in row)), None)
-        if empty:
-            self.batch(doc_id, fill(t, empty, values))
-        else:
-            self._insert_and_fill(doc_id, "transport", len(t["rows"]) - 1, values)
 
     def remove(self, doc_id, spec):
         if spec["what"] == "stay":
@@ -725,8 +707,11 @@ class TripDocs:
                 comments = t["rows"][r][t["cols"]["comments"]]["text"] if "comments" in t["cols"] else ""
                 mine = not comments or re.fullmatch(r"Booking code: [^\n]*", comments)
                 self.batch(doc_id, clear(t, r, [c for c in t["cols"] if c != "comments" or mine]))
-        else:
-            self.log(f"rental car {spec['code']} cancelled: check doc {self.names.get(doc_id, doc_id)!r} by hand")
+        else:  # a rental car: its Transport row emptied
+            t = self._table(doc_id, "transport")
+            how, r = car_transport_row(t, spec) if t else (None, None)
+            if how == "done":
+                self.batch(doc_id, clear(t, r, list(t["cols"])))
 
     def run(self, state, airports, now, home):
         import plan

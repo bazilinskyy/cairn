@@ -22,6 +22,18 @@ def test_booking_partner_offer():  # the newer layout: "Confirmation:", "You pai
     assert s.link == "https://secure.booking.com/tpi_confirmation.en-us.html?aid=1;auth_key=TESTKEY", s
 
 
+def test_car_price_from_the_payment_summary():
+    assert stays._transaction(["Transactievaluta: EUR", "Transactiebedrag: 14.75"]) == "14.75€"
+    assert stays._transaction(["Transaction currency: USD", "Transaction amount: 120.00"]) == "120 USD"
+    assert stays._transaction(["Transactiebedrag: 14.75"]) == ""
+
+
+def test_localrent_car():
+    s = load("localrent_voucher.eml")
+    assert (s.kind, s.what, s.provider, s.code, s.place, s.country) == ("booking", "car", "Localrent", "1234567", "Nha Trang", ""), s
+    assert (s.start, s.end, s.price, s.link) == (date(2026, 12, 29), date(2027, 1, 1), "100 USD", "https://example.com/localrent-booking-page"), s
+
+
 def test_booking_hotel():
     s = load("hotel_booking.eml")
     assert (s.kind, s.what, s.provider, s.code) == ("booking", "stay", "Booking.com", "5000000001"), s
