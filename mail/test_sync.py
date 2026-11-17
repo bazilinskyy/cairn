@@ -328,14 +328,26 @@ def test_the_bookings_price_on_its_first_leg():
 
 def test_a_price_from_a_receipt_without_the_trip():
     cal, con, state = FakeCalendar(), FakeCairn(), {}
-    receipt = replace(booking(kind="booking"), codes=("AAVF5829",), price="31.6€")
+    receipt = replace(booking(kind="booking"), codes=("AAVF0000",), price="31.6€")
     run(receipt, state, cal, con)  # the receipt first: kept for the ticket
-    run(booking(leg(codes=("AAVF5829",))), state, cal, con)
+    run(booking(leg(codes=("AAVF0000",))), state, cal, con)
     assert state["seen"]["KL1234@2026-11-16"]["price"] == "31.6€"
     cal, con, state = FakeCalendar(), FakeCairn(), {}
     run(booking(leg(codes=("XYZ1",))), state, cal, con)  # the ticket first: the receipt adds its price
     run(replace(booking(), codes=("XYZ1",), price="12€"), state, cal, con)
     assert state["seen"]["KL1234@2026-11-16"]["price"] == "12€"
+
+
+def test_an_e_ticket_brings_the_airlines_code_to_the_booking():
+    cal, con, state = FakeCalendar(), FakeCairn(), {}
+    run(booking(leg(codes=("VW-12345678",))), state, cal, con)  # the agency's payment email: only its number
+    run(replace(booking(kind="change"), codes=("QWE123", "VW-12345678")), state, cal, con)  # its e-ticket, no legs read
+    assert state["seen"]["KL1234@2026-11-16"]["codes"] == ["QWE123", "VW-12345678"]
+    assert state["legs"][0]["codes"] == ["QWE123", "VW-12345678"]
+    run(booking(leg(codes=("VW-12345678",))), state, cal, con)  # the payment email read again keeps it
+    assert state["seen"]["KL1234@2026-11-16"]["codes"] == ["QWE123", "VW-12345678"]
+    run(replace(booking(kind="change"), codes=("OTHER1", "VW-1")), state, cal, con)  # another booking's: nothing
+    assert state["legs"][0]["codes"] == ["QWE123", "VW-12345678"]
 
 
 if __name__ == "__main__":

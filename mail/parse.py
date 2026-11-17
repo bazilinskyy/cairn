@@ -248,10 +248,11 @@ CODE_LABELS = sorted([
     "referentie van luchtvaartmaatschappij", "airline reference", "booking reference", "booking code",
     "boekingscode", "reserveringsnummer", "reservation number", "reservation", "confirmation code",
     "confirmation number", "bevestigingscode", "pnr", "booking", "customer reference", "klantreferentie",
-    "order number", "order", "bestelnummer", "referentie", "edreams-reserveringsnummer"], key=len, reverse=True)
+    "order number", "order", "bestelnummer", "referentie", "edreams-reserveringsnummer", "boekingsnummer",
+    "online inchecknummer"], key=len, reverse=True)
 CODE_RX = re.compile(r"(?i)(?<![\w-])(" + "|".join(map(re.escape, CODE_LABELS)) + r")\b")
 AGENCIES = {"edreams": "eDreams", "booking.com": "Booking.com", "gotogate": "Gotogate", "kiwi": "Kiwi.com",
-            "opodo": "Opodo", "expedia": "Expedia", "mytrip": "Mytrip", "trip.com": "Trip.com", "budgetair": "BudgetAir"}
+            "opodo": "Opodo", "csair": "China Southern", "expedia": "Expedia", "mytrip": "Mytrip", "trip.com": "Trip.com", "budgetair": "BudgetAir"}
 TITLE = r"(?:mr|mrs|ms|miss|dhr|mevr|mw|de heer|mevrouw)"
 NAME_RX = re.compile(rf"(?i)^(?:{TITLE}\.?\s+)?[^\W\d_][^\W\d_'’-]*(?:[\s'’-]+[^\W\d_]+){{1,3}}$")
 SLASH_NAME_RX = re.compile(r"^[A-Z][A-Z' -]+/[A-Z][A-Z' -]+?(?:\s+(?:MR|MRS|MS|MISS))?$")
@@ -437,9 +438,24 @@ def _codes(lines, airlines):
             if re.fullmatch(r"[A-Z0-9]{5,12}", value) and re.search(r"[A-Z]", value) and not _flights(value, airlines):
                 if value not in pnrs:
                     pnrs.append(value)
-            elif re.fullmatch(r"\d[\d-]{6,}\d", value) and value not in numbers:
+            elif (re.fullmatch(r"\d[\d-]{6,}\d", value) or NUMBER_RX.fullmatch(value)) and value not in numbers:
                 numbers.append(value)
     return pnrs, numbers
+
+
+NUMBER_RX = re.compile(r"[A-Za-z]{1,4}-?\d{6,}")  # an agency's or a web shop's: VW-12345678 (Vliegwinkel), Go2600000000000 (China Southern)
+
+
+def is_pnr(code):
+    """An airline's (or agency's) record locator, like VFS123, rather than a long booking number."""
+    return bool(re.fullmatch(r"[A-Z0-9]{5,8}", code) and re.search(r"[A-Z]", code))
+
+
+def merge_codes(old, new):
+    """The booking codes of both, each once; record locators first when old had none (an e-ticket that brings the
+    airline's code to a booking known by the agency's number)."""
+    out = list(dict.fromkeys(list(old) + list(new)))
+    return out if any(is_pnr(c) for c in old) else sorted(out, key=lambda c: not is_pnr(c))
 
 
 def _passengers(lines, structured):
@@ -601,12 +617,17 @@ def parse_email(msg, airports, airlines, places=None, home_tz="Europe/Amsterdam"
 
     pnrs, numbers = _codes([subject] + lines, airlines)
     import ground
+    pdf = None
+    if numbers and not pnrs:  # the airline's code only on the PDF e-ticket (Vliegwinkel: "Online inchecknummer")
+        pdf = ground.pdf_lines(msg)
+        more = _codes(pdf, airlines)
+        pnrs, numbers = more[0], list(dict.fromkeys(numbers + more[1]))
     mode = ground.mode_of(sender, html)
     if mode:  # trains, buses, ferries: their own rules, no flights in these emails
         found = ground.legs(sender, subject, html, lines, received, places or {}, home_tz, mode)
         body = lines
         if not found:  # some operators (Atlânticoline) put the journeys only in a PDF ticket
-            pdf = ground.pdf_lines(msg)
+            pdf = ground.pdf_lines(msg) if pdf is None else pdf
             if pdf:
                 lines = lines + pdf
                 found = ground.legs(sender, subject, html, lines, received, places or {}, home_tz, mode)
@@ -634,8 +655,6 @@ def parse_email(msg, airports, airlines, places=None, home_tz="Europe/Amsterdam"
                 arr_local=m.arr_local or t.arr_local, day=m.day or t.day))
     else:
         legs = text_legs
-    import ground
-    pdf = None
     # one flight with no airport codes, its towns in another language: the airports' names, in the email, else in its
     # PDF (Vliegwinkel). Not for several flights: their names near each flight number are a mix of all of them
     if len(legs) == 1 and legs[0].flight and not legs[0].dep and not legs[0].arr:

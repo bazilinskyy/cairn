@@ -81,7 +81,8 @@ def test_dry_run_writes_nothing(home):
         assert tripmail.main(["--dry-run"]) == 0
     finally:
         undo()
-    writes = [c for c in cal.calls + con.calls if c[0] != "lookup"]  # lookups only read
+    writes = [c for c in cal.calls + con.calls if c[0] != "lookup"  # lookups only read, add_codes only logs in a dry run
+              and not (c[0] == "add_codes" and c[1][-1] is True)]
     assert writes == [], writes
     assert json.loads((home / "state.json").read_text()) == {"last_uid": 5, "legs": []}
     assert sent == [], sent
@@ -101,7 +102,7 @@ def test_run_applies_and_saves_state(home):
         undo()
     state = json.loads((home / "state.json").read_text())
     assert state["last_uid"] == 7 and [e["flight"] for e in state["legs"]] == ["KL1702"]
-    assert [c[0] for c in cal.calls] == ["create"] and [c[0] for c in con.calls if c[0] != "lookup"] == ["add"]
+    assert [c[0] for c in cal.calls] == ["create", "add_codes"] and [c[0] for c in con.calls if c[0] != "lookup"] == ["add"]
     assert sent == [], sent
 
 
@@ -260,6 +261,32 @@ def test_ground_titles_and_notes():
     assert tripmail.event_title(ferry, {}) == "⛴️ Horta - Madalena"
     assert tripmail.event_notes(bus, []) == ("Confirmation Code: 3000000001\ntripmail 3000000001 bus:Lisboa (Oriente)>Porto (Campanhã)\n"
                                                "Arrival time not in the email: the end time is a guess.")
+
+
+def test_all_booking_codes_in_the_notes():
+    agent = tripmail.Leg("FD3358", "BKK", "UTH", None, None, ("VFS123", "WJEBABCD"))  # Travelfrom: two codes, no number
+    assert tripmail.event_notes(agent, []) == "Confirmation Code: VFS123\nBooking code: WJEBABCD\ntripmail VFS123 FD3358"
+    shop = tripmail.Leg("CZ308", "AMS", "CAN", None, None, ("Go260000000000000001",), "China Southern Go260000000000000001")
+    assert tripmail.event_notes(shop, []) == "Booking: China Southern Go260000000000000001\ntripmail Go260000000000000001 CZ308"
+    w = tripmail.with_codes
+    assert w("Confirmation Code: VFS123\ntripmail VFS123 FD3358", ["VFS123", "WJEBABCD"]) == (
+        "Confirmation Code: VFS123\nBooking code: WJEBABCD\ntripmail VFS123 FD3358")  # below the codes it has
+    assert w("tripmail - VJ722", ["QWE123", "VW-12345678"]) == "Booking code: QWE123, VW-12345678\ntripmail - VJ722"
+    assert w("EJU7883", ["KD1X2YZ"]) == "Booking code: KD1X2YZ\nEJU7883"
+    assert w("", ["KD1X2YZ"]) == "Booking code: KD1X2YZ"
+    assert w("Reservation Number: Go26\nGuests: X", ["Go26"]) == "Reservation Number: Go26\nGuests: X"  # all there
+
+
+def test_code_targets():
+    state = {"legs": [{"flight": "VJ722", "dep_local": "2027-01-05T07:05:00", "codes": ["VW-12345678"], "event_id": "ev1"}],
+             "seen": {"VJ722@2027-01-05": {"flight": "VJ722", "dep_local": "2027-01-05T07:05:00", "codes": ["QWE123", "VW-12345678"]},
+                      "U27883@2027-02-03": {"flight": "U27883", "dep_local": "2027-02-03T07:00:00", "codes": ["KD1X2YZ"]},
+                      "CZ8019@2026-12-16": {"flight": "CZ8019", "dep_local": "2026-12-16T17:00:00", "codes": []}},
+             "ground": {"bus:A>B@2026-12-20T10:00:00": {"flight": "bus:A>B", "dep_local": "2026-12-20T10:00:00", "codes": ["123456789"]}}}
+    assert tripmail.code_targets(state) == [
+        (None, "bus:A>B", "2026-12-20", ["123456789"]),
+        ("ev1", "VJ722", "2027-01-05", ["QWE123", "VW-12345678"]),
+        (None, "U27883", "2027-02-03", ["KD1X2YZ"])]
 
 
 @with_home

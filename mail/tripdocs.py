@@ -307,6 +307,21 @@ def replace_cells(table, r, values):
     return out
 
 
+def code_requests(cell, codes):
+    """Requests that put "Booking code: ..." with these codes in a Comments cell: its line rewritten when it has one,
+    else the line put above your comments."""
+    line = "Booking code: " + ", ".join(codes)
+    para = next((q for q in cell.get("paras", []) if q["text"].startswith("Booking code:")), None)
+    if para:
+        if para["text"] == line:
+            return []
+        out = [{"deleteContentRange": {"range": {"startIndex": para["start"], "endIndex": para["end"] - 1}}}]
+        return out + _write({**cell, "start": para["start"]}, line)
+    if all(c in cell["text"] for c in codes):
+        return []  # yours name them already
+    return _write(cell, line + "\n" if cell["text"] else line)
+
+
 def clear(table, r, cols):
     out = []
     for col in sorted((c for c in cols if c in table["cols"]), key=lambda c: -table["cols"][c]):
@@ -582,8 +597,9 @@ def wanted(state, airports, now, home, skip=()):
 def _same_row(old, new):
     """Whether two specs of a booking write the same row, but for its price: they differ only in the price (or
     the older one was saved without one), or in what only picks or names the doc: the trip's name, and a flight's
-    or ride's trip dates (they grow when the trip gets another flight). Such a change never empties the row."""
-    keep = ("price", "name") + (("start", "end") if old.get("what") == "leg" else ())
+    or ride's trip dates (they grow when the trip gets another flight), or in a flight's or ride's booking codes
+    (an e-ticket brings the airline's). Such a change never empties the row."""
+    keep = ("price", "name") + (("start", "end", "codes") if old.get("what") == "leg" else ())
     return old != new and {**old, **dict.fromkeys(keep, "")} == {**new, **dict.fromkeys(keep, "")}
 
 
@@ -692,6 +708,15 @@ class TripDocs:
         if how in ("done", "fill") and any(c["text"] for c in t["rows"][r]):
             self.batch(doc_id, fill(t, r, {"price": spec["price"]}))
 
+    def codes(self, doc_id, spec):
+        """A flight's or ride's booking codes into the Comments cell of its row (they came after the row was written)."""
+        t = self._table(doc_id, "transport") if spec["what"] == "leg" and spec.get("codes") else None
+        if not t or "comments" not in t["cols"]:
+            return
+        how, r = leg_row(t, spec)
+        if how == "done":
+            self.batch(doc_id, code_requests(t["rows"][r][t["cols"]["comments"]], spec["codes"]))
+
     def remove(self, doc_id, spec):
         if spec["what"] == "stay":
             t = self._table(doc_id, "plan")
@@ -728,6 +753,8 @@ class TripDocs:
             steps["update"].remove(i)                                                     # nothing written again
             if done[i]["doc"] in files and desired[i]["end"] >= today:
                 self.price(done[i]["doc"], desired[i])
+                if desired[i].get("codes") != done[i]["spec"].get("codes"):
+                    self.codes(done[i]["doc"], desired[i])
             done[i]["spec"] = desired[i]
         for i in steps["remove"] + steps["update"]:
             if done[i]["spec"]["end"] >= today and done[i]["doc"] in files:

@@ -337,6 +337,15 @@ def test_airports_by_name_near_the_flight():
     assert parse.named_airports(["Vertrek uit Ho Chi Minhstad", "VJ341"], "VJ341", ap) == []
 
 
+def test_booking_numbers_of_shops_and_agencies():
+    al = {"VJ": ("VJ", "VietJet"), "CZ": ("CZ", "China Southern")}
+    assert parse._codes(["Your Booking (Go260000000000000001)", "has been paid successfully."], al) == ([], ["Go260000000000000001"])
+    assert parse._codes(["Boekingsnummer:", "VW-12345678", "Online inchecknummer", "QWE123"], al) == (["QWE123"], ["VW-12345678"])
+    assert parse.is_pnr("VFS123") and parse.is_pnr("WJEBABCD") and not parse.is_pnr("VW-12345678") and not parse.is_pnr("26100000000")
+    assert parse.merge_codes(["VW-12345678"], ["QWE123", "VW-12345678"]) == ["QWE123", "VW-12345678"]  # the airline's first
+    assert parse.merge_codes(["VFS123", "WJEBABCD"], ["WJEBABCD"]) == ["VFS123", "WJEBABCD"]
+
+
 if __name__ == "__main__":
     tests = [f for n, f in sorted(globals().items()) if n.startswith("test_")]
     for t in tests:

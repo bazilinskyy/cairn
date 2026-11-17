@@ -36,7 +36,7 @@ from email.utils import parseaddr, parsedate_to_datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from parse import Leg, is_passenger, load_airlines, load_airports, parse_email  # noqa: E402
+from parse import Leg, is_passenger, is_pnr, load_airlines, load_airports, merge_codes, parse_email  # noqa: E402
 import sync  # noqa: E402
 import ground  # noqa: E402
 import plan  # noqa: E402
@@ -191,11 +191,46 @@ def title_has_flight(title, flight):
     return bool(re.search(rf"(?<![A-Za-z0-9])[A-Z0-9]{{2,3}}\s?{flight[2:]}(?!\d)", title or ""))
 
 
+CODE_LINE = re.compile(r"(?i)^(confirmation code|booking|reservation number|booking code|booking / reservation number)\b")
+
+
+def with_codes(notes, codes):
+    """An event's notes with a "Booking code:" line for each code not in them yet: below the lines that already give
+    codes (Confirmation Code, Booking, Reservation Number), else on top. The notes as they were when all are there."""
+    notes = notes or ""
+    missing = [c for c in codes if c not in notes]
+    if not missing:
+        return notes
+    lines = notes.split("\n") if notes else []
+    at = next((i for i, line in enumerate(lines) if CODE_LINE.match(line)), None)
+    while at is not None and at < len(lines) and CODE_LINE.match(lines[at]):
+        at += 1
+    lines.insert(at or 0, "Booking code: " + ", ".join(missing))
+    return "\n".join(lines)
+
+
+def code_targets(state):
+    """[(event id or None, flight or ride key, day, codes)] for every flight, train, bus and ferry tripmail knows
+    with booking codes: its codes from the email (seen, ground) and from the leg tripmail made (legs), whose event it
+    is. For the calendar's pass that puts them in the events' notes."""
+    out = {}
+    for e in state.get("legs", []):
+        if e.get("dep_local"):
+            out[(e["flight"], e["dep_local"][:10])] = [e.get("event_id"), e["codes"]]
+    for reg in ("seen", "ground"):
+        for r in state.get(reg, {}).values():
+            if r.get("dep_local"):
+                t = out.setdefault((r["flight"], r["dep_local"][:10]), [None, []])
+                t[1] = merge_codes(t[1], r.get("codes", []))
+    return [(ev, key, day, codes) for (key, day), (ev, codes) in sorted(out.items(), key=lambda kv: kv[0][1]) if codes]
+
+
 def event_notes(leg, notes):
-    pnr = next((c for c in leg.codes if not re.fullmatch(r"[\d-]+", c)), None)
+    pnr = next((c for c in leg.codes if is_pnr(c)), None)
     if not pnr and leg.mode != "flight" and leg.codes:  # bus and train bookings are often just numbers
         pnr = leg.codes[0]
     lines = ([f"Confirmation Code: {pnr}"] if pnr else []) + ([f"Booking: {leg.agency}"] if leg.agency else [])
+    lines = with_codes("\n".join(lines), leg.codes).split("\n") if leg.codes else lines  # the rest: Travelfrom's
     lines.append(f"tripmail {leg.codes[0] if leg.codes else '-'} {leg.key}")
     if leg.arr_guess:
         lines.append("Arrival time not in the email: the end time is a guess.")
@@ -283,6 +318,29 @@ class EventKitCalendar:
         self._fill(ev, leg)
         ev.setNotes_(((ev.notes() or "") + "\n" + note).strip())
         self._save(ev)
+
+    def add_codes(self, targets, dry=False):
+        """Booking codes into the notes of the events of targets (code_targets): tripmail's own event by its id; for
+        a flight it did not make (or whose event's id is gone), the events around that day with its number in the
+        title. Codes already in the notes are left alone; returns how many events changed."""
+        changed = 0
+        for event_id, key, day, codes in targets:
+            evs = [ev for ev in [self.store.eventWithIdentifier_(event_id) if event_id else None] if ev is not None]
+            if not evs and re.fullmatch(r"[A-Z0-9]{2}\d{1,4}", key):  # not made by tripmail, or its id is gone (Google's
+                start = datetime.fromisoformat(day) - timedelta(days=1)  # sync); a train, bus or ferry has no number
+                pred = self.store.predicateForEventsWithStartDate_endDate_calendars_(  # to know its event by
+                    self._ns(start), self._ns(start + timedelta(days=3)), [self.cal])
+                evs = [ev for ev in self.store.eventsMatchingPredicate_(pred) or [] if title_has_flight(ev.title(), key)]
+            for ev in evs:
+                old = str(ev.notes() or "")
+                new = with_codes(old, codes)
+                if new != old:
+                    log(f"{'would add' if dry else 'added'} booking code(s) {[c for c in codes if c not in old]} to event {ev.title()} {day}")
+                    if not dry:
+                        ev.setNotes_(new)
+                        self._save(ev)
+                    changed += 1
+        return changed
 
     def delete(self, event_id):
         """Delete an event (from any calendar)."""
@@ -748,6 +806,9 @@ class Logged:
     def has_event_at(self, *a):
         return self.store.has_event_at(*a)
 
+    def add_codes(self, targets):  # logs each event itself
+        return self.store.add_codes(targets, self.dry)
+
     def busy_all_day(self, *a):  # a question, also asked in a dry run
         return self.store.busy_all_day(*a)
 
@@ -820,6 +881,10 @@ def run(args, cfg, sec):
         work["last_uid"] = max(uid, work.get("last_uid", 0))  # a rescan never moves it back
         if not args.dry_run:
             save_state(work)
+    try:  # booking codes that came later (an e-ticket after the booking) or are not in an event made by others
+        cal.add_codes(code_targets(work))
+    except Exception as e:
+        log(f"booking codes not put in the calendar: {e!r}")
     try:
         sync_stays(work, con, args.dry_run)
         if not args.dry_run:

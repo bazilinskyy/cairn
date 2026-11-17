@@ -8,7 +8,7 @@ import re
 from dataclasses import replace
 from datetime import datetime
 
-from parse import Leg, is_passenger
+from parse import Leg, is_passenger, merge_codes
 
 
 def _row(leg):
@@ -102,12 +102,12 @@ def apply(parsed, sender, subject, received, state, cal, con, names, now, airpor
         if leg.mode == "flight":
             sid = f"{leg.key}@{leg.when.isoformat()}"
             unsee(leg, keep=sid)
-            seen[sid] = {**_row(leg), "codes": list(leg.codes), "checkin_url": leg.checkin_url,
-                         "price": price or seen.get(sid, {}).get("price", "")}
+            seen[sid] = {**_row(leg), "codes": merge_codes(seen.get(sid, {}).get("codes", []), leg.codes),
+                         "checkin_url": leg.checkin_url, "price": price or seen.get(sid, {}).get("price", "")}
         else:
             sid = f"{leg.key}@{leg.dep_local.isoformat()}"
             unsee_ground(leg, keep=sid)
-            ground[sid] = {**_row(leg), "codes": list(leg.codes), "mode": leg.mode, "tz": list(leg.tz(airports)),
+            ground[sid] = {**_row(leg), "codes": merge_codes(ground.get(sid, {}).get("codes", []), leg.codes), "mode": leg.mode, "tz": list(leg.tz(airports)),
                            "price": price or ground.get(sid, {}).get("price", "")}
 
     def remove(e):
@@ -146,6 +146,14 @@ def apply(parsed, sender, subject, received, state, cal, con, names, now, airpor
             mine = sorted((r for r in reg.values() if set(r.get("codes", [])) & set(parsed.codes)), key=lambda r: r["dep_local"] or "")
             if mine and not any(r.get("price") for r in mine):
                 mine[0]["price"] = price
+    if parsed.codes and not complete:  # an e-ticket after the booking: its codes join the booking's (the airline's
+        for reg in (seen, ground):     # code to a booking known by the agency's number)
+            for r in reg.values():
+                if set(r.get("codes", [])) & set(parsed.codes):
+                    r["codes"] = merge_codes(r["codes"], parsed.codes)
+        for e in legs:
+            if set(e["codes"]) & set(parsed.codes):
+                e["codes"] = merge_codes(e["codes"], parsed.codes)
     if not complete:
         if about_future and parsed.looks_like_flight and not any(owned(l) for l in parsed.legs) and not re.search(INFO, subject):
             alerts.append(f"Could not read flight: {where}")
@@ -167,6 +175,7 @@ def apply(parsed, sender, subject, received, state, cal, con, names, now, airpor
         see(leg, (price or next((prices[c] for c in leg.codes if c in prices), "")) if leg is first else "")
         e = owned(leg)
         if e:
+            e["codes"] = merge_codes(e["codes"], leg.codes)  # the event's notes get them in the calendar's pass
             if all(e[k] == v for k, v in _row(leg).items()):
                 continue
             if e["event_id"]:
@@ -174,7 +183,6 @@ def apply(parsed, sender, subject, received, state, cal, con, names, now, airpor
             if e["contrail_id"]:
                 con.update(e["contrail_id"], leg)
             e.update(_row(leg))
-            e["codes"] = list(dict.fromkeys(e["codes"] + list(leg.codes)))
             continue
         notes = list(rebooked)
         prev = next((e for e in legs if set(e["codes"]) & set(leg.codes) and (e["dep"], e["arr"]) == (leg.dep, leg.arr)

@@ -552,19 +552,19 @@ def test_a_booked_flight_takes_over_the_row_you_planned_it_in():
         ["Phú Quốc - Nha Trang", "29.12.26", "", "another day: not this one"],
         ["Nha Trang - Da Lat", "28.12.26", "", ""])]}})
     seen = {"9G2952@2026-12-28": {"flight": "9G2952", "dep": "PQC", "arr": "CXR", "dep_local": "2026-12-28T12:10:00",
-                                  "arr_local": "2026-12-28T13:30:00", "codes": ["F45IGA"], "price": "75.30€"}}
+                                  "arr_local": "2026-12-28T13:30:00", "codes": ["F45ABC"], "price": "75.30€"}}
     ap = {**AIRPORTS, "PQC": Airport("Phu Quoc International Airport", "Phuquoc", "Asia/Saigon", "Vietnam"),
           "CXR": Airport("Cam Ranh International Airport", "Nhatrang", "Asia/Saigon", "Vietnam")}
     state = {"seen": seen}
     docs = tripdocs.TripDocs(g, "folder", lambda m: None)
     docs.run(state, ap, NOW, ["AMS"])
     got = texts(g.docs["d1"]["tables"][1])
-    assert got[1] == ["✈️ 9G2952: Phuquoc - Nhatrang", "28.12.26 12:10", "75.30€", "Booking code: F45IGA\nOnly one airline flies direct"], got
+    assert got[1] == ["✈️ 9G2952: Phuquoc - Nhatrang", "28.12.26 12:10", "75.30€", "Booking code: F45ABC\nOnly one airline flies direct"], got
     assert got[2:] == [["Phú Quốc - Nha Trang", "29.12.26", "", "another day: not this one"],
                        ["Nha Trang - Da Lat", "28.12.26", "", ""]], got  # no row added, the others left alone
     del seen["9G2952@2026-12-28"]  # cancelled: the booking goes, your comment stays
     docs.run(state, ap, NOW, ["AMS"])
-    assert texts(g.docs["d1"]["tables"][1])[1] == ["", "", "", "Booking code: F45IGA\nOnly one airline flies direct"]
+    assert texts(g.docs["d1"]["tables"][1])[1] == ["", "", "", "Booking code: F45ABC\nOnly one airline flies direct"]
 
 
 def test_planned_rows():
@@ -713,6 +713,31 @@ def test_prices_only_in_coming_trips_that_changed():
     docs.prices(state, datetime(2027, 1, 14, 13), rates)  # the trip is over
     assert len(g.batches) == 1
     assert tripdocs.without_euros("| 10 USD ≈ 8.62€ |\nTotal: 8.62€\nmine") == "| 10 USD  |\n\nmine"
+
+
+def test_booking_codes_that_come_later():
+    cell = lambda paras: tripdocs.tables(flat_doc([("t", [["Transport", "Comments"], ["x", paras]])])[0])["transport"]["rows"][1][1]  # noqa: E731
+    doc, chars = flat_doc([("t", [["Transport", "Comments"], ["x", ["Booking code: VW-1", "Window seats"]]])])
+    c = tripdocs.tables(doc)["transport"]["rows"][1][1]
+    assert applied(chars, tripdocs.code_requests(c, ["QWE123", "VW-1"])).endswith(
+        "|Booking code: QWE123, VW-1\nWindow seats\n")  # its line rewritten, yours kept
+    assert tripdocs.code_requests(cell(["Booking code: QWE123, VW-1"]), ["QWE123", "VW-1"]) == []
+    doc, chars = flat_doc([("t", [["Transport", "Comments"], ["x", ["Morning flight"]]])])
+    c = tripdocs.tables(doc)["transport"]["rows"][1][1]
+    assert applied(chars, tripdocs.code_requests(c, ["HJK456"])).endswith("|Booking code: HJK456\nMorning flight\n")
+    assert tripdocs.code_requests(cell(["Reservation Go26 by mail"]), ["Go26"]) == []  # yours names it
+
+    g = FakeGoogle({"d1": {"name": "Asia 2026", "tables": [rows(PLAN, ["Hanoi", "05–09.01.27", "", "", ""]), rows(TRANSPORT)]}})
+    seen = {"VJ722@2027-01-05": {"flight": "VJ722", "dep": "AMS", "arr": "FAO", "dep_local": "2027-01-05T07:05:00",
+                                 "arr_local": "2027-01-05T08:25:00", "codes": ["VW-12345678"], "price": "57.60€"}}
+    state = {"seen": seen}
+    docs = tripdocs.TripDocs(g, "folder", lambda m: None)
+    docs.run(state, AIRPORTS, NOW, ["AMS"])
+    assert texts(g.docs["d1"]["tables"][1])[1][3] == "Booking code: VW-12345678"
+    seen["VJ722@2027-01-05"]["codes"] = ["QWE123", "VW-12345678"]  # the e-ticket came: the line gets the airline's
+    docs.run(state, AIRPORTS, NOW, ["AMS"])
+    rows_ = texts(g.docs["d1"]["tables"][1])
+    assert rows_[1][3] == "Booking code: QWE123, VW-12345678" and rows_[1][2] == "57.60€" and not any(any(r) for r in rows_[2:]), rows_
 
 
 if __name__ == "__main__":
