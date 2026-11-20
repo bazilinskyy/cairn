@@ -209,17 +209,17 @@ def with_codes(notes, codes):
     return "\n".join(lines)
 
 
-def code_targets(state):
-    """[(event id or None, flight or ride key, day, codes)] for every flight, train, bus and ferry tripmail knows
-    with booking codes: its codes from the email (seen, ground) and from the leg tripmail made (legs), whose event it
-    is. For the calendar's pass that puts them in the events' notes."""
+def code_targets(state, today):
+    """[(event id or None, flight or ride key, day, codes)] for every flight, train, bus and ferry from today on that
+    tripmail knows with booking codes (past trips are left as they are): its codes from the email (seen, ground) and
+    from the leg tripmail made (legs), whose event it is. For the calendar's pass that puts them in the events' notes."""
     out = {}
     for e in state.get("legs", []):
-        if e.get("dep_local"):
+        if (e.get("dep_local") or "") >= today:
             out[(e["flight"], e["dep_local"][:10])] = [e.get("event_id"), e["codes"]]
     for reg in ("seen", "ground"):
         for r in state.get(reg, {}).values():
-            if r.get("dep_local"):
+            if (r.get("dep_local") or "") >= today:
                 t = out.setdefault((r["flight"], r["dep_local"][:10]), [None, []])
                 t[1] = merge_codes(t[1], r.get("codes", []))
     return [(ev, key, day, codes) for (key, day), (ev, codes) in sorted(out.items(), key=lambda kv: kv[0][1]) if codes]
@@ -882,7 +882,7 @@ def run(args, cfg, sec):
         if not args.dry_run:
             save_state(work)
     try:  # booking codes that came later (an e-ticket after the booking) or are not in an event made by others
-        cal.add_codes(code_targets(work))
+        cal.add_codes(code_targets(work, now().date().isoformat()))
     except Exception as e:
         log(f"booking codes not put in the calendar: {e!r}")
     try:

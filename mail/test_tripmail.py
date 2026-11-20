@@ -283,7 +283,8 @@ def test_code_targets():
                       "U27883@2027-02-03": {"flight": "U27883", "dep_local": "2027-02-03T07:00:00", "codes": ["KD1X2YZ"]},
                       "CZ8019@2026-12-16": {"flight": "CZ8019", "dep_local": "2026-12-16T17:00:00", "codes": []}},
              "ground": {"bus:A>B@2026-12-20T10:00:00": {"flight": "bus:A>B", "dep_local": "2026-12-20T10:00:00", "codes": ["123456789"]}}}
-    assert tripmail.code_targets(state) == [
+    state["seen"]["S4151@2026-10-28"] = {"flight": "S4151", "dep_local": "2026-10-28T09:00:00", "codes": ["ABC123"]}  # past
+    assert tripmail.code_targets(state, "2026-11-20") == [
         (None, "bus:A>B", "2026-12-20", ["123456789"]),
         ("ev1", "VJ722", "2027-01-05", ["QWE123", "VW-12345678"]),
         (None, "U27883", "2027-02-03", ["KD1X2YZ"])]

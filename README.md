@@ -433,7 +433,7 @@ Each event:
 - **Times:** start and end at the real departure and arrival moments; the event's time zone is the departure airport's
 - **Location:** the departure airport or station
 - **Notes:** `Confirmation Code: <PNR>`, the agency's number if any, and a `tripmail` marker line
-- **Booking codes in the notes, also later:** every booking code tripmail knows for a flight, train, bus or ferry goes into its event's notes: `Confirmation Code: <PNR>`, `Booking: eDreams <number>` and a `Booking code: ...` line for the rest (Travelfrom's own code, Vliegwinkel's `VW-` number). Codes that come later (an e-ticket after the payment email) and codes missing from events tripmail did not make (Google's, your own; found by flight number around that day) are added each run, below the lines that already give codes or on top. Nothing else in the notes changes.
+- **Booking codes in the notes, also later:** every booking code tripmail knows for a flight, train, bus or ferry from today on goes into its event's notes (past trips are left as they are): `Confirmation Code: <PNR>`, `Booking: eDreams <number>` and a `Booking code: ...` line for the rest (Travelfrom's own code, Vliegwinkel's `VW-` number). Codes that come later (an e-ticket after the payment email) and codes missing from events tripmail did not make (Google's, your own; found by flight number around that day) are added each run, below the lines that already give codes or on top. Nothing else in the notes changes.
 - **Alert:** one reminder 15 minutes before
 - When an email gives no arrival time (SNCF Connect), the event lasts one hour and its notes say the end time is a guess.
 
